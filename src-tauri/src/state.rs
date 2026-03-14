@@ -1,0 +1,150 @@
+use ort::session::Session;
+use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Recording lifecycle state
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum RecordingState {
+    Idle,
+    Recording,
+    Processing,
+}
+
+/// User-facing app settings, persisted as JSON
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Settings {
+    pub hotkey: String,
+    pub launch_at_login: bool,
+    pub show_in_menu_bar: bool,
+    pub play_sound_on_complete: bool,
+    pub auto_dismiss_overlay: bool,
+    pub silence_timeout: u32,
+    pub language: String,
+    pub smart_formatting: bool,
+    pub input_device: String,
+    pub noise_suppression: bool,
+    pub whisper_model: String,
+    pub onboarding_complete: bool,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            hotkey: "CmdOrCtrl+Shift+C".into(),
+            launch_at_login: true,
+            show_in_menu_bar: true,
+            play_sound_on_complete: false,
+            auto_dismiss_overlay: true,
+            silence_timeout: 3,
+            language: "auto".into(),
+            smart_formatting: true,
+            input_device: "default".into(),
+            noise_suppression: true,
+            whisper_model: "small".into(),
+            onboarding_complete: false,
+        }
+    }
+}
+
+/// Dictionary entry for word replacement
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DictionaryEntry {
+    pub from: String,
+    pub to: String,
+}
+
+/// Audio device info sent to frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AudioDevice {
+    pub name: String,
+    pub id: String,
+}
+
+/// Transcription result sent to frontend
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionResult {
+    pub text: String,
+    pub word_count: usize,
+    pub duration_ms: u64,
+}
+
+/// Model download/presence status
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ModelStatus {
+    pub model: String,
+    pub downloaded: bool,
+    pub size_bytes: u64,
+}
+
+/// Update check result
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UpdateInfo {
+    pub available: bool,
+    pub version: Option<String>,
+    pub url: Option<String>,
+}
+
+/// Amplitude data event payload
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AmplitudeData {
+    pub bars: Vec<f32>,
+}
+
+/// Error types matching the frontend's ErrorType
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ChirpErrorType {
+    MicNotFound,
+    MicPermission,
+    ModelNotLoaded,
+    TranscriptionFailed,
+    InjectionFailed,
+    Unknown,
+}
+
+impl std::fmt::Display for ChirpErrorType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::MicNotFound => write!(f, "mic_not_found"),
+            Self::MicPermission => write!(f, "mic_permission"),
+            Self::ModelNotLoaded => write!(f, "model_not_loaded"),
+            Self::TranscriptionFailed => write!(f, "transcription_failed"),
+            Self::InjectionFailed => write!(f, "injection_failed"),
+            Self::Unknown => write!(f, "unknown"),
+        }
+    }
+}
+
+/// Main application state shared across commands
+pub struct AppState {
+    pub settings: Settings,
+    pub dictionary: Vec<DictionaryEntry>,
+    pub recording_state: RecordingState,
+    pub whisper_ctx: Option<whisper_rs::WhisperContext>,
+    pub cleanup_encoder: Option<Session>,
+    pub cleanup_decoder: Option<Session>,
+}
+
+impl AppState {
+    pub fn new(settings: Settings, dictionary: Vec<DictionaryEntry>) -> Self {
+        Self {
+            settings,
+            dictionary,
+            recording_state: RecordingState::Idle,
+            whisper_ctx: None,
+            cleanup_encoder: None,
+            cleanup_decoder: None,
+        }
+    }
+}
+
+/// Thread-safe wrapper for AppState
+pub type SharedState = Arc<Mutex<AppState>>;
+
+/// Separate audio buffer to avoid blocking cpal callback on main state lock
+pub type AudioBuffer = Arc<std::sync::Mutex<Vec<f32>>>;
