@@ -1,4 +1,4 @@
-export const DEFAULT_HOTKEY = 'CmdOrCtrl+Shift+C'
+export const DEFAULT_HOTKEY = 'CmdOrCtrl+Shift+Space'
 
 export const DEFAULT_SETTINGS = {
   hotkey: DEFAULT_HOTKEY,
@@ -11,15 +11,12 @@ export const DEFAULT_SETTINGS = {
   smartFormatting: true,
   inputDevice: 'default',
   noiseSuppression: true,
-  whisperModel: 'base' as const,
+  model: 'parakeet-tdt-0.6b' as const,
   onboardingComplete: false,
 }
 
-export const WHISPER_MODELS = [
-  { id: 'tiny' as const, name: 'Tiny (English)', size: '78 MB', description: 'Fastest — sub-second' },
-  { id: 'base' as const, name: 'Base (English)', size: '148 MB', description: 'Fast & accurate', recommended: true },
-  { id: 'small' as const, name: 'Small (English)', size: '488 MB', description: 'Most accurate, slower' },
-  { id: 'medium' as const, name: 'Medium (English)', size: '1.5 GB', description: 'Best accuracy, slowest' },
+export const STT_MODELS = [
+  { id: 'parakeet-tdt-0.6b' as const, name: 'Parakeet TDT 0.6B', size: '465 MB', description: 'Best accuracy, fast on any PC', recommended: true },
 ]
 
 export const SILENCE_TIMEOUT_OPTIONS = [

@@ -13,12 +13,17 @@
     "core:window:allow-hide",
     "core:window:allow-set-focus",
     "core:window:allow-close",
+    "core:window:allow-set-size",
+    "core:window:allow-set-position",
+    "core:window:allow-current-monitor",
+    "core:window:allow-primary-monitor",
     "core:event:default",
     "core:event:allow-emit",
     "core:event:allow-listen",
     "log:default",
     "global-shortcut:default",
     "notification:default",
-    "shell:default"
+    "shell:default",
+    "autostart:default"
   ]
 }

@@ -14,8 +14,8 @@
       {
         "label": "overlay",
         "title": "Chirp",
-        "width": 340,
-        "height": 120,
+        "width": 400,
+        "height": 200,
         "resizable": false,
         "decorations": false,
         "transparent": true,
@@ -46,6 +46,9 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "sherpa-onnx-lib/*.dll"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

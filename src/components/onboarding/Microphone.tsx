@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Mic } from 'lucide-react'
+import { open } from '@tauri-apps/plugin-shell'
 import { Button } from '../shared/Button'
 
 interface MicrophoneProps {
@@ -41,8 +42,7 @@ export function Microphone({ onNext }: MicrophoneProps) {
             variant="secondary"
             size="onboarding"
             onClick={() => {
-              // Will open OS settings when Tauri backend is wired
-              console.log('Open system settings')
+              open('ms-settings:privacy-microphone')
             }}
           >
             Open System Settings

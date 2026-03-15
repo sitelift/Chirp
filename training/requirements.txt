@@ -1,0 +1,6 @@
+anthropic>=0.42.0
+torch>=2.0.0
+transformers>=4.40.0
+optimum[onnxruntime]>=1.19.0
+onnxruntime>=1.17.0
+sentencepiece>=0.2.0

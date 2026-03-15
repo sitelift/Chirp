@@ -1,27 +1,35 @@
+import { useState } from 'react'
 import { Check, Download } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
-import { WHISPER_MODELS } from '../../lib/constants'
+import { STT_MODELS } from '../../lib/constants'
 import { SettingGroup } from './SettingGroup'
 
 export function ModelPage() {
   const store = useAppStore()
   const tauri = useTauri()
+  const [downloadError, setDownloadError] = useState<string | null>(null)
 
-  const currentModel = WHISPER_MODELS.find((m) => m.id === store.whisperModel)
+  const currentModel = STT_MODELS.find((m) => m.id === store.model)
 
-  const handleModelSelect = async (modelId: typeof store.whisperModel) => {
-    store.updateSettings({ whisperModel: modelId })
+  const handleModelSelect = async (modelId: typeof store.model) => {
+    store.updateSettings({ model: modelId })
+    setDownloadError(null)
 
     if (!store.modelDownloaded[modelId]) {
       store.setModelDownloadProgress(0)
-      await tauri.downloadModel(modelId, (progress) => {
-        store.setModelDownloadProgress(progress)
-      })
-      store.updateSettings({
-        modelDownloaded: { ...store.modelDownloaded, [modelId]: true },
-      })
-      store.setModelDownloadProgress(null)
+      try {
+        await tauri.downloadModel(modelId, (progress) => {
+          store.setModelDownloadProgress(progress)
+        })
+        store.updateSettings({
+          modelDownloaded: { ...store.modelDownloaded, [modelId]: true },
+        })
+      } catch {
+        setDownloadError('Download failed. Check your internet connection and try again.')
+      } finally {
+        store.setModelDownloadProgress(null)
+      }
     }
   }
 
@@ -30,7 +38,7 @@ export function ModelPage() {
       <SettingGroup label="Speech Model">
         <div className="mb-2">
           <p className="font-body text-sm text-chirp-stone-700">
-            Current: Whisper {currentModel?.name}
+            Current: {currentModel?.name}
           </p>
           <p className="font-body text-xs text-chirp-stone-500 mt-0.5">
             Size: {currentModel?.size}
@@ -38,8 +46,8 @@ export function ModelPage() {
         </div>
 
         <div className="flex flex-col gap-2">
-          {WHISPER_MODELS.map((model) => {
-            const isSelected = store.whisperModel === model.id
+          {STT_MODELS.map((model) => {
+            const isSelected = store.model === model.id
             const isDownloaded = store.modelDownloaded[model.id]
             return (
               <button
@@ -104,9 +112,15 @@ export function ModelPage() {
               </span>
             </div>
             <p className="font-body text-xs text-chirp-stone-500 mt-1">
-              Downloading whisper-{store.whisperModel}.bin...
+              {store.modelDownloadProgress < 96
+                ? `Downloading ${currentModel?.name}...`
+                : 'Extracting model...'}
             </p>
           </div>
+        )}
+
+        {downloadError && (
+          <p className="mt-2 font-body text-xs text-chirp-error">{downloadError}</p>
         )}
       </SettingGroup>
 

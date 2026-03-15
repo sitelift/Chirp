@@ -6,7 +6,8 @@ use crate::settings;
 use crate::state::*;
 use crate::transcribe;
 use std::time::Instant;
-use tauri::{AppHandle, Emitter, State};
+use tauri::{AppHandle, Emitter, Manager, State};
+use tauri_plugin_autostart::ManagerExt;
 
 /// Active audio stream handle — wrapped in an unsafe Send wrapper because
 /// cpal::Stream is !Send but we only access it from the main thread.
@@ -24,6 +25,7 @@ pub async fn get_settings(state: State<'_, SharedState>) -> Result<Settings, Str
 
 #[tauri::command]
 pub async fn update_settings(
+    app_handle: AppHandle,
     partial: serde_json::Value,
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
@@ -38,6 +40,15 @@ pub async fn update_settings(
     s.settings =
         serde_json::from_value(settings_val).map_err(|e| format!("Invalid settings: {e}"))?;
     settings::save_settings(&s.settings)?;
+
+    // Sync autostart with launch_at_login setting
+    let autostart = app_handle.autolaunch();
+    if s.settings.launch_at_login {
+        let _ = autostart.enable();
+    } else {
+        let _ = autostart.disable();
+    }
+
     Ok(())
 }
 
@@ -84,7 +95,7 @@ pub async fn start_recording(
     }
 
     // Check model is loaded
-    if s.whisper_ctx.is_none() {
+    if s.recognizer.is_none() {
         return Err("model_not_loaded".into());
     }
 
@@ -135,10 +146,14 @@ pub async fn stop_recording(
 
     let _ = app_handle.emit("recording-state", "processing");
 
-    // Get the audio data
+    // Get the audio data, prepending 150ms of silence so the resampler's
+    // internal delay and model warm-up don't eat the first word.
     let audio_data = {
         let buf = buffer.lock().unwrap();
-        buf.clone()
+        let pad_samples = 16000 * 150 / 1000; // 150ms at 16kHz
+        let mut padded = vec![0.0f32; pad_samples];
+        padded.extend_from_slice(&buf);
+        padded
     };
 
     let sample_count = audio_data.len();
@@ -157,39 +172,35 @@ pub async fn stop_recording(
     }
 
     // Grab what we need from state before entering blocking thread
-    let (language, smart_fmt, dict, _whisper_model_name) = {
+    let (language, smart_fmt, dict) = {
         let s = state.lock().await;
         (
             s.settings.language.clone(),
             s.settings.smart_formatting,
             s.dictionary.clone(),
-            s.settings.whisper_model.clone(),
         )
     };
 
-    // We need to transcribe using the whisper context.
-    // Since WhisperContext is not Send, we do it on the current thread via spawn_blocking
-    // with a raw pointer trick. This is safe because we hold the state lock.
+    // Transcribe using the sherpa-onnx recognizer.
+    // OfflineRecognizer is Send+Sync so we can use it from spawn_blocking safely.
     let state_inner = state.inner().clone();
     let result = tokio::task::spawn_blocking(move || {
-        // Block on the async lock from within spawn_blocking
         let rt = tokio::runtime::Handle::current();
         let s = rt.block_on(state_inner.lock());
 
-        let ctx = s.whisper_ctx.as_ref().ok_or("model_not_loaded".to_string())?;
+        let recognizer = s.recognizer.as_ref().ok_or("model_not_loaded".to_string())?;
 
-        // Transcribe
-        log::info!("Starting Whisper transcription...");
-        let raw = transcribe::transcribe(ctx, &audio_data, &language)
+        log::info!("Starting Parakeet TDT transcription...");
+        let raw = transcribe::transcribe(recognizer, &audio_data, &language)
             .map_err(|e| {
-                log::error!("Whisper transcription error: {e}");
+                log::error!("Transcription error: {e}");
                 "transcription_failed".to_string()
             })?;
 
-        log::info!("Whisper raw output: '{raw}'");
+        log::info!("Transcription raw output: '{raw}'");
 
         if raw.is_empty() {
-            log::warn!("Whisper returned empty text");
+            log::warn!("Transcription returned empty text");
             return Err("transcription_failed".to_string());
         }
 
@@ -207,7 +218,17 @@ pub async fn stop_recording(
         Ok(final_text)
     })
     .await
-    .map_err(|e| format!("Task failed: {e}"))??;
+    .map_err(|e| format!("Task failed: {e}"))?;
+
+    // If transcription failed, reset state before returning error
+    let result = match result {
+        Ok(text) => text,
+        Err(e) => {
+            let mut s = state.lock().await;
+            s.recording_state = RecordingState::Idle;
+            return Err(e);
+        }
+    };
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
     let word_count = result.split_whitespace().count();

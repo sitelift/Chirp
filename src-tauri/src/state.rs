@@ -1,7 +1,14 @@
 use ort::session::Session;
 use serde::{Deserialize, Serialize};
+use sherpa_onnx::OfflineRecognizer;
 use std::sync::Arc;
 use tokio::sync::Mutex;
+
+/// Thread-safe wrapper for sherpa-onnx OfflineRecognizer.
+/// The C API is thread-safe so this is safe to Send+Sync.
+pub struct SherpaRecognizer(pub OfflineRecognizer);
+unsafe impl Send for SherpaRecognizer {}
+unsafe impl Sync for SherpaRecognizer {}
 
 /// Recording lifecycle state
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -26,14 +33,15 @@ pub struct Settings {
     pub smart_formatting: bool,
     pub input_device: String,
     pub noise_suppression: bool,
-    pub whisper_model: String,
+    #[serde(alias = "whisperModel")]
+    pub model: String,
     pub onboarding_complete: bool,
 }
 
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            hotkey: "CmdOrCtrl+Shift+C".into(),
+            hotkey: "CmdOrCtrl+Shift+Space".into(),
             launch_at_login: true,
             show_in_menu_bar: true,
             play_sound_on_complete: false,
@@ -43,7 +51,7 @@ impl Default for Settings {
             smart_formatting: true,
             input_device: "default".into(),
             noise_suppression: true,
-            whisper_model: "small".into(),
+            model: "parakeet-tdt-0.6b".into(),
             onboarding_complete: false,
         }
     }
@@ -125,7 +133,7 @@ pub struct AppState {
     pub settings: Settings,
     pub dictionary: Vec<DictionaryEntry>,
     pub recording_state: RecordingState,
-    pub whisper_ctx: Option<whisper_rs::WhisperContext>,
+    pub recognizer: Option<SherpaRecognizer>,
     pub cleanup_encoder: Option<Session>,
     pub cleanup_decoder: Option<Session>,
 }
@@ -136,7 +144,7 @@ impl AppState {
             settings,
             dictionary,
             recording_state: RecordingState::Idle,
-            whisper_ctx: None,
+            recognizer: None,
             cleanup_encoder: None,
             cleanup_decoder: None,
         }

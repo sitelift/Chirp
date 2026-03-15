@@ -1,6 +1,4 @@
-import { useEffect } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
-import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from './stores/appStore'
 import { Overlay } from './components/overlay/Overlay'
 import { Settings } from './components/settings/Settings'
@@ -35,16 +33,6 @@ function getWindowLabel(): string {
 export function App() {
   const onboardingComplete = useAppStore((s) => s.onboardingComplete)
   const windowLabel = getWindowLabel()
-
-  console.log('[Chirp] Window label:', windowLabel, '| URL:', window.location.href)
-
-  // Debug: log all toggle-recording events in every window
-  useEffect(() => {
-    const unlisten = listen('toggle-recording', () => {
-      console.log('[Chirp] toggle-recording event received in window:', windowLabel)
-    })
-    return () => { unlisten.then(fn => fn()) }
-  }, [])
 
   useSettingsSync()
 

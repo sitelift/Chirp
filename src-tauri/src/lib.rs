@@ -15,6 +15,7 @@ use tauri::{
     tray::TrayIconBuilder,
     Emitter, Manager, WindowEvent,
 };
+use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -27,7 +28,7 @@ pub fn run() {
     // The parser natively understands CmdOrCtrl, Ctrl, Shift, Alt, etc.
     let shortcut: tauri_plugin_global_shortcut::Shortcut = hotkey_str
         .parse()
-        .unwrap_or_else(|_| "CmdOrCtrl+Shift+C".parse().unwrap());
+        .unwrap_or_else(|_| "CmdOrCtrl+Shift+Space".parse().unwrap());
 
     log::info!("Registering global hotkey: {hotkey_str}");
 
@@ -57,6 +58,7 @@ pub fn run() {
         )
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .manage::<SharedState>({
             Arc::new(tokio::sync::Mutex::new(AppState::new(
                 initial_settings,
@@ -81,18 +83,30 @@ pub fn run() {
         .setup(|app| {
             let handle = app.handle().clone();
 
-            // Load whisper model if available (all sync operations, no async needed)
+            // Sync autostart with the launch_at_login setting
+            {
+                let autostart = app.autolaunch();
+                let state = handle.state::<SharedState>();
+                let s = state.blocking_lock();
+                if s.settings.launch_at_login {
+                    let _ = autostart.enable();
+                } else {
+                    let _ = autostart.disable();
+                }
+            }
+
+            // Load speech model if available (all sync operations, no async needed)
             {
                 let state = handle.state::<SharedState>();
                 let mut s = state.blocking_lock();
-                let model = s.settings.whisper_model.clone();
+                let model = s.settings.model.clone();
                 if transcribe::model_exists(&model) {
                     match transcribe::load_model(&model) {
-                        Ok(ctx) => {
-                            s.whisper_ctx = Some(ctx);
-                            log::info!("Whisper model '{model}' loaded");
+                        Ok(recognizer) => {
+                            s.recognizer = Some(recognizer);
+                            log::info!("Speech model '{model}' loaded");
                         }
-                        Err(e) => log::error!("Failed to load whisper model: {e}"),
+                        Err(e) => log::error!("Failed to load speech model: {e}"),
                     }
                 }
 
