@@ -195,7 +195,7 @@ def generate_batch(client, category, batch_size=50):
 
 def main():
     parser = argparse.ArgumentParser(description="Generate training data with Claude API")
-    parser.add_argument("--pairs", type=int, default=15000, help="Total pairs to generate")
+    parser.add_argument("--pairs", type=int, default=5000, help="Total pairs to generate")
     parser.add_argument("--batch-size", type=int, default=50, help="Pairs per API call")
     parser.add_argument("--output", type=str, default="data/training_pairs.jsonl")
     parser.add_argument("--resume", action="store_true", help="Resume from existing file")

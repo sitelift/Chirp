@@ -179,7 +179,7 @@ def main():
     parser = argparse.ArgumentParser(description="Train FLAN-T5-small for transcript cleanup")
     parser.add_argument("--data", type=str, default="data/training_pairs.jsonl")
     parser.add_argument("--output", type=str, default="output/chirp-cleanup")
-    parser.add_argument("--epochs", type=int, default=5)
+    parser.add_argument("--epochs", type=int, default=3)
     parser.add_argument("--batch-size", type=int, default=16)
     parser.add_argument("--lr", type=float, default=3e-4)
     parser.add_argument("--val-split", type=float, default=0.05)
@@ -197,7 +197,7 @@ def main():
 
     # Load model and tokenizer
     print("Loading FLAN-T5-small...")
-    model_name = "google/flan-t5-small"
+    model_name = "grammarly/coedit-small"
     tokenizer = T5Tokenizer.from_pretrained(model_name)
     model = T5ForConditionalGeneration.from_pretrained(model_name)
     model.to(device)
