@@ -1,6 +1,8 @@
 # Chirp Cleanup Model Training
 
-Fine-tune grammarly/coedit-small (T5-small pre-trained on text correction) for transcript cleanup.
+Fine-tune grammarly/coedit-small (T5-small pre-trained on text correction) to transform dictated speech into polished written text.
+
+The model runs AFTER regex cleanup (filler removal, spoken punctuation, basic capitalization) and handles what regex can't: restructuring, formatting, course correction, and making text read like it was typed.
 
 ## Setup (Mac Mini M4)
 
@@ -15,18 +17,18 @@ pip install -r requirements.txt
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-python generate_data.py --pairs 5000 --output data/training_pairs.jsonl
+python generate_data.py --pairs 25000 --output data/training_pairs.jsonl
 ```
 
-Takes ~15-20 minutes, costs ~$2-4. Supports `--resume` if interrupted.
+Takes ~1-2 hours, costs ~$15-20. Supports `--resume` if interrupted.
 
 ## Step 2: Train
 
 ```bash
-python train.py --data data/training_pairs.jsonl --epochs 3 --batch-size 16
+python train.py --data data/training_pairs.jsonl --epochs 5 --batch-size 16
 ```
 
-Takes ~1-2 hours on M4 MPS. Best model saved to `output/chirp-cleanup/best/`.
+Takes ~4-6 hours on M4 MPS. Best model saved to `output/chirp-cleanup/best/`.
 
 ## Step 3: Export to ONNX
 

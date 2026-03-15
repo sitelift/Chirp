@@ -1,19 +1,29 @@
 """
-Generate synthetic (raw transcript -> clean text) training pairs using Claude API.
+Generate synthetic training pairs for the Chirp cleanup model using Claude API.
+
+The cleanup model receives text AFTER regex preprocessing has already handled:
+- Filler word removal (um, uh, like, you know, basically)
+- Spoken punctuation conversion (period → ., comma → ,, etc.)
+- Basic capitalization (first letter, after sentences, "I")
+- Simple number formatting in context
+- Percentage/email formatting
+- List detection for obvious patterns
+
+The model's job is everything regex CAN'T do — making dictated text
+read like it was typed, not spoken. This includes:
+- Sentence restructuring (rambling speech → concise prose)
+- Course correction / false starts ("let's do 2 actually 3" → "let's do 3")
+- Run-on sentence splitting (detecting natural boundaries)
+- Redundancy compression ("really really really" → "really")
+- Rich text formatting (lists, paragraphs, headers, bold, quotes)
+- Topic-shift paragraph breaks
+- Natural written tone (removing verbal padding phrases)
+- Date/time normalization
+- Table/structured data detection
 
 Usage:
     export ANTHROPIC_API_KEY=sk-ant-...
-    python generate_data.py --pairs 15000 --output data/training_pairs.jsonl
-
-Generates diverse transcript cleanup examples across categories:
-- Casual dictation, emails, messages
-- Technical descriptions, code talk
-- Lists and structured content
-- Numbers, currencies, percentages
-- Emails, URLs, phone numbers spoken out
-- Filler-heavy speech
-- Multi-sentence paragraphs
-- Questions, mixed tone
+    python generate_data.py --pairs 25000 --output data/training_pairs.jsonl
 """
 
 import anthropic
@@ -21,129 +31,253 @@ import json
 import argparse
 import time
 import random
+import re
 from pathlib import Path
+from difflib import SequenceMatcher
 
 CATEGORIES = [
     {
-        "name": "casual_email",
-        "description": "Casual email or message dictation",
+        "name": "restructuring",
+        "weight": 3,
+        "description": "Rambling, wordy speech that needs to be tightened into concise written prose. The input has already been through filler removal and basic punctuation, but still reads like someone talking, not typing.",
         "examples": [
-            ("um hey sarah i wanted to follow up on our meeting yesterday comma i think we should move forward with option two period let me know what you think", "Hey Sarah,\n\nI wanted to follow up on our meeting yesterday. I think we should move forward with option two. Let me know what you think."),
-            ("so like i was thinking we could grab lunch on friday at that new place on fifth street question mark", "I was thinking we could grab lunch on Friday at that new place on 5th Street?"),
+            (
+                "So what I was trying to say is that we need to update the homepage. And the reason for that is because the current one is outdated.",
+                "We need to update the homepage — the current one is outdated."
+            ),
+            (
+                "I think the thing is that basically the problem comes down to the fact that we don't have enough testing in place.",
+                "The problem is that we don't have enough testing in place."
+            ),
+            (
+                "What I want to say is I had a really great time at the conference and I learned a lot of things and I think we should send more people next year.",
+                "I had a great time at the conference and learned a lot. We should send more people next year."
+            ),
         ]
     },
     {
-        "name": "technical",
-        "description": "Technical descriptions, bug reports, code discussions",
+        "name": "course_correction",
+        "weight": 2,
+        "description": "Speech where the speaker changes their mind mid-sentence, restates something, or corrects themselves. The model should keep only the final intent.",
         "examples": [
-            ("the api endpoint returns a four oh four when you pass an invalid user id um we need to add validation in the middleware before it hits the database", "The API endpoint returns a 404 when you pass an invalid user ID. We need to add validation in the middleware before it hits the database."),
-            ("basically the function takes two parameters first the input array and second the callback and it returns a promise", "The function takes two parameters: first, the input array, and second, the callback. It returns a promise."),
+            (
+                "Let's schedule it for Tuesday, actually no, Wednesday at 3 PM.",
+                "Let's schedule it for Wednesday at 3 PM."
+            ),
+            (
+                "The budget is 50,000, wait no, I think it's 45,000 for this quarter.",
+                "The budget is $45,000 for this quarter."
+            ),
+            (
+                "We should use React, or actually, I think Vue might be better for this project since it's smaller.",
+                "I think Vue might be better for this project since it's smaller."
+            ),
         ]
     },
     {
-        "name": "lists",
-        "description": "Content with lists, steps, or enumerated items",
+        "name": "run_on_splitting",
+        "weight": 3,
+        "description": "Long run-on speech that needs to be split into proper sentences with correct punctuation. Input may have some periods from regex but misses many natural sentence boundaries.",
         "examples": [
-            ("okay so the steps are first clone the repository second install dependencies with npm install third create a dot env file and fourth run npm start", "The steps are:\n1. Clone the repository\n2. Install dependencies with npm install\n3. Create a .env file\n4. Run npm start"),
-            ("i need to buy um milk eggs bread and uh some chicken for dinner tonight", "I need to buy milk, eggs, bread, and some chicken for dinner tonight."),
+            (
+                "The server went down at 3 AM and the team was notified but nobody responded until 7 and by then we had lost about 4 hours of data and the clients were already complaining.",
+                "The server went down at 3 AM. The team was notified, but nobody responded until 7. By then, we had lost about 4 hours of data, and clients were already complaining."
+            ),
+            (
+                "I went to the store and picked up some groceries and then I stopped by the pharmacy and then I came home and started cooking dinner.",
+                "I went to the store and picked up some groceries, then stopped by the pharmacy. I came home and started cooking dinner."
+            ),
         ]
     },
     {
-        "name": "numbers_money",
-        "description": "Text with numbers, currencies, percentages, measurements",
+        "name": "lists_formatting",
+        "weight": 3,
+        "description": "Content that should be formatted as numbered lists, bullet points, or structured items. The speaker is clearly enumerating things but the text is flat.",
         "examples": [
-            ("the project budget is around fifty thousand dollars and we've spent about thirty percent so far", "The project budget is around $50,000 and we've spent about 30% so far."),
-            ("um the meeting is at two thirty pm on march fifteenth twenty twenty six", "The meeting is at 2:30 PM on March 15th, 2026."),
+            (
+                "For the release we need to do a few things. We need to update the changelog and run the full test suite and bump the version number and then create the tag and deploy to staging first.",
+                "For the release, we need to:\n1. Update the changelog\n2. Run the full test suite\n3. Bump the version number\n4. Create the tag\n5. Deploy to staging first"
+            ),
+            (
+                "The pros are it's faster and cheaper and easier to maintain. The cons are it has less features and the community is smaller.",
+                "**Pros:**\n- Faster\n- Cheaper\n- Easier to maintain\n\n**Cons:**\n- Fewer features\n- Smaller community"
+            ),
+            (
+                "My top priorities this week are finishing the API integration and fixing the login bug and writing tests for the new payment flow.",
+                "My top priorities this week:\n1. Finish the API integration\n2. Fix the login bug\n3. Write tests for the new payment flow"
+            ),
         ]
     },
     {
-        "name": "contact_info",
-        "description": "Emails, URLs, phone numbers spoken out",
+        "name": "paragraph_structure",
+        "weight": 2,
+        "description": "Longer dictation that needs paragraph breaks at topic shifts. The text should be broken into logical paragraphs with proper spacing.",
         "examples": [
-            ("you can reach me at john dot smith at gmail dot com or call me at five five five dash one two three four", "You can reach me at john.smith@gmail.com or call me at 555-1234."),
-            ("check out the docs at https colon slash slash docs dot example dot com slash getting started", "Check out the docs at https://docs.example.com/getting-started."),
+            (
+                "The project kicked off last Monday and so far things are going smoothly. The team has been really productive. On the technical side, we've finished the database migration and the new API is almost ready. We're expecting to have it done by Friday. The one concern I have is the timeline for the frontend. We lost a developer last week and we haven't found a replacement yet.",
+                "The project kicked off last Monday and so far things are going smoothly. The team has been really productive.\n\nOn the technical side, we've finished the database migration and the new API is almost ready. We're expecting to have it done by Friday.\n\nThe one concern I have is the timeline for the frontend. We lost a developer last week and we haven't found a replacement yet."
+            ),
         ]
     },
     {
-        "name": "filler_heavy",
-        "description": "Speech with lots of filler words, false starts, repetitions",
+        "name": "email_structure",
+        "weight": 2,
+        "description": "Email dictation that needs proper email formatting — greeting, body paragraphs, sign-off, proper spacing and tone.",
         "examples": [
-            ("so um yeah i was i was thinking that uh you know we should probably like reconsider the the design because basically it's not it's not working", "I was thinking that we should probably reconsider the design because it's not working."),
-            ("i mean like honestly um the the performance is is kind of like really bad right now you know", "Honestly, the performance is really bad right now."),
+            (
+                "Hey Mike, just wanted to follow up on the proposal we discussed last week. I've made the changes you suggested and attached the updated version. Let me know if you want to schedule a call to walk through it. Thanks, Sarah.",
+                "Hey Mike,\n\nJust wanted to follow up on the proposal we discussed last week. I've made the changes you suggested and attached the updated version.\n\nLet me know if you want to schedule a call to walk through it.\n\nThanks,\nSarah"
+            ),
+            (
+                "Hi team, a few quick updates. The deployment went smoothly and we're seeing good metrics. Also, don't forget the all-hands meeting is moved to Thursday this week. Best, James.",
+                "Hi team,\n\nA few quick updates:\n- The deployment went smoothly and we're seeing good metrics\n- The all-hands meeting is moved to Thursday this week\n\nBest,\nJames"
+            ),
         ]
     },
     {
-        "name": "paragraphs",
-        "description": "Multi-sentence paragraphs and longer dictation",
+        "name": "emphasis_headers",
+        "weight": 2,
+        "description": "Content where the speaker emphasizes key points that should be bold, or introduces sections/topics that should be headers.",
         "examples": [
-            ("the project is going well period new paragraph we finished the backend last week and the frontend is about eighty percent done period the main thing left is testing and documentation period", "The project is going well.\n\nWe finished the backend last week and the frontend is about 80% done. The main thing left is testing and documentation."),
+            (
+                "The most important thing to remember here is never deploy on Fridays. That's the number one rule.",
+                "The most important thing to remember: **never deploy on Fridays.** That's the number one rule."
+            ),
+            (
+                "Okay, moving on to the budget section. We allocated 200,000 for Q1 and we're on track to spend about 180,000.",
+                "## Budget\n\nWe allocated $200,000 for Q1 and we're on track to spend about $180,000."
+            ),
+            (
+                "So the key takeaway from the meeting is that we're pushing the launch to April and the critical blocker is the security audit.",
+                "**Key takeaway:** We're pushing the launch to April. The critical blocker is the security audit."
+            ),
         ]
     },
     {
-        "name": "questions_exclamations",
-        "description": "Questions, exclamations, mixed tone",
+        "name": "quotes_attribution",
+        "weight": 1,
+        "description": "Speech that contains quotes or paraphrases of what other people said, which should be properly formatted with quotation marks.",
         "examples": [
-            ("wait are you serious question mark that's amazing exclamation point when did this happen", "Wait, are you serious? That's amazing! When did this happen?"),
-            ("can you send me the report by end of day question mark i need it for the board meeting tomorrow", "Can you send me the report by end of day? I need it for the board meeting tomorrow."),
+            (
+                "And then Sarah said we need to push the deadline back by two weeks. And I was like, I don't think the client will be okay with that.",
+                'Sarah said, "We need to push the deadline back by two weeks." I responded that I didn\'t think the client would be okay with that.'
+            ),
+            (
+                "The error message says connection refused and then it shows the port number.",
+                'The error message says "connection refused" and then shows the port number.'
+            ),
         ]
     },
     {
-        "name": "spoken_punctuation",
-        "description": "Text with spoken punctuation commands mixed with natural speech",
+        "name": "redundancy_compression",
+        "weight": 2,
+        "description": "Speech with verbal repetition, redundant phrases, or unnecessary padding that should be compressed into clean prose.",
         "examples": [
-            ("dear team comma new paragraph i wanted to share some updates on the project period first comma we've completed the migration period second comma the new system is live period new paragraph please let me know if you have any questions period", "Dear team,\n\nI wanted to share some updates on the project. First, we've completed the migration. Second, the new system is live.\n\nPlease let me know if you have any questions."),
+            (
+                "The thing is is that we've already basically done this exact same thing before in the past and it didn't really work out very well at all.",
+                "We've done this before and it didn't work out well."
+            ),
+            (
+                "It's really really important that everyone makes sure to double check and verify that the tests are all passing and working correctly.",
+                "It's important that everyone verifies the tests are passing."
+            ),
+            (
+                "At the end of the day, the bottom line is that what it really comes down to is cost.",
+                "The bottom line is cost."
+            ),
         ]
     },
     {
-        "name": "mixed_casual",
-        "description": "Everyday casual speech, notes to self, quick thoughts",
+        "name": "dates_times_numbers",
+        "weight": 1,
+        "description": "Content with dates, times, and numbers that need consistent, clean formatting. Input may have partial formatting from regex but needs normalization.",
         "examples": [
-            ("remind me to um call the dentist tomorrow and also pick up the prescription from walgreens", "Remind me to call the dentist tomorrow and also pick up the prescription from Walgreens."),
-            ("note to self colon look into upgrading the server to the new version before friday", "Note to self: look into upgrading the server to the new version before Friday."),
+            (
+                "The deadline is March 15th twenty twenty six and the budget meeting is the following Tuesday at 2.",
+                "The deadline is March 15, 2026, and the budget meeting is the following Tuesday at 2:00 PM."
+            ),
+            (
+                "We processed about twelve thousand three hundred orders last month which is up about 15% from the month before.",
+                "We processed about 12,300 orders last month, up ~15% from the previous month."
+            ),
+        ]
+    },
+    {
+        "name": "table_structured",
+        "weight": 1,
+        "description": "Data that the speaker is listing in a way that would be better as a structured format — comparison, key-value pairs, or tabular data.",
+        "examples": [
+            (
+                "The small plan costs 10 a month and gives you 5 users. The medium plan is 25 a month for 20 users. And the enterprise plan is 100 a month with unlimited users.",
+                "| Plan | Price | Users |\n|------|-------|-------|\n| Small | $10/mo | 5 |\n| Medium | $25/mo | 20 |\n| Enterprise | $100/mo | Unlimited |"
+            ),
+            (
+                "John is handling the frontend, Maria is doing the backend, and Alex is on DevOps.",
+                "- **John** — Frontend\n- **Maria** — Backend\n- **Alex** — DevOps"
+            ),
+        ]
+    },
+    {
+        "name": "passthrough_clean",
+        "weight": 1,
+        "description": "Text that is already clean and well-formed after regex processing. The model should learn to leave good text alone, returning it unchanged or with only minimal tweaks.",
+        "examples": [
+            (
+                "The meeting is at 3 PM tomorrow.",
+                "The meeting is at 3 PM tomorrow."
+            ),
+            (
+                "I'll send the report by end of day.",
+                "I'll send the report by end of day."
+            ),
         ]
     },
 ]
 
-GENERATION_PROMPT = """You are generating training data for a speech-to-text cleanup model. The model takes raw, messy transcripts and produces clean, well-formatted text.
+GENERATION_PROMPT = """You are generating training data for a text cleanup AI model. This model sits in a voice-to-text pipeline AFTER a regex stage has already handled basic cleanup (filler removal, spoken punctuation conversion, basic capitalization, simple number formatting).
+
+The model's job is to transform text that still "sounds spoken" into text that "reads like it was typed." Think of it as the difference between a raw transcription and what the person would have written if they were typing instead of talking.
 
 Generate exactly {batch_size} training pairs as a JSON array. Each pair has:
-- "input": A raw transcript as it would come from a speech recognition system. Include realistic imperfections:
-  - Filler words (um, uh, like, you know, basically, I mean, sort of, kind of)
-  - No capitalization or inconsistent capitalization
-  - Missing or no punctuation
-  - Spoken punctuation commands (period, comma, question mark, exclamation point/mark, colon, semicolon, new line, new paragraph, dash, hyphen, open/close paren)
-  - Spoken numbers instead of digits (sometimes)
-  - Repeated words or false starts (the the, I I, we we should)
-  - Run-on sentences
-  - Spoken-out emails (at, dot com), URLs, phone numbers
-  - Spoken percentages (fifty percent), money (twenty dollars)
 
-- "output": The clean, properly formatted version:
-  - Remove ALL filler words
-  - Remove false starts and repetitions
-  - Proper capitalization (sentences, "I", proper nouns)
-  - Proper punctuation (periods, commas, question marks, etc.)
-  - Convert spoken punctuation to actual punctuation
-  - Format numbers appropriately (digits for numbers, $, %, etc.)
-  - Format emails, URLs properly
-  - Add paragraph breaks where "new paragraph" was spoken
-  - Format lists with numbers or bullets when enumerated
-  - Natural, clean prose
+- "input": Text that has already been through basic regex cleanup. It will have:
+  - Capitalization at the start of sentences
+  - Basic punctuation (periods at end, some commas)
+  - Filler words already removed
+  - But it still READS LIKE SPEECH: wordy, rambling, run-on, flat structure, no rich formatting
 
-Category focus for this batch: {category_name}
+- "output": The same content transformed into polished written text:
+  - Restructured for conciseness (cut verbal padding and wordy constructions)
+  - Course corrections resolved (keep only final intent, drop false starts)
+  - Run-on sentences split at natural boundaries
+  - Redundancy compressed ("really really" → "really")
+  - Rich formatting applied where appropriate:
+    - Numbered/bullet lists for enumerated items
+    - Paragraph breaks at topic shifts
+    - **Bold** for key terms or emphasis
+    - ## Headers for section introductions
+    - Proper quote formatting
+    - Tables for comparative/structured data
+    - Email structure (greeting, body, sign-off) when dictating emails
+  - Dates/times in clean, consistent format
+  - Natural written tone throughout
+
+Category focus: {category_name}
 Description: {category_description}
 
 Example pairs for reference:
 {examples}
 
-IMPORTANT RULES:
-- Keep inputs between 10-80 words (varying lengths)
-- Make inputs sound like REAL spoken English, not written text read aloud
-- Vary the density of fillers (some light, some heavy)
-- Include a mix of simple and complex formatting needs
-- Each pair should be unique and different from the examples
-- Output ONLY the JSON array, no other text
-- The input should NEVER contain proper punctuation — it's raw speech output
+CRITICAL RULES:
+1. The INPUT is POST-REGEX — it already has basic punctuation and capitalization. Do NOT include filler words (um, uh, like, you know) in inputs.
+2. Keep inputs between 15-100 words (mix of lengths, lean toward longer)
+3. Make inputs sound like transcribed speech that has been lightly cleaned, not like written text
+4. The output should be noticeably better than the input — not just minor tweaks
+5. Each pair must be unique and realistic — imagine real people dictating real work
+6. Don't over-format — only use rich formatting (lists, headers, bold, tables) when it genuinely improves readability
+7. For the passthrough category: output should be identical or nearly identical to input
+8. Vary the domain: work emails, meeting notes, personal messages, technical discussions, creative writing, to-do lists, documentation, reports
+9. Output ONLY the JSON array, no other text
 
 Output format:
 [
@@ -152,7 +286,41 @@ Output format:
 ]"""
 
 
-def generate_batch(client, category, batch_size=50):
+def validate_pair(pair):
+    """Validate a single training pair for quality."""
+    if not isinstance(pair, dict):
+        return False
+    inp = pair.get("input", "").strip()
+    out = pair.get("output", "").strip()
+
+    if not inp or not out:
+        return False
+
+    # Input too short or too long
+    word_count = len(inp.split())
+    if word_count < 5 or word_count > 200:
+        return False
+
+    # Input still has filler words (regex should have removed these)
+    filler_pattern = re.compile(r'\b(um|uh|like you know|i mean,|basically,)\b', re.IGNORECASE)
+    if filler_pattern.search(inp):
+        return False
+
+    # Output shouldn't be longer than 2x input (model is cleaning, not expanding)
+    if len(out) > len(inp) * 2.5:
+        return False
+
+    # Input and output shouldn't be identical unless passthrough category
+    # (we check this loosely — very similar is also suspect)
+    similarity = SequenceMatcher(None, inp.lower(), out.lower()).ratio()
+    if similarity == 1.0:
+        # Exact match — only okay for ~10% of data (passthrough)
+        pass
+
+    return True
+
+
+def generate_batch(client, category, batch_size=25):
     examples_str = "\n".join(
         f'  Input:  "{inp}"\n  Output: "{out}"'
         for inp, out in category["examples"]
@@ -183,20 +351,35 @@ def generate_batch(client, category, batch_size=50):
 
     # Validate pairs
     valid = []
+    rejected = 0
     for pair in pairs:
-        if isinstance(pair, dict) and "input" in pair and "output" in pair:
-            inp = pair["input"].strip()
-            out = pair["output"].strip()
-            if inp and out and inp != out:
-                valid.append({"input": inp, "output": out})
+        if validate_pair(pair):
+            valid.append({"input": pair["input"].strip(), "output": pair["output"].strip()})
+        else:
+            rejected += 1
+
+    if rejected > 0:
+        print(f"(rejected {rejected})", end=" ", flush=True)
 
     return valid
 
 
+def weighted_choice(categories):
+    """Pick a category weighted by its weight field."""
+    total = sum(c["weight"] for c in categories)
+    r = random.uniform(0, total)
+    cumulative = 0
+    for cat in categories:
+        cumulative += cat["weight"]
+        if r <= cumulative:
+            return cat
+    return categories[-1]
+
+
 def main():
     parser = argparse.ArgumentParser(description="Generate training data with Claude API")
-    parser.add_argument("--pairs", type=int, default=5000, help="Total pairs to generate")
-    parser.add_argument("--batch-size", type=int, default=50, help="Pairs per API call")
+    parser.add_argument("--pairs", type=int, default=25000, help="Total pairs to generate")
+    parser.add_argument("--batch-size", type=int, default=25, help="Pairs per API call")
     parser.add_argument("--output", type=str, default="data/training_pairs.jsonl")
     parser.add_argument("--resume", action="store_true", help="Resume from existing file")
     args = parser.parse_args()
@@ -220,15 +403,20 @@ def main():
     mode = "a" if args.resume else "w"
     total_generated = existing
 
+    # Show category distribution
+    total_weight = sum(c["weight"] for c in CATEGORIES)
     print(f"Generating {remaining} pairs ({args.pairs} total target)")
     print(f"Batch size: {args.batch_size}")
     print(f"Output: {output_path}")
+    print(f"\nCategory weights:")
+    for cat in CATEGORIES:
+        pct = cat["weight"] / total_weight * 100
+        print(f"  {cat['name']}: {pct:.0f}%")
     print()
 
     with open(output_path, mode) as f:
         while total_generated < args.pairs:
-            # Pick a random category, weighted slightly toward harder ones
-            category = random.choice(CATEGORIES)
+            category = weighted_choice(CATEGORIES)
             batch_target = min(args.batch_size, args.pairs - total_generated)
 
             try:
