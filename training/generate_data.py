@@ -29,9 +29,10 @@ Usage:
 import anthropic
 import json
 import argparse
-import time
 import random
 import re
+import asyncio
+import time
 from pathlib import Path
 from difflib import SequenceMatcher
 
@@ -100,7 +101,7 @@ CATEGORIES = [
             ),
             (
                 "The pros are it's faster and cheaper and easier to maintain. The cons are it has less features and the community is smaller.",
-                "**Pros:**\n- Faster\n- Cheaper\n- Easier to maintain\n\n**Cons:**\n- Fewer features\n- Smaller community"
+                "Pros: it's faster, cheaper, and easier to maintain. Cons: fewer features and a smaller community."
             ),
             (
                 "My top priorities this week are finishing the API integration and fixing the login bug and writing tests for the new payment flow.",
@@ -145,7 +146,7 @@ CATEGORIES = [
             ),
             (
                 "Okay, moving on to the budget section. We allocated 200,000 for Q1 and we're on track to spend about 180,000.",
-                "## Budget\n\nWe allocated $200,000 for Q1 and we're on track to spend about $180,000."
+                "Budget: We allocated $200,000 for Q1 and we're on track to spend about $180,000."
             ),
             (
                 "So the key takeaway from the meeting is that we're pushing the launch to April and the critical blocker is the security audit.",
@@ -209,7 +210,7 @@ CATEGORIES = [
         "examples": [
             (
                 "The small plan costs 10 a month and gives you 5 users. The medium plan is 25 a month for 20 users. And the enterprise plan is 100 a month with unlimited users.",
-                "| Plan | Price | Users |\n|------|-------|-------|\n| Small | $10/mo | 5 |\n| Medium | $25/mo | 20 |\n| Enterprise | $100/mo | Unlimited |"
+                "Small plan: $10/mo for 5 users. Medium: $25/mo for 20 users. Enterprise: $100/mo, unlimited users."
             ),
             (
                 "John is handling the frontend, Maria is doing the backend, and Alex is on DevOps.",
@@ -234,33 +235,37 @@ CATEGORIES = [
     },
 ]
 
-GENERATION_PROMPT = """You are generating training data for a text cleanup AI model. This model sits in a voice-to-text pipeline AFTER a regex stage has already handled basic cleanup (filler removal, spoken punctuation conversion, basic capitalization, simple number formatting).
+GENERATION_PROMPT = """You are generating training data for a voice-to-text cleanup model. The model makes dictated text read like it was typed — clean, natural, and invisible. It should feel like magic: the user dictates and gets back exactly what they would have typed themselves.
 
-The model's job is to transform text that still "sounds spoken" into text that "reads like it was typed." Think of it as the difference between a raw transcription and what the person would have written if they were typing instead of talking.
+The model sits AFTER a regex stage that already handled filler removal, spoken punctuation, basic capitalization, and simple number formatting.
+
+DESIGN PHILOSOPHY:
+- The #1 goal is CLEAN PROSE. Most output should just be well-written plain text.
+- The user is dictating into text fields, chat apps, emails, documents — not a markdown editor.
+- Formatting (lists, bold, headers, tables) is a RARE treat, not the default. Only use it when the content is so obviously structured that plain text would be worse. Think: 5+ enumerated items, a clear comparison, or a long document with distinct sections.
+- When in doubt, output plain text. A clean sentence is always better than unnecessary formatting.
+- NEVER make the output feel like an AI wrote it. No corporate jargon, no over-polished language. Keep the speaker's voice and personality.
+- Short inputs should get short outputs. Don't inflate or over-process simple messages.
+- The model should be a JOY to use — never a hindrance. If a user would have to undo the model's changes, the training pair is bad.
 
 Generate exactly {batch_size} training pairs as a JSON array. Each pair has:
 
-- "input": Text that has already been through basic regex cleanup. It will have:
-  - Capitalization at the start of sentences
-  - Basic punctuation (periods at end, some commas)
-  - Filler words already removed
-  - But it still READS LIKE SPEECH: wordy, rambling, run-on, flat structure, no rich formatting
+- "input": Text that has been through basic regex cleanup (has capitalization, basic punctuation, no filler words) but still READS LIKE SPEECH — wordy, rambly, run-on, repetitive.
 
-- "output": The same content transformed into polished written text:
-  - Restructured for conciseness (cut verbal padding and wordy constructions)
-  - Course corrections resolved (keep only final intent, drop false starts)
-  - Run-on sentences split at natural boundaries
-  - Redundancy compressed ("really really" → "really")
-  - Rich formatting applied where appropriate:
-    - Numbered/bullet lists for enumerated items
-    - Paragraph breaks at topic shifts
-    - **Bold** for key terms or emphasis
-    - ## Headers for section introductions
-    - Proper quote formatting
-    - Tables for comparative/structured data
-    - Email structure (greeting, body, sign-off) when dictating emails
-  - Dates/times in clean, consistent format
-  - Natural written tone throughout
+- "output": The same content cleaned up as the person would have typed it:
+  - Tighten wordy constructions (cut verbal padding, but keep their voice)
+  - Resolve course corrections (keep only the final intent)
+  - Split run-on sentences at natural boundaries
+  - Compress redundancy ("really really" → "really")
+  - Clean up dates/times/numbers to natural written format
+  - Add paragraph breaks for long text with topic shifts
+  - Format emails properly (greeting, body, sign-off) when clearly dictating an email
+  - Use bullet/numbered lists ONLY when there are 4+ clearly enumerated items
+  - Use bold ONLY for genuinely critical emphasis (rare)
+  - Use headers ONLY in long, multi-section content (rare)
+  - Use tables ONLY when data is clearly comparative with 3+ rows (rare)
+  - Use proper quotation marks when someone is clearly quoting another person
+  - For already-clean text: return it unchanged or with minimal tweaks
 
 Category focus: {category_name}
 Description: {category_description}
@@ -269,14 +274,14 @@ Example pairs for reference:
 {examples}
 
 CRITICAL RULES:
-1. The INPUT is POST-REGEX — it already has basic punctuation and capitalization. Do NOT include filler words (um, uh, like, you know) in inputs.
+1. The INPUT is POST-REGEX — no filler words (um, uh, like, you know) in inputs
 2. Keep inputs between 15-100 words (mix of lengths, lean toward longer)
-3. Make inputs sound like transcribed speech that has been lightly cleaned, not like written text
-4. The output should be noticeably better than the input — not just minor tweaks
-5. Each pair must be unique and realistic — imagine real people dictating real work
-6. Don't over-format — only use rich formatting (lists, headers, bold, tables) when it genuinely improves readability
-7. For the passthrough category: output should be identical or nearly identical to input
-8. Vary the domain: work emails, meeting notes, personal messages, technical discussions, creative writing, to-do lists, documentation, reports
+3. Inputs should sound like transcribed speech that has been lightly cleaned
+4. ~60% of outputs should be PLAIN TEXT with no markdown formatting at all
+5. Keep the speaker's natural voice — don't make everything sound corporate or robotic
+6. Each pair must be unique and realistic — real people dictating real things
+7. Vary the domain: work messages, personal texts, emails, meeting notes, technical discussions, creative writing, to-do lists, documentation
+8. Short casual inputs should stay short and casual — don't over-process them
 9. Output ONLY the JSON array, no other text
 
 Output format:
@@ -310,6 +315,10 @@ def validate_pair(pair):
     if len(out) > len(inp) * 2.5:
         return False
 
+    # Reject outputs with placeholder brackets (hallucinated templates)
+    if re.search(r'\[.*?\]', out):
+        return False
+
     # Input and output shouldn't be identical unless passthrough category
     # (we check this loosely — very similar is also suspect)
     similarity = SequenceMatcher(None, inp.lower(), out.lower()).ratio()
@@ -320,7 +329,7 @@ def validate_pair(pair):
     return True
 
 
-def generate_batch(client, category, batch_size=25):
+async def generate_batch(client, category, batch_size=50):
     examples_str = "\n".join(
         f'  Input:  "{inp}"\n  Output: "{out}"'
         for inp, out in category["examples"]
@@ -333,8 +342,8 @@ def generate_batch(client, category, batch_size=25):
         examples=examples_str,
     )
 
-    response = client.messages.create(
-        model="claude-sonnet-4-20250514",
+    response = await client.messages.create(
+        model="claude-haiku-4-5-20251001",
         max_tokens=8192,
         messages=[{"role": "user", "content": prompt}],
     )
@@ -358,10 +367,7 @@ def generate_batch(client, category, batch_size=25):
         else:
             rejected += 1
 
-    if rejected > 0:
-        print(f"(rejected {rejected})", end=" ", flush=True)
-
-    return valid
+    return valid, rejected
 
 
 def weighted_choice(categories):
@@ -376,15 +382,35 @@ def weighted_choice(categories):
     return categories[-1]
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Generate training data with Claude API")
-    parser.add_argument("--pairs", type=int, default=25000, help="Total pairs to generate")
-    parser.add_argument("--batch-size", type=int, default=25, help="Pairs per API call")
-    parser.add_argument("--output", type=str, default="data/training_pairs.jsonl")
-    parser.add_argument("--resume", action="store_true", help="Resume from existing file")
-    args = parser.parse_args()
+async def worker(worker_id, client, task_queue, results, batch_size, rate_lock):
+    """Worker that pulls tasks from the queue and generates batches."""
+    while True:
+        try:
+            category = task_queue.get_nowait()
+        except asyncio.QueueEmpty:
+            break
 
-    client = anthropic.Anthropic()
+        try:
+            # Stagger requests to stay under rate limit
+            async with rate_lock:
+                await asyncio.sleep(1.0)
+            pairs, rejected = await generate_batch(client, category, batch_size)
+            rej_str = f" (rejected {rejected})" if rejected > 0 else ""
+            print(f"  [worker {worker_id}] '{category['name']}' → {len(pairs)} pairs{rej_str}", flush=True)
+            results.extend(pairs)
+        except Exception as e:
+            if "429" in str(e) or "rate_limit" in str(e):
+                print(f"  [worker {worker_id}] Rate limited, waiting 30s...", flush=True)
+                await asyncio.sleep(30)
+            else:
+                print(f"  [worker {worker_id}] Error on '{category['name']}': {e}", flush=True)
+                await asyncio.sleep(5)
+            # Re-queue the failed task
+            await task_queue.put(category)
+
+
+async def run(args):
+    client = anthropic.AsyncAnthropic()
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -401,12 +427,11 @@ def main():
         return
 
     mode = "a" if args.resume else "w"
-    total_generated = existing
 
     # Show category distribution
     total_weight = sum(c["weight"] for c in CATEGORIES)
     print(f"Generating {remaining} pairs ({args.pairs} total target)")
-    print(f"Batch size: {args.batch_size}")
+    print(f"Batch size: {args.batch_size}, Workers: {args.workers}")
     print(f"Output: {output_path}")
     print(f"\nCategory weights:")
     for cat in CATEGORIES:
@@ -414,31 +439,57 @@ def main():
         print(f"  {cat['name']}: {pct:.0f}%")
     print()
 
+    total_generated = existing
+    start_time = time.time()
+
     with open(output_path, mode) as f:
         while total_generated < args.pairs:
-            category = weighted_choice(CATEGORIES)
-            batch_target = min(args.batch_size, args.pairs - total_generated)
+            # Build a queue of tasks for this round
+            # Each worker batch is batch_size pairs, run workers * 1 tasks per round
+            tasks_this_round = min(
+                args.workers * 2,  # 2 tasks per worker per round
+                max(1, (args.pairs - total_generated + args.batch_size - 1) // args.batch_size),
+            )
 
-            try:
-                print(f"  [{total_generated}/{args.pairs}] Generating {batch_target} '{category['name']}' pairs...", end=" ", flush=True)
-                pairs = generate_batch(client, category, batch_target)
+            task_queue = asyncio.Queue()
+            for _ in range(tasks_this_round):
+                task_queue.put_nowait(weighted_choice(CATEGORIES))
 
-                for pair in pairs:
-                    f.write(json.dumps(pair) + "\n")
-                f.flush()
+            results = []
+            rate_lock = asyncio.Lock()
+            workers = [
+                worker(i, client, task_queue, results, args.batch_size, rate_lock)
+                for i in range(args.workers)
+            ]
 
-                total_generated += len(pairs)
-                print(f"got {len(pairs)}")
+            await asyncio.gather(*workers)
 
-                # Small delay to avoid rate limits
-                time.sleep(0.5)
+            # Write results
+            for pair in results:
+                f.write(json.dumps(pair) + "\n")
+            f.flush()
 
-            except Exception as e:
-                print(f"Error: {e}")
-                print("  Retrying in 10s...")
-                time.sleep(10)
+            total_generated += len(results)
+            elapsed = time.time() - start_time
+            rate = (total_generated - existing) / elapsed if elapsed > 0 else 0
+            eta = (args.pairs - total_generated) / rate if rate > 0 else 0
+            print(f"  Progress: {total_generated}/{args.pairs} ({rate:.0f} pairs/sec, ETA {eta/60:.1f}min)\n", flush=True)
 
+    elapsed = time.time() - start_time
     print(f"\nDone! Generated {total_generated} total pairs in {output_path}")
+    print(f"Time: {elapsed/60:.1f} minutes")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Generate training data with Claude API")
+    parser.add_argument("--pairs", type=int, default=25000, help="Total pairs to generate")
+    parser.add_argument("--batch-size", type=int, default=50, help="Pairs per API call")
+    parser.add_argument("--workers", type=int, default=4, help="Concurrent API workers")
+    parser.add_argument("--output", type=str, default="data/training_pairs.jsonl")
+    parser.add_argument("--resume", action="store_true", help="Resume from existing file")
+    args = parser.parse_args()
+
+    asyncio.run(run(args))
 
 
 if __name__ == "__main__":

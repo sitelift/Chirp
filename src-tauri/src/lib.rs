@@ -26,9 +26,18 @@ pub fn run() {
 
     // Parse the hotkey for the global shortcut plugin
     // The parser natively understands CmdOrCtrl, Ctrl, Shift, Alt, etc.
-    let shortcut: tauri_plugin_global_shortcut::Shortcut = hotkey_str
-        .parse()
-        .unwrap_or_else(|_| "CmdOrCtrl+Shift+Space".parse().unwrap());
+    // Reject modifier-only shortcuts (e.g. "CmdOrCtrl+Shift") — they never fire.
+    let modifier_only = hotkey_str
+        .split('+')
+        .all(|p| matches!(p.trim(), "CmdOrCtrl" | "Ctrl" | "Shift" | "Alt" | "Meta" | "Super" | "Cmd"));
+    let shortcut: tauri_plugin_global_shortcut::Shortcut = if modifier_only {
+        log::warn!("Hotkey '{hotkey_str}' has no key, falling back to CmdOrCtrl+Shift+Space");
+        "CmdOrCtrl+Shift+Space".parse().unwrap()
+    } else {
+        hotkey_str
+            .parse()
+            .unwrap_or_else(|_| "CmdOrCtrl+Shift+Space".parse().unwrap())
+    };
 
     log::info!("Registering global hotkey: {hotkey_str}");
 
@@ -73,11 +82,14 @@ pub fn run() {
             commands::update_dictionary,
             commands::get_audio_devices,
             commands::get_input_level,
+            commands::request_mic_permission,
             commands::start_recording,
             commands::stop_recording,
             commands::cancel_recording,
             commands::download_model,
             commands::get_model_status,
+            commands::check_accessibility_permission,
+            commands::open_accessibility_settings,
             commands::check_for_updates,
         ])
         .setup(|app| {
@@ -116,7 +128,13 @@ pub fn run() {
                         (Ok(enc), Ok(dec)) => {
                             s.cleanup_encoder = Some(enc);
                             s.cleanup_decoder = Some(dec);
-                            log::info!("Cleanup model loaded");
+                            match cleanup::load_tokenizer() {
+                                Ok(tok) => {
+                                    s.cleanup_tokenizer = Some(tok);
+                                    log::info!("Cleanup model loaded (with tokenizer)");
+                                }
+                                Err(e) => log::warn!("Cleanup tokenizer not loaded: {e}"),
+                            }
                         }
                         (Err(e), _) | (_, Err(e)) => {
                             log::warn!("Cleanup model not loaded: {e}");

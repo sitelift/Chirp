@@ -23,10 +23,15 @@ dist-ssr
 *.sln
 *.sw?
 
-# Training artifacts (keep scripts, ignore data/models)
-training/data/
-training/output/
+# Training artifacts (keep scripts, ignore intermediate data)
+training/data/*.log
+training/data/test_sample.jsonl
+training/output/chirp-cleanup/
+training/output/onnx/encoder_model.onnx
+training/output/onnx/decoder_model.onnx
+training/output/onnx/decoder_with_past_model.onnx
 training/venv/
+training/.venv/
 training/__pycache__/
 
 # Rust build

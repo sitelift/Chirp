@@ -12,10 +12,11 @@ name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
+cc = "1.2.57"
 tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
-tauri = { version = "2.10.3", features = ["tray-icon"] }
+tauri = { version = "2.10.3", features = ["macos-private-api", "tray-icon"] }
 tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-notification = "2"
@@ -30,12 +31,13 @@ hound = "3.5"
 sherpa-onnx = "0.1.10"
 ort = { version = "2.0.0-rc.12", features = ["download-binaries"] }
 rust_tokenizers = "8"
-arboard = "3"
 enigo = "0.6.1"
 tokio = { version = "1", features = ["sync", "time", "fs"] }
 reqwest = { version = "0.12", features = ["stream"] }
 futures-util = "0.3"
 dirs = "5"
 regex = "1"
+ndarray = "0.17"
 tar = "0.4"
 bzip2 = "0.5"
+

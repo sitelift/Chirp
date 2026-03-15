@@ -9,6 +9,39 @@ use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
+/// Request microphone permission on macOS via AVCaptureDevice.
+/// Returns "granted", "denied", or "undetermined".
+#[tauri::command]
+pub async fn request_mic_permission() -> String {
+    #[cfg(target_os = "macos")]
+    {
+        use std::ffi::c_long;
+
+        extern "C" {
+            fn AVCaptureDevice_authorizationStatusForAudio() -> c_long;
+            fn AVCaptureDevice_requestAccessForAudio();
+        }
+
+        let status = unsafe { AVCaptureDevice_authorizationStatusForAudio() };
+        match status {
+            3 => "granted".to_string(),
+            0 => {
+                // Not determined — trigger the prompt
+                unsafe { AVCaptureDevice_requestAccessForAudio() };
+                // Give the system a moment, then re-check
+                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                let new_status = unsafe { AVCaptureDevice_authorizationStatusForAudio() };
+                if new_status == 3 { "granted".to_string() } else { "undetermined".to_string() }
+            }
+            _ => "denied".to_string(),
+        }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        "granted".to_string()
+    }
+}
+
 /// Active audio stream handle — wrapped in an unsafe Send wrapper because
 /// cpal::Stream is !Send but we only access it from the main thread.
 pub struct StreamHandle(pub std::sync::Mutex<Option<StreamWrapper>>);
@@ -30,6 +63,8 @@ pub async fn update_settings(
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
     let mut s = state.lock().await;
+    let old_hotkey = s.settings.hotkey.clone();
+
     // Merge partial into current settings
     let mut settings_val = serde_json::to_value(&s.settings).unwrap();
     if let (Some(base), Some(patch)) = (settings_val.as_object_mut(), partial.as_object()) {
@@ -41,12 +76,51 @@ pub async fn update_settings(
         serde_json::from_value(settings_val).map_err(|e| format!("Invalid settings: {e}"))?;
     settings::save_settings(&s.settings)?;
 
-    // Sync autostart with launch_at_login setting
-    let autostart = app_handle.autolaunch();
-    if s.settings.launch_at_login {
-        let _ = autostart.enable();
+    // Re-register global shortcut if hotkey changed
+    if s.settings.hotkey != old_hotkey {
+        let new_hotkey = s.settings.hotkey.clone();
+
+        // Sync autostart before dropping lock
+        let autostart = app_handle.autolaunch();
+        if s.settings.launch_at_login {
+            let _ = autostart.enable();
+        } else {
+            let _ = autostart.disable();
+        }
+        drop(s); // Release lock before accessing shortcut plugin
+
+        use tauri_plugin_global_shortcut::GlobalShortcutExt;
+        let gs = app_handle.global_shortcut();
+
+        // Unregister all existing shortcuts
+        let _ = gs.unregister_all();
+
+        // Register the new one
+        if let Ok(shortcut) = new_hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>() {
+            let _ = gs.on_shortcut(shortcut, move |app, _shortcut, event| {
+                match event.state {
+                    tauri_plugin_global_shortcut::ShortcutState::Pressed => {
+                        log::info!("Hotkey pressed → start recording");
+                        let _ = app.emit("hotkey-pressed", ());
+                    }
+                    tauri_plugin_global_shortcut::ShortcutState::Released => {
+                        log::info!("Hotkey released → stop recording");
+                        let _ = app.emit("hotkey-released", ());
+                    }
+                }
+            });
+            log::info!("Re-registered global hotkey: {new_hotkey}");
+        } else {
+            log::error!("Failed to parse new hotkey: {new_hotkey}");
+        }
     } else {
-        let _ = autostart.disable();
+        // Sync autostart with launch_at_login setting
+        let autostart = app_handle.autolaunch();
+        if s.settings.launch_at_login {
+            let _ = autostart.enable();
+        } else {
+            let _ = autostart.disable();
+        }
     }
 
     Ok(())
@@ -217,7 +291,7 @@ pub async fn stop_recording(
     let state_inner = state.inner().clone();
     let result = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
-        let s = rt.block_on(state_inner.lock());
+        let mut s = rt.block_on(state_inner.lock());
 
         let recognizer = s.recognizer.as_ref().ok_or("model_not_loaded".to_string())?;
 
@@ -235,13 +309,19 @@ pub async fn stop_recording(
             return Err("transcription_failed".to_string());
         }
 
-        // Cleanup/formatting
+        // Cleanup/formatting — take sessions out temporarily to satisfy borrow checker
+        let mut enc = s.cleanup_encoder.take();
+        let mut dec = s.cleanup_decoder.take();
+        let tok = &s.cleanup_tokenizer;
         let formatted = cleanup::cleanup_text(
             &raw,
             smart_fmt,
-            s.cleanup_encoder.as_ref(),
-            s.cleanup_decoder.as_ref(),
+            enc.as_mut(),
+            dec.as_mut(),
+            tok.as_ref(),
         );
+        s.cleanup_encoder = enc;
+        s.cleanup_decoder = dec;
 
         // Dictionary replacements
         let final_text = dictionary::apply_dictionary(&formatted, &dict);
@@ -324,6 +404,33 @@ pub async fn get_model_status(model: String) -> Result<ModelStatus, String> {
         size_bytes: transcribe::model_size_bytes(&model),
         model,
     })
+}
+
+#[tauri::command]
+pub async fn check_accessibility_permission() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        unsafe { AXIsProcessTrusted() }
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        true
+    }
+}
+
+#[tauri::command]
+pub async fn open_accessibility_settings() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
+            .spawn()
+            .map_err(|e| format!("Failed to open settings: {e}"))?;
+    }
+    Ok(())
 }
 
 #[tauri::command]

@@ -197,7 +197,7 @@ def main():
 
     # Load model and tokenizer
     print("Loading coedit-small...")
-    model_name = "grammarly/coedit-small"
+    model_name = "google/flan-t5-small"
     tokenizer = T5Tokenizer.from_pretrained(model_name)
     model = T5ForConditionalGeneration.from_pretrained(model_name)
     model.to(device)

@@ -1,4 +1,5 @@
 use ort::session::Session;
+use rust_tokenizers::tokenizer::T5Tokenizer;
 use serde::{Deserialize, Serialize};
 use sherpa_onnx::OfflineRecognizer;
 use std::sync::Arc;
@@ -136,6 +137,7 @@ pub struct AppState {
     pub recognizer: Option<SherpaRecognizer>,
     pub cleanup_encoder: Option<Session>,
     pub cleanup_decoder: Option<Session>,
+    pub cleanup_tokenizer: Option<T5Tokenizer>,
 }
 
 impl AppState {
@@ -147,6 +149,7 @@ impl AppState {
             recognizer: None,
             cleanup_encoder: None,
             cleanup_decoder: None,
+            cleanup_tokenizer: None,
         }
     }
 }

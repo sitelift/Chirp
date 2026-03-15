@@ -1,8 +1,17 @@
+use ndarray::Array2;
 use ort::session::Session;
+use ort::value::Value;
 use regex::Regex;
+use rust_tokenizers::tokenizer::{T5Tokenizer, Tokenizer, TruncationStrategy};
 use std::path::Path;
 
 use crate::settings::models_dir;
+
+const TASK_PREFIX: &str = "Fix the text: ";
+const MAX_INPUT_LEN: usize = 256;
+const MAX_OUTPUT_LEN: usize = 256;
+const PAD_TOKEN_ID: i64 = 0;
+const EOS_TOKEN_ID: i64 = 1;
 
 /// Check if the ONNX cleanup model files exist
 pub fn cleanup_model_exists() -> bool {
@@ -28,12 +37,129 @@ fn load_onnx_session(path: &Path) -> Result<Session, String> {
         .map_err(|e| format!("Failed to load ONNX model {}: {e}", path.display()))
 }
 
-/// Full cleanup pipeline: filler removal → formatting → trim
+/// Load the T5 tokenizer from spiece.model
+pub fn load_tokenizer() -> Result<T5Tokenizer, String> {
+    let spiece_path = models_dir().join("cleanup").join("spiece.model");
+    T5Tokenizer::from_file(spiece_path.to_str().unwrap_or(""), false)
+        .map_err(|e| format!("Failed to load tokenizer: {e}"))
+}
+
+/// Run T5 model inference: encode input, greedy decode output
+fn model_cleanup(
+    text: &str,
+    encoder: &mut Session,
+    decoder: &mut Session,
+    tokenizer: &T5Tokenizer,
+) -> Result<String, String> {
+    let input_text = format!("{TASK_PREFIX}{text}");
+
+    // Tokenize
+    let encoded = tokenizer.encode(
+        &input_text,
+        None,
+        MAX_INPUT_LEN,
+        &TruncationStrategy::LongestFirst,
+        0,
+    );
+    let token_ids: Vec<i64> = encoded.token_ids.iter().map(|&id| id).collect();
+    let seq_len = token_ids.len();
+
+    if seq_len == 0 {
+        return Ok(text.to_string());
+    }
+
+    // Build encoder inputs
+    let input_ids = Array2::from_shape_vec((1, seq_len), token_ids.clone())
+        .map_err(|e| format!("input_ids shape error: {e}"))?;
+    let attention_mask = Array2::from_shape_vec(
+        (1, seq_len),
+        vec![1i64; seq_len],
+    )
+    .map_err(|e| format!("attention_mask shape error: {e}"))?;
+
+    // Run encoder
+    let enc_input_ids = Value::from_array(input_ids.clone())
+        .map_err(|e| format!("encoder input error: {e}"))?;
+    let enc_attn_mask = Value::from_array(attention_mask.clone())
+        .map_err(|e| format!("encoder attn error: {e}"))?;
+
+    let encoder_outputs = encoder
+        .run(ort::inputs!["input_ids" => enc_input_ids, "attention_mask" => enc_attn_mask])
+        .map_err(|e| format!("Encoder run failed: {e}"))?;
+
+    let (hidden_shape, hidden_data) = encoder_outputs["last_hidden_state"]
+        .try_extract_tensor::<f32>()
+        .map_err(|e| format!("Failed to extract hidden states: {e}"))?;
+    let hidden_shape_vec: Vec<i64> = hidden_shape.iter().copied().collect();
+    let hidden_data_vec: Vec<f32> = hidden_data.to_vec();
+
+    // Greedy decode
+    let mut generated_ids: Vec<i64> = vec![PAD_TOKEN_ID]; // decoder_start_token_id = 0
+
+    for _ in 0..MAX_OUTPUT_LEN {
+        let dec_seq_len = generated_ids.len();
+        let dec_input_ids = Array2::from_shape_vec(
+            (1, dec_seq_len),
+            generated_ids.clone(),
+        )
+        .map_err(|e| format!("dec input shape error: {e}"))?;
+
+        let dec_ids_val = Value::from_array(dec_input_ids)
+            .map_err(|e| format!("dec ids error: {e}"))?;
+        let dec_attn_val = Value::from_array(attention_mask.clone())
+            .map_err(|e| format!("dec attn error: {e}"))?;
+        let dec_hidden_val = Value::from_array((hidden_shape_vec.clone(), hidden_data_vec.clone()))
+            .map_err(|e| format!("dec hidden error: {e}"))?;
+
+        let decoder_outputs = decoder
+            .run(ort::inputs![
+                "encoder_attention_mask" => dec_attn_val,
+                "input_ids" => dec_ids_val,
+                "encoder_hidden_states" => dec_hidden_val,
+            ])
+            .map_err(|e| format!("Decoder run failed: {e}"))?;
+
+        let (logits_shape, logits_data) = decoder_outputs["logits"]
+            .try_extract_tensor::<f32>()
+            .map_err(|e| format!("Failed to extract logits: {e}"))?;
+
+        // Get logits for the last position
+        let vocab_size = logits_shape[2usize] as usize;
+        let last_pos = dec_seq_len - 1;
+        let offset = last_pos * vocab_size;
+
+        // Argmax over vocabulary
+        let mut max_id = 0i64;
+        let mut max_val = f32::NEG_INFINITY;
+        for v in 0..vocab_size {
+            let val = logits_data[offset + v];
+            if val > max_val {
+                max_val = val;
+                max_id = v as i64;
+            }
+        }
+
+        if max_id == EOS_TOKEN_ID {
+            break;
+        }
+
+        generated_ids.push(max_id);
+    }
+
+    // Decode tokens back to text (skip the start token)
+    let output_ids: Vec<i64> = generated_ids[1..].to_vec();
+    let decoded = tokenizer.decode(&output_ids, true, true);
+
+    Ok(decoded)
+}
+
+/// Full cleanup pipeline: filler removal → regex formatting → model cleanup
 pub fn cleanup_text(
     text: &str,
     smart_formatting: bool,
-    _encoder: Option<&Session>,
-    _decoder: Option<&Session>,
+    encoder: Option<&mut Session>,
+    decoder: Option<&mut Session>,
+    tokenizer: Option<&T5Tokenizer>,
 ) -> String {
     if text.is_empty() {
         return String::new();
@@ -46,8 +172,17 @@ pub fn cleanup_text(
         return capitalize_first(&cleaned);
     }
 
-    // Step 2: Smart formatting
+    // Step 2: Regex-based formatting (spoken punctuation, numbers, etc.)
     let formatted = smart_format(&cleaned);
+
+    // Step 3: Model cleanup if all pieces are available
+    if let (Some(enc), Some(dec), Some(tok)) = (encoder, decoder, tokenizer) {
+        match model_cleanup(&formatted, enc, dec, tok) {
+            Ok(result) if !result.trim().is_empty() => return result,
+            Ok(_) => log::warn!("Model returned empty output, using regex result"),
+            Err(e) => log::warn!("Model cleanup failed, using regex result: {e}"),
+        }
+    }
 
     formatted
 }
@@ -334,7 +469,7 @@ mod tests {
 
     #[test]
     fn test_full_cleanup() {
-        let result = cleanup_text("um i want to uh send an email to bob at test dot com", true, None, None);
+        let result = cleanup_text("um i want to uh send an email to bob at test dot com", true, None, None, None::<&T5Tokenizer>);
         assert!(result.starts_with("I"));
         assert!(result.contains("bob@test.com"));
         assert!(!result.contains("um"));
