@@ -80,7 +80,7 @@ export function AboutPage() {
           Made by Pieter de Bruijn
         </p>
         <p className="font-body text-[13px] text-chirp-stone-500">
-          Speech recognition: whisper.cpp
+          Speech recognition: Parakeet TDT (sherpa-onnx)
         </p>
         <p className="font-body text-[13px] text-chirp-stone-500">
           Text cleanup: Chirp Cleanup v1

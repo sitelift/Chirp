@@ -2,21 +2,26 @@ interface WaveformProps {
   amplitudes: number[]
 }
 
+const DISPLAY_BARS = 16
+
 export function Waveform({ amplitudes }: WaveformProps) {
-  const barCount = amplitudes.length || 48
+  const sourceLen = amplitudes.length || 48
+  const bars = Array.from({ length: DISPLAY_BARS }, (_, i) => {
+    const srcIdx = Math.round((i / DISPLAY_BARS) * sourceLen)
+    return amplitudes[srcIdx] ?? 0.06
+  })
 
   return (
-    <div className="flex h-10 w-full items-end justify-center gap-[3px]">
-      {Array.from({ length: barCount }, (_, i) => {
-        const amp = amplitudes[i] ?? 0.08
-        const height = Math.max(3, amp * 36)
+    <div className="flex h-6 items-center gap-[1.5px]">
+      {bars.map((amp, i) => {
+        const height = Math.max(3, Math.sqrt(amp) * 24)
         return (
           <div
             key={i}
-            className="w-[3px] rounded-full bg-chirp-amber-400"
+            className="w-[2px] rounded-full bg-chirp-amber-400"
             style={{
               height: `${height}px`,
-              transition: 'height 80ms linear',
+              transition: 'height 50ms ease-out',
             }}
           />
         )

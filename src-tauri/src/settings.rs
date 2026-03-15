@@ -23,10 +23,20 @@ fn dictionary_path() -> PathBuf {
 /// Load settings from disk, returning defaults if file doesn't exist
 pub fn load_settings() -> Settings {
     let path = settings_path();
-    match std::fs::read_to_string(&path) {
+    let mut settings = match std::fs::read_to_string(&path) {
         Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
         Err(_) => Settings::default(),
+    };
+
+    // Migrate old whisper model IDs to new default
+    match settings.model.as_str() {
+        "tiny" | "base" | "small" | "medium" => {
+            settings.model = "parakeet-tdt-0.6b".into();
+        }
+        _ => {}
     }
+
+    settings
 }
 
 /// Save settings to disk

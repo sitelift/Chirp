@@ -106,20 +106,33 @@ pub async fn start_recording(
     s.recording_state = RecordingState::Recording;
     drop(s);
 
-    // Start audio capture
-    let stream =
-        audio::start_capture(&device_id, buffer.inner().clone(), app_handle.clone()).map_err(
-            |e| {
-                if e.contains("No default input") || e.contains("Device not found") {
-                    "mic_not_found".to_string()
-                } else {
-                    "mic_permission".to_string()
-                }
-            },
-        )?;
+    // Start audio capture — convert Result to Option immediately so the
+    // non-Send cpal::Stream doesn't live across an await point.
+    let capture_err = match audio::start_capture(
+        &device_id,
+        buffer.inner().clone(),
+        app_handle.clone(),
+    ) {
+        Ok(stream) => {
+            *stream_handle.0.lock().unwrap() = Some(StreamWrapper(stream));
+            None
+        }
+        Err(e) => {
+            let msg = if e.contains("No default input") || e.contains("Device not found") {
+                "mic_not_found".to_string()
+            } else {
+                "mic_permission".to_string()
+            };
+            Some(msg)
+        }
+    };
 
-    // Store stream handle
-    *stream_handle.0.lock().unwrap() = Some(StreamWrapper(stream));
+    if let Some(err) = capture_err {
+        // Reset state so future recordings aren't permanently blocked
+        let mut s = state.lock().await;
+        s.recording_state = RecordingState::Idle;
+        return Err(err);
+    }
 
     Ok(())
 }
@@ -139,6 +152,10 @@ pub async fn stop_recording(
         *handle = None; // Drop stream → stops capture
     }
 
+    // WASAPI audio callbacks run on a separate thread; give in-flight callbacks
+    // time to finish before we read the buffer.
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
     {
         let mut s = state.lock().await;
         s.recording_state = RecordingState::Processing;
@@ -148,17 +165,31 @@ pub async fn stop_recording(
 
     // Get the audio data, prepending 150ms of silence so the resampler's
     // internal delay and model warm-up don't eat the first word.
+    // Clear the buffer afterward to prevent stale data on next recording.
     let audio_data = {
-        let buf = buffer.lock().unwrap();
+        let mut buf = buffer.lock().unwrap();
         let pad_samples = 16000 * 150 / 1000; // 150ms at 16kHz
         let mut padded = vec![0.0f32; pad_samples];
         padded.extend_from_slice(&buf);
+        buf.clear();
         padded
     };
 
     let sample_count = audio_data.len();
     let duration_secs = sample_count as f32 / 16000.0;
-    log::info!("Audio buffer: {sample_count} samples ({duration_secs:.1}s)");
+
+    // Audio fingerprint: log RMS, min/max, and a few sample values so we can
+    // verify the buffer actually contains NEW audio on each recording.
+    let rms = (audio_data.iter().map(|s| s * s).sum::<f32>() / sample_count as f32).sqrt();
+    let min_val = audio_data.iter().cloned().fold(f32::INFINITY, f32::min);
+    let max_val = audio_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
+    // Grab a few samples from the middle of the (non-padding) audio
+    let mid = sample_count / 2;
+    let samples_snapshot: Vec<f32> = audio_data[mid..mid.min(sample_count).max(mid) + 5.min(sample_count - mid)]
+        .to_vec();
+    log::info!(
+        "Audio buffer: {sample_count} samples ({duration_secs:.1}s), RMS={rms:.6}, min={min_val:.6}, max={max_val:.6}, mid_samples={samples_snapshot:?}"
+    );
 
     if audio_data.is_empty() {
         log::error!("Audio buffer is empty!");
@@ -234,6 +265,7 @@ pub async fn stop_recording(
     let word_count = result.split_whitespace().count();
 
     // Inject text at cursor
+    log::info!("Injecting transcribed text: '{result}'");
     let text_for_inject = result.clone();
     let inject_result =
         tokio::task::spawn_blocking(move || inject::inject_text(&text_for_inject))

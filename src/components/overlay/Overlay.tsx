@@ -1,8 +1,11 @@
 import { useEffect, useState } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { primaryMonitor } from '@tauri-apps/api/window'
+import { LogicalPosition, LogicalSize } from '@tauri-apps/api/dpi'
 import { useAppStore } from '../../stores/appStore'
 import { useAudio } from '../../hooks/useAudio'
 import { useRecording } from '../../hooks/useRecording'
+import { BirdMark } from '../shared/BirdMark'
 import { Listening } from './Listening'
 import { Processing } from './Processing'
 import { Done } from './Done'
@@ -19,39 +22,50 @@ export function Overlay() {
 
   // Show/hide the overlay window based on recording state
   // IMPORTANT: never call setFocus() — the target text field must keep focus for Ctrl+V injection
+  // Position the window to span the full screen width so CSS centering works
   useEffect(() => {
     const win = getCurrentWindow()
     if (status !== 'idle') {
-      win.show()
+      primaryMonitor().then(async (monitor) => {
+        if (monitor) {
+          const sf = monitor.scaleFactor
+          const w = monitor.size.width / sf
+          const h = monitor.size.height / sf
+          await win.setSize(new LogicalSize(w, h))
+          await win.setPosition(new LogicalPosition(0, 0))
+        }
+        await win.show()
+      })
     } else {
       win.hide()
     }
   }, [status])
 
-  // Auto-dismiss after done state
+  // Auto-dismiss after done/error state
   useEffect(() => {
-    if (status === 'done' && autoDismiss) {
-      const timer = setTimeout(() => {
-        setDismissing(true)
-        setTimeout(() => {
-          setStatus('idle')
-          setDismissing(false)
-        }, 150)
-      }, 800)
-      return () => clearTimeout(timer)
-    }
+    const delay = status === 'done' && autoDismiss ? 250 : status === 'error' ? 300 : null
+    if (delay === null) return
+
+    const timer = setTimeout(() => {
+      setDismissing(true)
+      setTimeout(() => {
+        setStatus('idle')
+        setDismissing(false)
+      }, 80)
+    }, delay)
+    return () => clearTimeout(timer)
   }, [status, autoDismiss, setStatus])
 
   if (status === 'idle') return null
 
   return (
-    <div className="flex h-screen w-screen items-end justify-center pb-4">
+    <div className="flex h-screen w-screen items-end justify-center pb-[80px]">
       <div
-        className={`w-[320px] rounded-2xl border border-chirp-stone-200 bg-white px-4 py-3 shadow-overlay ${
+        className={`flex h-12 items-center gap-3 rounded-full border border-chirp-stone-200 bg-white px-4 shadow-overlay ${
           dismissing ? 'animate-overlay-out' : 'animate-overlay-in'
         }`}
-        style={{ transition: 'height 200ms ease-out' }}
       >
+        <BirdMark size={22} />
         {status === 'listening' && <Listening />}
         {status === 'processing' && <Processing />}
         {status === 'done' && <Done />}

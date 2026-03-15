@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { DEFAULT_SETTINGS, type ErrorType } from '../lib/constants'
 
 export type AppStatus = 'idle' | 'listening' | 'processing' | 'done' | 'error'
-export type WhisperModel = 'tiny' | 'base' | 'small' | 'medium'
+export type SttModel = 'parakeet-tdt-0.6b'
 
 export interface DictionaryEntry {
   from: string
@@ -32,7 +32,7 @@ export interface AppState {
   noiseSuppression: boolean
 
   // Model
-  whisperModel: WhisperModel
+  model: SttModel
   modelDownloaded: Record<string, boolean>
   modelDownloadProgress: number | null
 
@@ -82,7 +82,7 @@ export const useAppStore = create<AppState>((set) => ({
   noiseSuppression: DEFAULT_SETTINGS.noiseSuppression,
 
   // Model
-  whisperModel: DEFAULT_SETTINGS.whisperModel,
+  model: DEFAULT_SETTINGS.model,
   modelDownloaded: {},
   modelDownloadProgress: null,
 

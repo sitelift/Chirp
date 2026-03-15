@@ -1,92 +1,125 @@
+use bzip2::read::BzDecoder;
 use futures_util::StreamExt;
+use sherpa_onnx::{
+    OfflineModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
+    OfflineTransducerModelConfig,
+};
 use std::path::PathBuf;
+use tar::Archive;
 use tauri::{AppHandle, Emitter};
-use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
 use crate::settings::models_dir;
+use crate::state::SherpaRecognizer;
 
-/// Model metadata: (filename, download url suffix, size in bytes)
-fn model_info(model: &str) -> (&'static str, &'static str, u64) {
+/// Model metadata: (archive name, download url, extracted dir name, size in bytes)
+fn model_info(model: &str) -> (&'static str, &'static str, &'static str, u64) {
     match model {
-        "tiny" => ("ggml-tiny.en.bin", "ggml-tiny.en.bin", 77_700_000),
-        "base" => ("ggml-base.en.bin", "ggml-base.en.bin", 147_500_000),
-        "small" => ("ggml-small.en.bin", "ggml-small.en.bin", 488_000_000),
-        "medium" => ("ggml-medium.en.bin", "ggml-medium.en.bin", 1_533_000_000),
-        // Also support the multilingual filenames (for existing downloads)
-        _ => ("ggml-small.bin", "ggml-small.bin", 488_000_000),
+        "parakeet-tdt-0.6b" => (
+            "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+            "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+            "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8",
+            487_000_000,
+        ),
+        _ => model_info("parakeet-tdt-0.6b"),
     }
 }
 
 /// Model file sizes for status reporting
 pub fn model_size_bytes(model: &str) -> u64 {
-    model_info(model).2
+    model_info(model).3
 }
 
-/// Get the expected path for a whisper model file
-pub fn model_path(model: &str) -> PathBuf {
-    let (filename, _, _) = model_info(model);
-    models_dir().join("whisper").join(filename)
+/// Get the expected path for the model directory
+pub fn model_dir(model: &str) -> PathBuf {
+    let (_, _, dir_name, _) = model_info(model);
+    models_dir().join("sherpa").join(dir_name)
 }
 
-/// Check if a model file exists on disk (check both .en and non-.en variants)
+/// Check if a model exists on disk
 pub fn model_exists(model: &str) -> bool {
-    if model_path(model).exists() {
-        return true;
-    }
-    // Fallback: check for non-English variant (from previous downloads)
-    let fallback = models_dir()
-        .join("whisper")
-        .join(format!("ggml-{model}.bin"));
-    fallback.exists()
+    let dir = model_dir(model);
+    dir.join("tokens.txt").exists()
 }
 
-/// Find the actual path of the model (preferring .en variant)
-fn resolve_model_path(model: &str) -> Option<PathBuf> {
-    let en_path = model_path(model);
-    if en_path.exists() {
-        return Some(en_path);
+/// Load a sherpa-onnx offline recognizer from disk
+pub fn load_model(model: &str) -> Result<SherpaRecognizer, String> {
+    let dir = model_dir(model);
+    if !dir.exists() {
+        return Err(format!("Model directory not found: {}", dir.display()));
     }
-    let fallback = models_dir()
-        .join("whisper")
-        .join(format!("ggml-{model}.bin"));
-    if fallback.exists() {
-        return Some(fallback);
+
+    // Find model files — Parakeet TDT uses transducer (encoder/decoder/joiner)
+    let encoder = find_model_file(&dir, "encoder")
+        .ok_or_else(|| "Encoder model file not found".to_string())?;
+    let decoder = find_model_file(&dir, "decoder")
+        .ok_or_else(|| "Decoder model file not found".to_string())?;
+    let joiner = find_model_file(&dir, "joiner")
+        .ok_or_else(|| "Joiner model file not found".to_string())?;
+    let tokens = dir.join("tokens.txt");
+    if !tokens.exists() {
+        return Err("tokens.txt not found".to_string());
+    }
+
+    let n_threads = std::thread::available_parallelism()
+        .map(|n| n.get() as i32)
+        .unwrap_or(4);
+
+    log::info!(
+        "Loading Parakeet TDT model from {} with {} threads",
+        dir.display(),
+        n_threads
+    );
+
+    let config = OfflineRecognizerConfig {
+        model_config: OfflineModelConfig {
+            transducer: OfflineTransducerModelConfig {
+                encoder: Some(encoder.to_string_lossy().into_owned()),
+                decoder: Some(decoder.to_string_lossy().into_owned()),
+                joiner: Some(joiner.to_string_lossy().into_owned()),
+            },
+            tokens: Some(tokens.to_string_lossy().into_owned()),
+            num_threads: n_threads,
+            provider: Some("cpu".to_string()),
+            debug: false,
+            ..Default::default()
+        },
+        decoding_method: Some("greedy_search".to_string()),
+        ..Default::default()
+    };
+
+    OfflineRecognizer::create(&config)
+        .map(SherpaRecognizer)
+        .ok_or_else(|| "Failed to create sherpa-onnx recognizer — check model files".to_string())
+}
+
+/// Find a model file matching a prefix (e.g. "encoder") with .onnx extension
+fn find_model_file(dir: &std::path::Path, prefix: &str) -> Option<PathBuf> {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let name = entry.file_name().to_string_lossy().to_lowercase();
+            if name.contains(prefix) && name.ends_with(".onnx") {
+                return Some(entry.path());
+            }
+        }
     }
     None
 }
 
-/// Load a whisper model from disk
-pub fn load_model(model: &str) -> Result<WhisperContext, String> {
-    let path = resolve_model_path(model)
-        .ok_or_else(|| format!("Model file not found for: {model}"))?;
-
-    let mut params = WhisperContextParameters::default();
-    params.use_gpu(true);
-    params.flash_attn(true);
-    log::info!(
-        "Loading whisper model '{}' with GPU + flash attention",
-        path.display()
-    );
-    WhisperContext::new_with_params(path.to_str().unwrap(), params)
-        .map_err(|e| format!("Failed to load whisper model: {e}"))
-}
-
-/// Download a whisper model from HuggingFace with progress events
+/// Download a model archive and extract it
 pub async fn download_model(model: &str, app_handle: AppHandle) -> Result<(), String> {
-    let (filename, url_suffix, _) = model_info(model);
-    let url = format!(
-        "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/{url_suffix}"
-    );
+    let (archive_name, url, _, _) = model_info(model);
+    let sherpa_dir = models_dir().join("sherpa");
 
-    let dest = models_dir().join("whisper").join(filename);
-    let parent = dest.parent().unwrap();
-    tokio::fs::create_dir_all(parent)
+    tokio::fs::create_dir_all(&sherpa_dir)
         .await
         .map_err(|e| format!("Failed to create models dir: {e}"))?;
 
+    let tmp_path = sherpa_dir.join(format!("{archive_name}.tmp"));
+    let archive_path = sherpa_dir.join(archive_name);
+
     let client = reqwest::Client::new();
     let response = client
-        .get(&url)
+        .get(url)
         .send()
         .await
         .map_err(|e| format!("Download request failed: {e}"))?;
@@ -98,7 +131,6 @@ pub async fn download_model(model: &str, app_handle: AppHandle) -> Result<(), St
     let total_size = response.content_length().unwrap_or(model_size_bytes(model));
     let mut downloaded: u64 = 0;
 
-    let tmp_path = dest.with_extension("bin.tmp");
     let mut file = tokio::fs::File::create(&tmp_path)
         .await
         .map_err(|e| format!("Failed to create file: {e}"))?;
@@ -111,69 +143,59 @@ pub async fn download_model(model: &str, app_handle: AppHandle) -> Result<(), St
             .map_err(|e| format!("Write error: {e}"))?;
 
         downloaded += chunk.len() as u64;
-        let progress = ((downloaded as f64 / total_size as f64) * 100.0).min(100.0) as u32;
+        // Reserve last 5% for extraction
+        let progress = ((downloaded as f64 / total_size as f64) * 95.0).min(95.0) as u32;
         let _ = app_handle.emit("model-download-progress", progress);
     }
 
-    tokio::fs::rename(&tmp_path, &dest)
+    drop(file);
+
+    tokio::fs::rename(&tmp_path, &archive_path)
         .await
         .map_err(|e| format!("Failed to finalize download: {e}"))?;
+
+    // Extract the tar.bz2 archive
+    let _ = app_handle.emit("model-download-progress", 96u32);
+
+    let extract_dir = sherpa_dir.clone();
+    let archive_path_clone = archive_path.clone();
+    tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&archive_path_clone)
+            .map_err(|e| format!("Failed to open archive: {e}"))?;
+        let decompressor = BzDecoder::new(file);
+        let mut archive = Archive::new(decompressor);
+        archive
+            .unpack(&extract_dir)
+            .map_err(|e| format!("Failed to extract archive: {e}"))?;
+        Ok::<(), String>(())
+    })
+    .await
+    .map_err(|e| format!("Extract task failed: {e}"))??;
+
+    // Clean up the archive file
+    let _ = tokio::fs::remove_file(&archive_path).await;
 
     let _ = app_handle.emit("model-download-progress", 100u32);
     Ok(())
 }
 
-/// Run whisper transcription on audio samples
+/// Run transcription on audio samples using sherpa-onnx
 pub fn transcribe(
-    ctx: &WhisperContext,
+    recognizer: &SherpaRecognizer,
     audio: &[f32],
-    language: &str,
+    _language: &str,
 ) -> Result<String, String> {
-    let mut params = FullParams::new(SamplingStrategy::Greedy { best_of: 1 });
-
-    // For .en models, always set English; for multilingual, respect setting
-    if language != "auto" {
-        params.set_language(Some(language));
-    } else {
-        // Default to English for speed (skip language detection)
-        params.set_language(Some("en"));
-    }
-
-    params.set_print_special(false);
-    params.set_print_progress(false);
-    params.set_print_realtime(false);
-    params.set_print_timestamps(false);
-    params.set_suppress_blank(true);
-    params.set_no_timestamps(true);
-    params.set_single_segment(true);
-
-    // Use all CPU threads for non-GPU work
-    let n_threads = std::thread::available_parallelism()
-        .map(|n| n.get() as i32)
-        .unwrap_or(4);
-    params.set_n_threads(n_threads);
-
-    // Speed: disable token-level timestamps
-    params.set_token_timestamps(false);
-
-    let mut state = ctx.create_state().map_err(|e| format!("Failed to create state: {e}"))?;
+    let stream = recognizer.0.create_stream();
+    stream.accept_waveform(16000, audio);
 
     let start = std::time::Instant::now();
-    state
-        .full(params, audio)
-        .map_err(|e| format!("Transcription failed: {e}"))?;
+    recognizer.0.decode(&stream);
     let elapsed = start.elapsed();
-    log::info!("Whisper inference took {:.0}ms", elapsed.as_millis());
+    log::info!("Sherpa-onnx inference took {:.0}ms", elapsed.as_millis());
 
-    let num_segments = state.full_n_segments();
-    let mut text = String::new();
-    for i in 0..num_segments {
-        if let Some(segment) = state.get_segment(i) {
-            if let Ok(s) = segment.to_str_lossy() {
-                text.push_str(&s);
-            }
-        }
-    }
+    let result = stream
+        .get_result()
+        .ok_or_else(|| "No recognition result".to_string())?;
 
-    Ok(text.trim().to_string())
+    Ok(result.text.trim().to_string())
 }

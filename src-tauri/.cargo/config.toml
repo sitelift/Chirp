@@ -1,0 +1,2 @@
+[env]
+SHERPA_ONNX_LIB_DIR = { value = "sherpa-onnx-lib", relative = true }

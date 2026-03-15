@@ -7,7 +7,7 @@ import { useTauri } from './useTauri'
 const SYNCED_KEYS = [
   'hotkey', 'launchAtLogin', 'showInMenuBar', 'playSoundOnComplete',
   'autoDismissOverlay', 'silenceTimeout', 'language', 'smartFormatting',
-  'inputDevice', 'noiseSuppression', 'whisperModel', 'onboardingComplete',
+  'inputDevice', 'noiseSuppression', 'model', 'onboardingComplete',
 ] as const
 
 /**
@@ -31,8 +31,8 @@ export function useSettingsSync() {
       console.warn('Failed to load settings:', e)
     })
 
-    // Check model download status for all models
-    for (const model of ['tiny', 'base', 'small', 'medium']) {
+    // Check model download status
+    for (const model of ['parakeet-tdt-0.6b']) {
       tauri.getModelStatus(model).then((status) => {
         if (status.downloaded) {
           updateSettings({

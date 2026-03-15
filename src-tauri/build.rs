@@ -1,12 +1,7 @@
 fn main() {
-    // Ensure LLVM is findable for bindgen (whisper-rs-sys)
-    if std::env::var("LIBCLANG_PATH").is_err() {
-        let llvm_path = "C:\\Program Files\\LLVM\\bin";
-        if std::path::Path::new(llvm_path).join("libclang.dll").exists() {
-            println!("cargo:rustc-env=LIBCLANG_PATH={llvm_path}");
-            std::env::set_var("LIBCLANG_PATH", llvm_path);
-        }
-    }
+    // Point linker to pre-built sherpa-onnx shared libraries
+    let lib_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sherpa-onnx-lib");
+    println!("cargo:rustc-link-search=native={}", lib_dir.display());
 
     tauri_build::build()
 }

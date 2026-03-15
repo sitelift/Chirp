@@ -246,7 +246,7 @@ fn compute_amplitude_bars(samples: &[f32], bar_count: usize) -> Vec<f32> {
             let chunk = &tail[start..end];
             let rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
             // Scale up for visibility (RMS of speech is typically 0.01-0.1)
-            (rms * 5.0).min(1.0)
+            (rms * 12.0).min(1.0)
         })
         .collect()
 }

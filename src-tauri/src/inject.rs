@@ -5,23 +5,70 @@ use std::time::Duration;
 
 /// Inject text at the current cursor position by:
 /// 1. Saving the current clipboard contents
-/// 2. Setting the clipboard to the new text
+/// 2. Setting the clipboard to the new text (with verification)
 /// 3. Simulating Ctrl+V
-/// 4. Restoring the original clipboard
+/// 4. Restoring the original clipboard (deferred to background thread)
 pub fn inject_text(text: &str) -> Result<(), String> {
-    let mut clipboard =
-        Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+    // Save current clipboard content using a short-lived Clipboard instance
+    let saved = {
+        let mut cb = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+        let s = cb.get_text().ok();
+        log::info!(
+            "Clipboard before inject: {:?}",
+            s.as_deref().map(|t| if t.len() > 80 { &t[..80] } else { t })
+        );
+        s
+    };
 
-    // Save current clipboard content
-    let saved = clipboard.get_text().ok();
+    // Set new text with retry loop and read-back verification.
+    let mut verified = false;
+    for attempt in 0..5 {
+        {
+            let mut cb =
+                Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+            if let Err(e) = cb.set_text(text.to_string()) {
+                log::warn!("Clipboard set_text attempt {}/5: {e}", attempt + 1);
+                thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+        }
 
-    // Set new text
-    clipboard
-        .set_text(text.to_string())
-        .map_err(|e| format!("Failed to set clipboard: {e}"))?;
+        // Small delay then verify with a fresh handle
+        thread::sleep(Duration::from_millis(30));
 
-    // Brief delay to ensure clipboard is ready
-    thread::sleep(Duration::from_millis(20));
+        {
+            let mut cb =
+                Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
+            match cb.get_text() {
+                Ok(current) if current == text => {
+                    log::info!("Clipboard verified on attempt {}/5", attempt + 1);
+                    verified = true;
+                    break;
+                }
+                Ok(current) => {
+                    log::warn!(
+                        "Clipboard mismatch on attempt {}/5: expected '{}', got '{}'",
+                        attempt + 1,
+                        if text.len() > 60 { &text[..60] } else { text },
+                        if current.len() > 60 {
+                            &current[..60]
+                        } else {
+                            &current
+                        }
+                    );
+                }
+                Err(e) => {
+                    log::warn!("Clipboard read-back failed on attempt {}/5: {e}", attempt + 1);
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(20));
+    }
+
+    if !verified {
+        return Err("Failed to set clipboard — text did not persist after 5 attempts".into());
+    }
 
     // Simulate Ctrl+V
     let mut enigo =
@@ -36,12 +83,25 @@ pub fn inject_text(text: &str) -> Result<(), String> {
         .key(Key::Control, Direction::Release)
         .map_err(|e| format!("Key release failed: {e}"))?;
 
-    // Delay before restoring — must be long enough for the target app to read clipboard
-    thread::sleep(Duration::from_millis(100));
-
-    // Restore original clipboard
+    // Restore clipboard in a background thread after a generous delay.
+    // The target app needs time to process the Ctrl+V and read the clipboard.
+    // A 300ms synchronous delay was racing the paste — sometimes the restore
+    // happened before the target app read the clipboard, causing it to paste
+    // the OLD (restored) text instead of the new transcription.
     if let Some(original) = saved {
-        let _ = clipboard.set_text(original);
+        thread::spawn(move || {
+            thread::sleep(Duration::from_secs(2));
+            match Clipboard::new() {
+                Ok(mut cb) => {
+                    if let Err(e) = cb.set_text(original) {
+                        log::warn!("Failed to restore clipboard: {e}");
+                    } else {
+                        log::debug!("Clipboard restored after 2s delay");
+                    }
+                }
+                Err(e) => log::warn!("Failed to open clipboard for restore: {e}"),
+            }
+        });
     }
 
     Ok(())

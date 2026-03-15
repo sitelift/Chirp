@@ -123,12 +123,14 @@ export function useRecording() {
       }
     }
 
-    // Escape key to cancel
+    // Escape key to cancel/dismiss
     const handleKeyDown = async (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         const status = useAppStore.getState().status
         if (status === 'listening') {
           await tauri.cancelRecording()
+          setStatus('idle')
+        } else if (status === 'error' || status === 'done') {
           setStatus('idle')
         }
       }
