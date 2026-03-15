@@ -1,5 +1,5 @@
 """
-Export trained FLAN-T5-small to ONNX and quantize to INT8.
+Export trained coedit-small to ONNX and quantize to INT8.
 
 Usage:
     python export_onnx.py --model output/chirp-cleanup/best --output output/onnx
@@ -69,9 +69,9 @@ def verify_model(output_dir, model_dir):
     ort_model = ORTModelForSeq2SeqLM.from_pretrained(output_dir)
 
     test_inputs = [
-        "clean transcript: um so i was thinking we should uh update the database",
-        "clean transcript: the meeting is at two thirty pm on friday and uh we need to prepare the slides",
-        "clean transcript: hey can you send that to john at example dot com question mark",
+        "Fix the text: So what I was trying to say is that we need to update the database because it's getting really slow.",
+        "Fix the text: The meeting is at 2:30 PM on Friday and we need to prepare the slides and also the budget report and the quarterly numbers.",
+        "Fix the text: Hey Mike, just wanted to follow up on the proposal we discussed last week. I've made the changes you suggested. Let me know if you want to schedule a call. Thanks, Sarah.",
     ]
 
     print("\nTest results:")
@@ -80,7 +80,7 @@ def verify_model(output_dir, model_dir):
         outputs = ort_model.generate(**inputs, max_length=256, num_beams=1)
         result = tokenizer.decode(outputs[0], skip_special_tokens=True)
 
-        display_input = inp.replace("clean transcript: ", "")
+        display_input = inp.replace("Fix the text: ", "")
         print(f"  Input:  {display_input}")
         print(f"  Output: {result}")
         print()
@@ -110,7 +110,7 @@ def prepare_for_rust(output_dir, deploy_dir=None):
 
     # Write a minimal config
     config = {
-        "task_prefix": "clean transcript: ",
+        "task_prefix": "Fix the text: ",
         "max_input_length": 256,
         "max_output_length": 256,
         "model_type": "t5-small",

@@ -1,5 +1,5 @@
 """
-Fine-tune FLAN-T5-small on transcript cleanup pairs.
+Fine-tune coedit-small on transcript cleanup pairs.
 
 Usage:
     python train.py --data data/training_pairs.jsonl --epochs 5
@@ -20,7 +20,7 @@ from transformers import (
     get_linear_schedule_with_warmup,
 )
 
-TASK_PREFIX = "clean transcript: "
+TASK_PREFIX = "Fix the text: "
 MAX_INPUT_LEN = 256
 MAX_OUTPUT_LEN = 256
 
@@ -176,7 +176,7 @@ def evaluate(model, dataloader, tokenizer, device, num_samples=5):
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train FLAN-T5-small for transcript cleanup")
+    parser = argparse.ArgumentParser(description="Train coedit-small for transcript cleanup")
     parser.add_argument("--data", type=str, default="data/training_pairs.jsonl")
     parser.add_argument("--output", type=str, default="output/chirp-cleanup")
     parser.add_argument("--epochs", type=int, default=5)
@@ -196,8 +196,8 @@ def main():
     print(f"Loaded {len(pairs)} pairs")
 
     # Load model and tokenizer
-    print("Loading FLAN-T5-small...")
-    model_name = "google/flan-t5-small"
+    print("Loading coedit-small...")
+    model_name = "grammarly/coedit-small"
     tokenizer = T5Tokenizer.from_pretrained(model_name)
     model = T5ForConditionalGeneration.from_pretrained(model_name)
     model.to(device)

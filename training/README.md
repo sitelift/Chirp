@@ -1,6 +1,8 @@
 # Chirp Cleanup Model Training
 
-Train a FLAN-T5-small model to clean up speech-to-text transcripts.
+Fine-tune grammarly/coedit-small (T5-small pre-trained on text correction) to transform dictated speech into polished written text.
+
+The model runs AFTER regex cleanup (filler removal, spoken punctuation, basic capitalization) and handles what regex can't: restructuring, formatting, course correction, and making text read like it was typed.
 
 ## Setup (Mac Mini M4)
 
@@ -15,10 +17,10 @@ pip install -r requirements.txt
 
 ```bash
 export ANTHROPIC_API_KEY=sk-ant-...
-python generate_data.py --pairs 15000 --output data/training_pairs.jsonl
+python generate_data.py --pairs 25000 --output data/training_pairs.jsonl
 ```
 
-Takes ~2-3 hours, costs ~$8-12. Supports `--resume` if interrupted.
+Takes ~1-2 hours, costs ~$15-20. Supports `--resume` if interrupted.
 
 ## Step 2: Train
 
