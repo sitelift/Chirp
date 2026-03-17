@@ -14,6 +14,8 @@ export const DEFAULT_SETTINGS = {
   model: 'parakeet-tdt-0.6b' as const,
   onboardingComplete: false,
   aiCleanup: false,
+  overlayPosition: 'bottom' as 'bottom' | 'top',
+  showPassiveOverlay: true,
 }
 
 export const STT_MODELS = [
@@ -22,8 +24,15 @@ export const STT_MODELS = [
 
 export const LLM_MODEL = {
   name: 'Qwen 2.5 1.5B',
+  displayName: 'Smart Cleanup',
   size: '1.1 GB',
+  friendlySize: 'About 1 GB',
   description: 'Fast, local AI cleanup on any PC.',
+}
+
+export const CLEANUP_EXAMPLE = {
+  before: "so um basically I was thinking that we should like probably move the meeting to uh Thursday if that works",
+  after: "I was thinking we should probably move the meeting to Thursday, if that works.",
 }
 
 export const SILENCE_TIMEOUT_OPTIONS = [

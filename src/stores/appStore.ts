@@ -9,12 +9,18 @@ export interface DictionaryEntry {
   to: string
 }
 
+export interface SnippetEntry {
+  trigger: string
+  expansion: string
+}
+
 export interface TranscriptionEntry {
   text: string
   timestamp: string
   wordCount: number
   durationMs: number
   speechDurationMs: number
+  wasCleanedUp?: boolean
 }
 
 export interface AppState {
@@ -23,6 +29,7 @@ export interface AppState {
   errorType: ErrorType | null
   wordCount: number | null
   amplitudes: number[]
+  liveTranscription: string
 
   // Settings
   hotkey: string
@@ -52,11 +59,21 @@ export interface AppState {
   // Dictionary
   dictionary: DictionaryEntry[]
 
+  // Snippets
+  snippets: SnippetEntry[]
+
   // History
   history: TranscriptionEntry[]
 
   // Onboarding
   onboardingComplete: boolean
+
+  // Overlay
+  overlayPosition: 'bottom' | 'top'
+  showPassiveOverlay: boolean
+
+  // Smart Cleanup promo
+  smartCleanupDismissed: boolean
 
   // Loading
   settingsLoaded: boolean
@@ -67,6 +84,7 @@ export interface AppState {
   // Actions
   setStatus: (status: AppStatus) => void
   setError: (errorType: ErrorType) => void
+  setLiveTranscription: (text: string) => void
   setAmplitudes: (data: number[]) => void
   setWordCount: (count: number) => void
   setInputLevel: (level: number) => void
@@ -76,11 +94,15 @@ export interface AppState {
   updateSettings: (partial: Partial<AppState>) => void
   addDictionaryEntry: (from: string, to: string) => void
   removeDictionaryEntry: (index: number) => void
+  setSnippets: (snippets: SnippetEntry[]) => void
+  addSnippet: (trigger: string, expansion: string) => void
+  removeSnippet: (index: number) => void
   setSettingsLoaded: () => void
   setHistory: (history: TranscriptionEntry[]) => void
   removeHistoryEntry: (timestamp: string) => void
   setSettingsPage: (page: string) => void
   setOnboardingComplete: (complete: boolean) => void
+  setSmartCleanupDismissed: (dismissed: boolean) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -89,6 +111,7 @@ export const useAppStore = create<AppState>((set) => ({
   errorType: null,
   wordCount: null,
   amplitudes: [],
+  liveTranscription: '',
 
   // Settings (from defaults)
   hotkey: DEFAULT_SETTINGS.hotkey,
@@ -118,11 +141,21 @@ export const useAppStore = create<AppState>((set) => ({
   // Dictionary
   dictionary: [],
 
+  // Snippets
+  snippets: [],
+
   // History
   history: [],
 
   // Onboarding
   onboardingComplete: DEFAULT_SETTINGS.onboardingComplete,
+
+  // Overlay
+  overlayPosition: DEFAULT_SETTINGS.overlayPosition,
+  showPassiveOverlay: DEFAULT_SETTINGS.showPassiveOverlay,
+
+  // Smart Cleanup promo
+  smartCleanupDismissed: false,
 
   // Loading
   settingsLoaded: false,
@@ -133,6 +166,7 @@ export const useAppStore = create<AppState>((set) => ({
   // Actions
   setStatus: (status) => set({ status, errorType: status !== 'error' ? null : undefined }),
   setError: (errorType) => set({ status: 'error', errorType }),
+  setLiveTranscription: (liveTranscription) => set({ liveTranscription }),
   setAmplitudes: (amplitudes) => set({ amplitudes }),
   setWordCount: (wordCount) => set({ wordCount }),
   setInputLevel: (inputLevel) => set({ inputLevel }),
@@ -144,10 +178,16 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({ dictionary: [...state.dictionary, { from, to }] })),
   removeDictionaryEntry: (index) =>
     set((state) => ({ dictionary: state.dictionary.filter((_, i) => i !== index) })),
+  setSnippets: (snippets) => set({ snippets }),
+  addSnippet: (trigger, expansion) =>
+    set((state) => ({ snippets: [...state.snippets, { trigger, expansion }] })),
+  removeSnippet: (index) =>
+    set((state) => ({ snippets: state.snippets.filter((_, i) => i !== index) })),
   setSettingsLoaded: () => set({ settingsLoaded: true }),
   setHistory: (history) => set({ history }),
   removeHistoryEntry: (timestamp) =>
     set((state) => ({ history: state.history.filter((e) => e.timestamp !== timestamp) })),
   setSettingsPage: (settingsPage) => set({ settingsPage }),
   setOnboardingComplete: (onboardingComplete) => set({ onboardingComplete }),
+  setSmartCleanupDismissed: (smartCleanupDismissed) => set({ smartCleanupDismissed }),
 }))

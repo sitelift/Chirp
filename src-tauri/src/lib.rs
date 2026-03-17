@@ -6,6 +6,7 @@ mod history;
 mod inject;
 mod llm;
 mod settings;
+mod snippets;
 mod state;
 mod transcribe;
 
@@ -24,6 +25,7 @@ pub fn run() {
     // Read settings early so we can configure the shortcut before building
     let initial_settings = settings::load_settings();
     let initial_dictionary = settings::load_dictionary();
+    let initial_snippets = settings::load_snippets();
     let initial_history = history::load_history();
     let hotkey_str = initial_settings.hotkey.clone();
 
@@ -77,6 +79,7 @@ pub fn run() {
             Arc::new(tokio::sync::Mutex::new(AppState::new(
                 initial_settings,
                 initial_dictionary,
+                initial_snippets,
                 initial_history,
             )))
         })
@@ -105,6 +108,9 @@ pub fn run() {
             commands::start_llm,
             commands::stop_llm,
             commands::test_llm_cleanup,
+            commands::test_microphone,
+            commands::get_snippets,
+            commands::update_snippets,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -138,6 +144,7 @@ pub fn run() {
                         }
                         Err(e) => log::error!("Failed to load speech model: {e}"),
                     }
+
                 }
 
             }

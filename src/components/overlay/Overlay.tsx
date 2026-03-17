@@ -12,39 +12,54 @@ import { Polishing } from './Polishing'
 import { Done } from './Done'
 import { Error } from './Error'
 
+// Window stays the same size for both states — no jarring resize
+const WIN_W = 600
+const WIN_H = 56
+const OFFSET = 80
+
 export function Overlay() {
   const status = useAppStore((s) => s.status)
   const autoDismiss = useAppStore((s) => s.autoDismissOverlay)
   const setStatus = useAppStore((s) => s.setStatus)
+  const position = useAppStore((s) => s.overlayPosition)
+  const showPassive = useAppStore((s) => s.showPassiveOverlay)
   const [dismissing, setDismissing] = useState(false)
 
   useAudio()
   useRecording()
 
-  // Show/hide the overlay window based on recording state
-  // IMPORTANT: never call setFocus() — the target text field must keep focus for Ctrl+V injection
-  // Position the window to span the full screen width so CSS centering works
+  const isActive = status !== 'idle'
+  const shouldShow = isActive || showPassive
+
+  // Position the window once — same size for passive and active
   useEffect(() => {
     const win = getCurrentWindow()
-    if (status !== 'idle') {
-      primaryMonitor().then(async (monitor) => {
-        if (monitor) {
-          const sf = monitor.scaleFactor
-          const w = monitor.size.width / sf
-          const h = monitor.size.height / sf
-          await win.setSize(new LogicalSize(w, h))
-          await win.setPosition(new LogicalPosition(0, 0))
-        }
-        await win.show()
-      })
-    } else {
+
+    if (!shouldShow) {
       win.hide()
+      return
     }
-  }, [status])
+
+    primaryMonitor().then(async (monitor) => {
+      if (!monitor) return
+      const sf = monitor.scaleFactor
+      const screenW = monitor.size.width / sf
+      const screenH = monitor.size.height / sf
+
+      const x = Math.round((screenW - WIN_W) / 2)
+      const y = position === 'top'
+        ? OFFSET
+        : Math.round(screenH - OFFSET - WIN_H)
+
+      await win.setSize(new LogicalSize(WIN_W, WIN_H))
+      await win.setPosition(new LogicalPosition(x, y))
+      await win.show()
+    })
+  }, [shouldShow, position])
 
   // Auto-dismiss after done/error state
   useEffect(() => {
-    const delay = status === 'done' && autoDismiss ? 600 : status === 'error' ? 2000 : null
+    const delay = status === 'done' && autoDismiss ? 1200 : status === 'error' ? 2000 : null
     if (delay === null) return
 
     const timer = setTimeout(() => {
@@ -52,26 +67,33 @@ export function Overlay() {
       setTimeout(() => {
         setStatus('idle')
         setDismissing(false)
-      }, 80)
+      }, 200)
     }, delay)
     return () => clearTimeout(timer)
   }, [status, autoDismiss, setStatus])
 
-  if (status === 'idle') return null
+  if (!shouldShow) return null
 
   return (
-    <div className="flex h-screen w-screen items-end justify-center pb-[80px]">
+    <div className="flex h-screen w-screen items-center justify-center">
+      {/* Single pill that morphs between passive and active */}
       <div
-        className={`flex h-12 items-center gap-3 rounded-full border border-chirp-stone-200 bg-white px-4 shadow-overlay ${
-          dismissing ? 'animate-overlay-out' : 'animate-overlay-in'
-        }`}
+        className={`flex items-center rounded-full transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+          isActive
+            ? 'h-12 gap-3 border border-chirp-stone-200 bg-white px-4 shadow-overlay'
+            : 'h-9 border border-chirp-stone-200/50 bg-white/70 px-2.5 shadow-sm backdrop-blur-sm'
+        } ${dismissing ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}
       >
-        <BirdMark size={22} />
-        {status === 'listening' && <Listening />}
-        {status === 'processing' && <Processing />}
-        {status === 'polishing' && <Polishing />}
-        {status === 'done' && <Done />}
-        {status === 'error' && <Error />}
+        <BirdMark size={isActive ? 22 : 16} />
+        {isActive && (
+          <div className="animate-fade-in flex items-center">
+            {status === 'listening' && <Listening />}
+            {status === 'processing' && <Processing />}
+            {status === 'polishing' && <Polishing />}
+            {status === 'done' && <Done />}
+            {status === 'error' && <Error />}
+          </div>
+        )}
       </div>
     </div>
   )

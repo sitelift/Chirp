@@ -1,12 +1,14 @@
-import { LayoutDashboard, Settings as SettingsIcon, Mic, Cpu, BookOpen, Info, Sparkles } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { LayoutDashboard, Settings as SettingsIcon, Mic, Cpu, BookOpen, Zap, Info } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
+import { useTauri } from '../../hooks/useTauri'
 import { BirdMark } from '../shared/BirdMark'
 import { HomePage } from './HomePage'
 import { GeneralPage } from './GeneralPage'
 import { AudioPage } from './AudioPage'
 import { ModelPage } from './ModelPage'
-import { AiCleanupPage } from './AiCleanupPage'
 import { DictionaryPage } from './DictionaryPage'
+import { SnippetsPage } from './SnippetsPage'
 import { AboutPage } from './AboutPage'
 
 const NAV_SECTIONS = [
@@ -22,13 +24,13 @@ const NAV_SECTIONS = [
       { id: 'general', label: 'General', icon: SettingsIcon },
       { id: 'audio', label: 'Audio', icon: Mic },
       { id: 'model', label: 'Model', icon: Cpu },
-      { id: 'ai-cleanup', label: 'AI Cleanup', icon: Sparkles },
     ],
   },
   {
     label: 'TOOLS',
     items: [
       { id: 'dictionary', label: 'Dictionary', icon: BookOpen },
+      { id: 'snippets', label: 'Snippets', icon: Zap },
     ],
   },
 ]
@@ -38,8 +40,8 @@ const PAGES: Record<string, React.FC> = {
   general: GeneralPage,
   audio: AudioPage,
   model: ModelPage,
-  'ai-cleanup': AiCleanupPage,
   dictionary: DictionaryPage,
+  snippets: SnippetsPage,
   about: AboutPage,
 }
 
@@ -48,8 +50,24 @@ export function Settings() {
   const setSettingsPage = useAppStore((s) => s.setSettingsPage)
   const modelDownloaded = useAppStore((s) => s.modelDownloaded)
   const model = useAppStore((s) => s.model)
+  const aiCleanup = useAppStore((s) => s.aiCleanup)
+  const tauri = useTauri()
+  const [llmDownloaded, setLlmDownloaded] = useState(false)
 
-  const isReady = modelDownloaded[model]
+  const sttReady = modelDownloaded[model]
+
+  useEffect(() => {
+    tauri.getLlmStatus().then((status) => {
+      setLlmDownloaded(status.binaryDownloaded && status.modelDownloaded)
+    }).catch(() => {})
+  }, [])
+
+  const isReady = sttReady && (!aiCleanup || llmDownloaded)
+  const statusLabel = !sttReady
+    ? 'Model needed'
+    : aiCleanup && !llmDownloaded
+      ? 'Setup needed'
+      : 'Ready'
   const PageComponent = PAGES[settingsPage] ?? HomePage
 
   return (
@@ -68,7 +86,7 @@ export function Settings() {
         <div className="flex items-center gap-2 px-3 pb-4 mb-2 border-b border-chirp-stone-200">
           <div className={`w-2 h-2 rounded-full ${isReady ? 'bg-chirp-success' : 'bg-chirp-amber-400'}`} />
           <span className="font-body text-xs text-chirp-stone-500">
-            {isReady ? 'Ready' : 'Model needed'}
+            {statusLabel}
           </span>
         </div>
 

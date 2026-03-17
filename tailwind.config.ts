@@ -71,7 +71,7 @@ export default {
       },
       animation: {
         'overlay-in': 'overlayIn 120ms cubic-bezier(0.16, 1, 0.3, 1)',
-        'overlay-out': 'overlayOut 80ms ease-in',
+        'overlay-out': 'overlayOut 150ms ease-in',
         shimmer: 'shimmer 1.5s ease-in-out infinite',
         'fade-in': 'fadeIn 200ms ease-out',
         'pulse-gentle': 'pulse-gentle 2s ease-in-out infinite',

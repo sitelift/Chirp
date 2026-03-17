@@ -37,6 +37,18 @@ pub struct Settings {
     pub onboarding_complete: bool,
     #[serde(default)]
     pub ai_cleanup: bool,
+    #[serde(default = "default_overlay_position")]
+    pub overlay_position: String,
+    #[serde(default = "default_true")]
+    pub show_passive_overlay: bool,
+}
+
+fn default_overlay_position() -> String {
+    "bottom".into()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -55,6 +67,8 @@ impl Default for Settings {
             model: "parakeet-tdt-0.6b".into(),
             onboarding_complete: false,
             ai_cleanup: false,
+            overlay_position: "bottom".into(),
+            show_passive_overlay: true,
         }
     }
 }
@@ -64,6 +78,13 @@ impl Default for Settings {
 pub struct DictionaryEntry {
     pub from: String,
     pub to: String,
+}
+
+/// Snippet entry for text expansion
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SnippetEntry {
+    pub trigger: String,
+    pub expansion: String,
 }
 
 /// Audio device info sent to frontend
@@ -138,6 +159,7 @@ impl std::fmt::Display for ChirpErrorType {
 pub struct AppState {
     pub settings: Settings,
     pub dictionary: Vec<DictionaryEntry>,
+    pub snippets: Vec<SnippetEntry>,
     pub history: Vec<TranscriptionEntry>,
     pub recording_state: RecordingState,
     pub recognizer: Option<SherpaRecognizer>,
@@ -146,10 +168,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(settings: Settings, dictionary: Vec<DictionaryEntry>, history: Vec<TranscriptionEntry>) -> Self {
+    pub fn new(settings: Settings, dictionary: Vec<DictionaryEntry>, snippets: Vec<SnippetEntry>, history: Vec<TranscriptionEntry>) -> Self {
         Self {
             settings,
             dictionary,
+            snippets,
             history,
             recording_state: RecordingState::Idle,
             recognizer: None,

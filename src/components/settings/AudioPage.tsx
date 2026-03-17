@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import type { AudioDevice } from '../../hooks/useTauri'
@@ -11,10 +11,11 @@ export function AudioPage() {
   const store = useAppStore()
   const tauri = useTauri()
   const [devices, setDevices] = useState<AudioDevice[]>([])
-  const [testState, setTestState] = useState<'idle' | 'recording'>('idle')
-  const [testCountdown, setTestCountdown] = useState(5)
+  const [testState, setTestState] = useState<'idle' | 'recording' | 'playing'>('idle')
+  const [testCountdown, setTestCountdown] = useState(3)
   const [inputLevel, setInputLevel] = useState(0)
   const [devicesLoading, setDevicesLoading] = useState(true)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => {
     tauri.getAudioDevices().then(setDevices).finally(() => setDevicesLoading(false))
@@ -33,7 +34,7 @@ export function AudioPage() {
 
   const handleTest = async () => {
     setTestState('recording')
-    setTestCountdown(5)
+    setTestCountdown(3)
     const interval = setInterval(() => {
       setTestCountdown((c) => {
         if (c <= 1) {
@@ -44,15 +45,41 @@ export function AudioPage() {
       })
     }, 1000)
 
-    await new Promise((r) => setTimeout(r, 5000))
-    clearInterval(interval)
-    setTestState('idle')
+    try {
+      const wavBytes = await tauri.testMicrophone()
+      clearInterval(interval)
+
+      // Convert number array to WAV blob and play it back
+      const uint8 = new Uint8Array(wavBytes)
+      const blob = new Blob([uint8], { type: 'audio/wav' })
+      const url = URL.createObjectURL(blob)
+
+      setTestState('playing')
+      const audio = new Audio(url)
+      audioRef.current = audio
+      audio.onended = () => {
+        setTestState('idle')
+        URL.revokeObjectURL(url)
+        audioRef.current = null
+      }
+      audio.onerror = () => {
+        setTestState('idle')
+        URL.revokeObjectURL(url)
+        audioRef.current = null
+      }
+      audio.play()
+    } catch {
+      clearInterval(interval)
+      setTestState('idle')
+    }
   }
 
   const testButtonText =
     testState === 'recording'
-      ? `Listening... (${testCountdown}s)`
-      : 'Check Input Level'
+      ? `Recording... (${testCountdown}s)`
+      : testState === 'playing'
+        ? 'Playing back...'
+        : 'Test Microphone'
 
   return (
     <div className="flex flex-col gap-6">
@@ -85,13 +112,18 @@ export function AudioPage() {
           </div>
         </div>
 
-        <Button
-          variant="secondary"
-          onClick={handleTest}
-          disabled={testState !== 'idle'}
-        >
-          {testButtonText}
-        </Button>
+        <div>
+          <Button
+            variant="secondary"
+            onClick={handleTest}
+            disabled={testState !== 'idle'}
+          >
+            {testButtonText}
+          </Button>
+          <p className="font-body text-xs text-chirp-stone-400 mt-1.5">
+            Records 3 seconds, then plays it back so you can hear yourself.
+          </p>
+        </div>
       </SettingGroup>
 
       <SettingGroup label="Processing">

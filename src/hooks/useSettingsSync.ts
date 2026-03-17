@@ -11,6 +11,8 @@ const SYNCED_KEYS = [
   'autoDismissOverlay', 'silenceTimeout', 'language', 'smartFormatting',
   'inputDevice', 'noiseSuppression', 'model', 'onboardingComplete',
   'aiCleanup',
+  'overlayPosition',
+  'showPassiveOverlay',
 ] as const
 
 /**
@@ -41,6 +43,13 @@ export function useSettingsSync() {
       useAppStore.getState().setHistory(entries)
     }).catch((e) => {
       console.warn('Failed to load history:', e)
+    })
+
+    // Load snippets
+    tauri.getSnippets().then((entries) => {
+      useAppStore.getState().setSnippets(entries)
+    }).catch((e) => {
+      console.warn('Failed to load snippets:', e)
     })
 
     // Check model download status
@@ -85,6 +94,13 @@ export function useSettingsSync() {
       if (state.dictionary !== prevState.dictionary) {
         invoke('update_dictionary', { entries: state.dictionary }).catch((e) => {
           console.warn('Failed to sync dictionary:', e)
+        })
+      }
+
+      // Sync snippet changes
+      if (state.snippets !== prevState.snippets) {
+        invoke('update_snippets', { entries: state.snippets }).catch((e) => {
+          console.warn('Failed to sync snippets:', e)
         })
       }
     })

@@ -140,6 +140,20 @@ export function useTauri() {
     return await invoke<string>('test_llm_cleanup', { text })
   }
 
+  const getSnippets = async (): Promise<Array<{ trigger: string; expansion: string }>> => {
+    return await invoke<Array<{ trigger: string; expansion: string }>>('get_snippets')
+  }
+
+  const updateSnippets = async (
+    entries: Array<{ trigger: string; expansion: string }>
+  ): Promise<void> => {
+    await invoke('update_snippets', { entries })
+  }
+
+  const testMicrophone = async (): Promise<number[]> => {
+    return await invoke<number[]>('test_microphone')
+  }
+
   const checkForUpdates = async (onProgress?: (downloaded: number, total: number | null) => void) => {
     const update = await check()
     if (!update) {
@@ -184,6 +198,9 @@ export function useTauri() {
     startLlm,
     stopLlm,
     testLlmCleanup,
+    getSnippets,
+    updateSnippets,
+    testMicrophone,
     checkForUpdates,
   }
 }

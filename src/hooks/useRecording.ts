@@ -3,6 +3,7 @@ import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { useAppStore } from '../stores/appStore'
 import { useTauri } from './useTauri'
+import { playCompletionSound } from '../lib/sounds'
 
 /**
  * Hold-to-record: hotkey press starts recording, release stops and processes.
@@ -98,6 +99,9 @@ export function useRecording() {
         const result = await tauri.stopRecording()
         setWordCount(result.wordCount)
         setStatus('done')
+        if (useAppStore.getState().playSoundOnComplete) {
+          playCompletionSound()
+        }
       } catch (e) {
         const errMsg = String(e)
         if (errMsg.includes('transcription_failed')) {

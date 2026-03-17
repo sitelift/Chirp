@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react'
-import { Copy, Download, Trash2, X } from 'lucide-react'
+import { Copy, Download, FileText, Search, Sparkles, Trash2, X } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
-import { STT_MODELS } from '../../lib/constants'
+import { STT_MODELS, LLM_MODEL } from '../../lib/constants'
 import { formatRelativeTime } from '../../lib/utils'
 import { Button } from '../shared/Button'
 import { KeyBadge } from '../shared/KeyBadge'
@@ -30,9 +30,45 @@ export function HomePage() {
   const [expandedTimestamp, setExpandedTimestamp] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
   const [copiedTimestamp, setCopiedTimestamp] = useState<string | null>(null)
+  const [llmDownloaded, setLlmDownloaded] = useState(false)
+  const [llmDownloadError, setLlmDownloadError] = useState<string | null>(null)
+
+  const [searchQuery, setSearchQuery] = useState('')
 
   const currentModel = STT_MODELS.find((m) => m.id === store.model)
   const isDownloaded = store.modelDownloaded[store.model]
+
+  useEffect(() => {
+    tauri.getLlmStatus().then((status) => {
+      setLlmDownloaded(status.binaryDownloaded && status.modelDownloaded)
+    }).catch(() => {})
+  }, [])
+
+  const handleLlmDownload = async () => {
+    setLlmDownloadError(null)
+    store.setLlmDownloadProgress(0)
+    try {
+      await tauri.downloadLlm((progress) => {
+        store.setLlmDownloadProgress(progress)
+      })
+      setLlmDownloaded(true)
+      if (store.aiCleanup) {
+        try {
+          await tauri.startLlm()
+          store.setLlmReady(true)
+        } catch {}
+      }
+    } catch {
+      setLlmDownloadError('Download failed. Check your internet connection.')
+    } finally {
+      store.setLlmDownloadProgress(null)
+    }
+  }
+
+  const handleEnableCleanup = () => {
+    store.updateSettings({ aiCleanup: true })
+    store.setSmartCleanupDismissed(false)
+  }
 
   const hotkeyParts = store.hotkey
     .replace('CmdOrCtrl', navigator.platform.includes('Mac') ? '\u2318' : 'Ctrl')
@@ -72,6 +108,22 @@ export function HomePage() {
     await tauri.clearHistory()
     store.setHistory([])
     setExpandedTimestamp(null)
+  }
+
+  const handleExport = () => {
+    const content = store.history
+      .map(
+        (e) =>
+          `[${new Date(e.timestamp).toLocaleString()}] (${e.wordCount} words)\n${e.text}\n`
+      )
+      .join('\n---\n\n')
+    const blob = new Blob([content], { type: 'text/plain' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `chirp-history-${new Date().toISOString().slice(0, 10)}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
   }
 
   const handleCopy = async (text: string, timestamp: string) => {
@@ -185,20 +237,120 @@ export function HomePage() {
         </span>
       </div>
 
+      {/* Smart Cleanup banners */}
+      {store.aiCleanup && !llmDownloaded && (
+        <div className="mt-6 rounded-xl border border-chirp-amber-200 bg-chirp-amber-50/50 p-5">
+          <div className="flex items-start gap-3">
+            <Sparkles size={18} className="text-chirp-amber-500 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <span className="font-body text-sm font-medium text-chirp-stone-900">
+                Smart Cleanup needs a quick setup
+              </span>
+              <p className="font-body text-xs text-chirp-stone-500 mt-0.5">
+                {LLM_MODEL.friendlySize} · runs entirely on your device
+              </p>
+            </div>
+            {store.llmDownloadProgress === null && (
+              <Button onClick={handleLlmDownload}>
+                Set up now
+              </Button>
+            )}
+          </div>
+          {store.llmDownloadProgress !== null && (
+            <div className="mt-3">
+              <div className="flex items-center gap-2">
+                <div className="h-2 flex-1 overflow-hidden rounded-full bg-chirp-stone-200">
+                  <div
+                    className="h-full rounded-full bg-chirp-amber-400 transition-all duration-200 relative overflow-hidden"
+                    style={{ width: `${store.llmDownloadProgress}%` }}
+                  >
+                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
+                  </div>
+                </div>
+                <span className="font-mono text-xs text-chirp-stone-500 w-10 text-right">
+                  {store.llmDownloadProgress}%
+                </span>
+              </div>
+              <p className="font-body text-xs text-chirp-stone-500 mt-1">
+                {store.llmDownloadProgress < 96
+                  ? 'Downloading Smart Cleanup...'
+                  : 'Extracting model...'}
+              </p>
+            </div>
+          )}
+          {llmDownloadError && (
+            <p className="font-body text-xs text-chirp-error mt-2">{llmDownloadError}</p>
+          )}
+        </div>
+      )}
+
+      {!store.aiCleanup && !store.smartCleanupDismissed && (
+        <div className="mt-6 rounded-xl border border-chirp-stone-200 bg-white p-5">
+          <div className="flex items-start gap-3">
+            <Sparkles size={18} className="text-chirp-amber-500 mt-0.5 shrink-0" />
+            <div className="flex-1">
+              <span className="font-body text-sm font-medium text-chirp-stone-900">
+                Make your text sound polished
+              </span>
+              <p className="font-body text-xs text-chirp-stone-500 mt-0.5">
+                Automatically clean up grammar and filler words.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <Button onClick={handleEnableCleanup}>
+                Turn on
+              </Button>
+              <button
+                onClick={() => store.setSmartCleanupDismissed(true)}
+                className="text-chirp-stone-400 hover:text-chirp-stone-600 transition-colors p-1"
+              >
+                <X size={16} />
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Recent transcriptions */}
       <div className="mt-8">
         <div className="flex items-center justify-between">
           <h2 className="font-display font-bold text-lg text-chirp-stone-900">Recent</h2>
           {store.history.length > 0 && (
-            <Button variant="ghost" onClick={handleClearHistory}>
-              Clear
-            </Button>
+            <div className="flex items-center gap-1">
+              <Button variant="ghost" onClick={handleExport}>
+                <FileText size={14} className="mr-1" />
+                Export
+              </Button>
+              <Button variant="ghost" onClick={handleClearHistory}>
+                Clear
+              </Button>
+            </div>
           )}
         </div>
 
+        {store.history.length > 0 && (
+          <div className="relative mt-3">
+            <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-chirp-stone-400" />
+            <input
+              type="text"
+              placeholder="Search transcriptions..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full h-9 rounded-lg border border-chirp-stone-200 bg-white pl-9 pr-3 font-body text-sm text-chirp-stone-700 placeholder:text-chirp-stone-400 focus:border-2 focus:border-chirp-amber-400 focus:outline-none transition-colors duration-150"
+            />
+          </div>
+        )}
+
         {store.history.length > 0 ? (
           <div className="max-h-[400px] overflow-y-auto flex flex-col gap-2 mt-3">
-            {[...store.history].reverse().map((entry) => {
+            {[...store.history]
+              .reverse()
+              .filter(
+                (entry) =>
+                  !searchQuery.trim() ||
+                  entry.text.toLowerCase().includes(searchQuery.toLowerCase())
+              )
+              .map((entry) => {
               const isExpanded = expandedTimestamp === entry.timestamp
               const wpm = entry.speechDurationMs > 0
                 ? Math.round(entry.wordCount / (entry.speechDurationMs / 60000))
@@ -223,8 +375,14 @@ export function HomePage() {
                         <span>
                           {entry.wordCount} words{wpm ? ` · ${wpm} wpm` : ''} · {(entry.speechDurationMs / 1000).toFixed(1)}s audio
                         </span>
-                        <span>
+                        <span className="flex items-center gap-1.5">
                           Processed in {(entry.durationMs / 1000).toFixed(1)}s · {formatFullDate(entry.timestamp)}
+                          {entry.wasCleanedUp && (
+                            <span className="inline-flex items-center gap-0.5 text-chirp-amber-500">
+                              <Sparkles size={10} />
+                              Polished
+                            </span>
+                          )}
                         </span>
                       </div>
                       <div className="flex items-center gap-1 mt-3 border-t border-chirp-stone-100 pt-2">
@@ -263,6 +421,12 @@ export function HomePage() {
                         <span>{entry.wordCount} words</span>
                         {wpm && <span>{wpm} wpm</span>}
                         <span>processed in {(entry.durationMs / 1000).toFixed(1)}s</span>
+                        {entry.wasCleanedUp && (
+                          <span className="inline-flex items-center gap-0.5 text-chirp-amber-500">
+                            <Sparkles size={10} />
+                            Polished
+                          </span>
+                        )}
                       </div>
                     </>
                   )}

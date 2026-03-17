@@ -1,5 +1,6 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useAppStore } from '../../stores/appStore'
+import { useTauri } from '../../hooks/useTauri'
 import { SILENCE_TIMEOUT_OPTIONS } from '../../lib/constants'
 import { SettingGroup } from './SettingGroup'
 import { Button } from '../shared/Button'
@@ -10,7 +11,33 @@ import { KeyBadge } from '../shared/KeyBadge'
 
 export function GeneralPage() {
   const store = useAppStore()
+  const tauri = useTauri()
   const [capturing, setCapturing] = useState(false)
+  const [llmDownloaded, setLlmDownloaded] = useState(false)
+  const [cleanupStarting, setCleanupStarting] = useState(false)
+
+  useEffect(() => {
+    tauri.getLlmStatus().then((status) => {
+      setLlmDownloaded(status.binaryDownloaded && status.modelDownloaded)
+    }).catch(() => {})
+  }, [])
+
+  const handleCleanupToggle = async (enabled: boolean) => {
+    store.updateSettings({ aiCleanup: enabled })
+    if (enabled && llmDownloaded && !store.llmReady) {
+      setCleanupStarting(true)
+      try {
+        await tauri.startLlm()
+        store.setLlmReady(true)
+      } catch {}
+      setCleanupStarting(false)
+    } else if (!enabled && store.llmReady) {
+      try {
+        await tauri.stopLlm()
+        store.setLlmReady(false)
+      } catch {}
+    }
+  }
 
   const hotkeyParts = store.hotkey
     .replace('CmdOrCtrl', navigator.platform.includes('Mac') ? '\u2318' : 'Ctrl')
@@ -88,6 +115,28 @@ export function GeneralPage() {
           onChange={(v) => store.updateSettings({ autoDismissOverlay: v })}
           label="Auto-dismiss overlay"
         />
+        <Checkbox
+          checked={store.playSoundOnComplete}
+          onChange={(v) => store.updateSettings({ playSoundOnComplete: v })}
+          label="Play sound on completion"
+        />
+        <Checkbox
+          checked={store.showPassiveOverlay}
+          onChange={(v) => store.updateSettings({ showPassiveOverlay: v })}
+          label="Show passive overlay indicator"
+          description="Small icon on screen when Chirp is ready"
+        />
+        <div>
+          <p className="font-body text-sm text-chirp-stone-700 mb-2">Overlay position</p>
+          <Select
+            options={[
+              { value: 'bottom', label: 'Bottom center' },
+              { value: 'top', label: 'Top center' },
+            ]}
+            value={store.overlayPosition}
+            onChange={(v) => store.updateSettings({ overlayPosition: v as 'bottom' | 'top' })}
+          />
+        </div>
         <div>
           <p className="font-body text-sm text-chirp-stone-700 mb-2">Silence timeout</p>
           <Select
@@ -112,6 +161,44 @@ export function GeneralPage() {
           <Toggle
             checked={store.smartFormatting}
             onChange={(v) => store.updateSettings({ smartFormatting: v })}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <div className="flex flex-col flex-1 mr-3">
+            <div className="flex items-center gap-2">
+              <span className="font-body text-sm text-chirp-stone-700">Smart Cleanup</span>
+              {store.aiCleanup && (
+                <span className="flex items-center gap-1">
+                  {cleanupStarting ? (
+                    <>
+                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
+                      <span className="font-body text-[11px] text-chirp-stone-400">Getting ready...</span>
+                    </>
+                  ) : store.llmReady ? (
+                    <>
+                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
+                      <span className="font-body text-[11px] text-chirp-stone-400">Active</span>
+                    </>
+                  ) : !llmDownloaded ? (
+                    <button
+                      onClick={() => store.setSettingsPage('model')}
+                      className="flex items-center gap-1 group"
+                    >
+                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400" />
+                      <span className="font-body text-[11px] text-chirp-amber-500 group-hover:underline">Setup needed</span>
+                    </button>
+                  ) : null}
+                </span>
+              )}
+            </div>
+            <span className="font-body text-[13px] text-chirp-stone-500 mt-0.5">
+              Polish grammar and filler words automatically
+            </span>
+          </div>
+          <Toggle
+            checked={store.aiCleanup}
+            onChange={handleCleanupToggle}
+            disabled={cleanupStarting}
           />
         </div>
       </SettingGroup>

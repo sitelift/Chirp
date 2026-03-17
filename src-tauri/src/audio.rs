@@ -251,6 +251,25 @@ fn compute_amplitude_bars(samples: &[f32], bar_count: usize) -> Vec<f32> {
         .collect()
 }
 
+/// Encode f32 samples as a WAV byte vector
+pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> {
+    let mut cursor = std::io::Cursor::new(Vec::new());
+    let spec = hound::WavSpec {
+        channels: 1,
+        sample_rate,
+        bits_per_sample: 16,
+        sample_format: hound::SampleFormat::Int,
+    };
+    let mut writer = hound::WavWriter::new(&mut cursor, spec)
+        .map_err(|e| format!("WAV writer init failed: {e}"))?;
+    for &s in samples {
+        let sample = (s * i16::MAX as f32).clamp(i16::MIN as f32, i16::MAX as f32) as i16;
+        writer.write_sample(sample).map_err(|e| format!("WAV write failed: {e}"))?;
+    }
+    writer.finalize().map_err(|e| format!("WAV finalize failed: {e}"))?;
+    Ok(cursor.into_inner())
+}
+
 /// Check if trailing N seconds of the buffer are below threshold (silence detection)
 pub fn detect_silence(buffer: &[f32], seconds: f32, threshold: f32) -> bool {
     let sample_count = (TARGET_SAMPLE_RATE as f32 * seconds) as usize;

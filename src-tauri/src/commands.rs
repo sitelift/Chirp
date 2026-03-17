@@ -5,6 +5,7 @@ use crate::history;
 use crate::inject;
 use crate::llm;
 use crate::settings;
+use crate::snippets;
 use crate::state::*;
 use crate::transcribe;
 use std::time::Instant;
@@ -136,6 +137,23 @@ pub async fn update_dictionary(
     let mut s = state.lock().await;
     s.dictionary = entries.clone();
     settings::save_dictionary(&s.dictionary)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_snippets(state: State<'_, SharedState>) -> Result<Vec<SnippetEntry>, String> {
+    let s = state.lock().await;
+    Ok(s.snippets.clone())
+}
+
+#[tauri::command]
+pub async fn update_snippets(
+    entries: Vec<SnippetEntry>,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    let mut s = state.lock().await;
+    s.snippets = entries.clone();
+    settings::save_snippets(&s.snippets)?;
     Ok(())
 }
 
@@ -280,12 +298,13 @@ pub async fn stop_recording(
     }
 
     // Grab what we need from state before entering blocking thread
-    let (language, smart_fmt, dict, ai_cleanup, llm_port) = {
+    let (language, smart_fmt, dict, snips, ai_cleanup, llm_port) = {
         let s = state.lock().await;
         (
             s.settings.language.clone(),
             s.settings.smart_formatting,
             s.dictionary.clone(),
+            s.snippets.clone(),
             s.settings.ai_cleanup,
             s.llm_port,
         )
@@ -355,8 +374,9 @@ pub async fn stop_recording(
         formatted.clone()
     };
 
-    // Dictionary replacements
-    let result = dictionary::apply_dictionary(&after_llm, &dict);
+    // Dictionary replacements, then snippet expansions
+    let after_dict = dictionary::apply_dictionary(&after_llm, &dict);
+    let result = snippets::apply_snippets(&after_dict, &snips);
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
     let word_count = result.split_whitespace().count();
@@ -487,6 +507,46 @@ pub async fn delete_history_entry(
     s.history.retain(|e| e.timestamp != timestamp);
     history::save_history(&s.history)?;
     Ok(())
+}
+
+// ── Mic test command ──────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn test_microphone(
+    app_handle: AppHandle,
+    buffer: State<'_, AudioBuffer>,
+    stream_handle: State<'_, StreamHandle>,
+    state: State<'_, SharedState>,
+) -> Result<Vec<u8>, String> {
+    let device_id = {
+        let s = state.lock().await;
+        s.settings.input_device.clone()
+    };
+
+    // Clear buffer before recording
+    buffer.lock().unwrap().clear();
+
+    // Start capture
+    let stream = audio::start_capture(&device_id, buffer.inner().clone(), app_handle)?;
+    *stream_handle.0.lock().unwrap() = Some(StreamWrapper(stream));
+
+    // Record for 3 seconds
+    tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // Stop capture
+    *stream_handle.0.lock().unwrap() = None;
+    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+
+    // Get audio and encode as WAV
+    let wav_bytes = {
+        let buf = buffer.lock().unwrap();
+        audio::encode_wav(&buf, 16000)?
+    };
+
+    // Clear the buffer
+    buffer.lock().unwrap().clear();
+
+    Ok(wav_bytes)
 }
 
 // ── LLM commands ──────────────────────────────────────────────────────

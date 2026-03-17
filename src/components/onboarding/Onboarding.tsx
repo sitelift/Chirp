@@ -3,10 +3,12 @@ import { useAppStore } from '../../stores/appStore'
 import { BirdMark } from '../shared/BirdMark'
 import { Welcome } from './Welcome'
 import { Microphone } from './Microphone'
+import { MicTest } from './MicTest'
 import { Hotkey } from './Hotkey'
 import { ModelDownload } from './ModelDownload'
+import { SmartCleanup } from './SmartCleanup'
 
-const STEPS = 4
+const STEPS = 6
 
 export function Onboarding() {
   const [step, setStep] = useState(0)
@@ -55,8 +57,10 @@ export function Onboarding() {
         <div className="max-w-[480px] w-full">
           {step === 0 && <Welcome onNext={() => setStep(1)} />}
           {step === 1 && <Microphone onNext={() => setStep(2)} />}
-          {step === 2 && <Hotkey onNext={() => setStep(3)} />}
-          {step === 3 && <ModelDownload onFinish={handleFinish} />}
+          {step === 2 && <MicTest onNext={() => setStep(3)} />}
+          {step === 3 && <Hotkey onNext={() => setStep(4)} />}
+          {step === 4 && <ModelDownload onFinish={() => setStep(5)} />}
+          {step === 5 && <SmartCleanup onNext={handleFinish} />}
         </div>
       </div>
     </div>

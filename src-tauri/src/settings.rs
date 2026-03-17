@@ -1,4 +1,4 @@
-use crate::state::{DictionaryEntry, Settings};
+use crate::state::{DictionaryEntry, Settings, SnippetEntry};
 use std::path::PathBuf;
 
 /// Get the app config directory (%APPDATA%/com.chirp.app/)
@@ -61,6 +61,45 @@ pub fn load_dictionary() -> Vec<DictionaryEntry> {
         }),
         Err(_) => Vec::new(),
     }
+}
+
+fn snippets_path() -> PathBuf {
+    config_dir().join("snippets.json")
+}
+
+/// Load snippets from disk, providing defaults on first run
+pub fn load_snippets() -> Vec<SnippetEntry> {
+    let path = snippets_path();
+    match std::fs::read_to_string(&path) {
+        Ok(data) => serde_json::from_str(&data).unwrap_or_else(|e| {
+            log::warn!("Corrupted snippets JSON, resetting: {e}");
+            default_snippets()
+        }),
+        Err(_) => default_snippets(),
+    }
+}
+
+/// Save snippets to disk
+pub fn save_snippets(entries: &[SnippetEntry]) -> Result<(), String> {
+    let dir = config_dir();
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Failed to create config dir: {e}"))?;
+    let data = serde_json::to_string_pretty(entries)
+        .map_err(|e| format!("Failed to serialize: {e}"))?;
+    std::fs::write(snippets_path(), data)
+        .map_err(|e| format!("Failed to write snippets: {e}"))
+}
+
+fn default_snippets() -> Vec<SnippetEntry> {
+    vec![
+        SnippetEntry {
+            trigger: "my email address".into(),
+            expansion: "user@example.com".into(),
+        },
+        SnippetEntry {
+            trigger: "my signature".into(),
+            expansion: "Best regards,\n[Your Name]".into(),
+        },
+    ]
 }
 
 /// Save dictionary to disk
