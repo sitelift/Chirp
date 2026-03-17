@@ -1,25 +1,29 @@
-export const DEFAULT_HOTKEY = 'CmdOrCtrl+Shift+Space'
-
 export const DEFAULT_SETTINGS = {
-  hotkey: DEFAULT_HOTKEY,
+  hotkey: 'CmdOrCtrl+Shift+Space',
   launchAtLogin: true,
   showInMenuBar: true,
   playSoundOnComplete: false,
   autoDismissOverlay: true,
-  silenceTimeout: 3,
-  language: 'en',
   smartFormatting: true,
   inputDevice: 'default',
   noiseSuppression: true,
   model: 'parakeet-tdt-0.6b' as const,
   onboardingComplete: false,
-  aiCleanup: false,
+  aiCleanup: true,
   overlayPosition: 'bottom' as 'bottom' | 'top',
   showPassiveOverlay: true,
+  toneMode: 'message',
 }
 
+export const TONE_MODES = [
+  { id: 'message', label: 'Message', description: 'Natural conversational tone' },
+  { id: 'email', label: 'Email', description: 'Formatted with greeting and sign-off' },
+  { id: 'formal', label: 'Formal', description: 'Professional, no contractions' },
+  { id: 'casual', label: 'Casual', description: 'Short and conversational' },
+] as const
+
 export const STT_MODELS = [
-  { id: 'parakeet-tdt-0.6b' as const, name: 'Parakeet TDT 0.6B', size: '465 MB', description: 'Best accuracy, fast on any PC', recommended: true },
+  { id: 'parakeet-tdt-0.6b' as const, name: 'Parakeet TDT 0.6B', size: '465 MB', description: 'Best accuracy · 25 languages · fast on any PC', recommended: true },
 ]
 
 export const LLM_MODEL = {
@@ -34,18 +38,6 @@ export const CLEANUP_EXAMPLE = {
   before: "so um basically I was thinking that we should like probably move the meeting to uh Thursday if that works",
   after: "I was thinking we should probably move the meeting to Thursday, if that works.",
 }
-
-export const SILENCE_TIMEOUT_OPTIONS = [
-  { value: 2, label: '2 seconds' },
-  { value: 3, label: '3 seconds' },
-  { value: 5, label: '5 seconds' },
-  { value: 10, label: '10 seconds' },
-  { value: 0, label: 'Never (manual stop only)' },
-]
-
-export const LANGUAGES = [
-  { value: 'en', label: 'English' },
-]
 
 export const ERROR_MESSAGES = {
   mic_not_found: {

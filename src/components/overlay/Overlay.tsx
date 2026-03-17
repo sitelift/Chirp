@@ -78,13 +78,13 @@ export function Overlay() {
     <div className="flex h-screen w-screen items-center justify-center">
       {/* Single pill that morphs between passive and active */}
       <div
-        className={`flex items-center rounded-full transition-all duration-200 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+        className={`flex items-center rounded-full transition-all duration-300 ease-[cubic-bezier(0.16,1,0.3,1)] ${
           isActive
-            ? 'h-12 gap-3 border border-chirp-stone-200 bg-white px-4 shadow-overlay'
-            : 'h-9 border border-chirp-stone-200/50 bg-white/70 px-2.5 shadow-sm backdrop-blur-sm'
+            ? 'h-11 gap-3 border border-chirp-stone-200 bg-white px-4 shadow-overlay ring-4 ring-chirp-stone-900/5'
+            : 'h-9 gap-2 border border-chirp-stone-200 bg-white px-2.5 shadow-sm'
         } ${dismissing ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}
       >
-        <BirdMark size={isActive ? 22 : 16} />
+        <BirdMark size={isActive ? 24 : 18} className={isActive ? 'text-chirp-amber-500' : 'text-chirp-stone-400'} />
         {isActive && (
           <div className="animate-fade-in flex items-center">
             {status === 'listening' && <Listening />}

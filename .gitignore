@@ -34,5 +34,9 @@ training/venv/
 training/.venv/
 training/__pycache__/
 
+# Debug output
+err.txt
+err_dev.txt
+
 # Rust build
 target/

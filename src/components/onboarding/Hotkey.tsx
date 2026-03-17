@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect } from 'react'
 import { Keyboard } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
+import { formatHotkey } from '../../lib/utils'
 import { Button } from '../shared/Button'
 
 interface HotkeyProps {
@@ -12,9 +13,7 @@ export function Hotkey({ onNext }: HotkeyProps) {
   const updateSettings = useAppStore((s) => s.updateSettings)
   const [capturing, setCapturing] = useState(false)
 
-  const hotkeyParts = hotkey
-    .replace('CmdOrCtrl', navigator.platform.includes('Mac') ? '\u2318' : 'Ctrl')
-    .split('+')
+  const hotkeyParts = formatHotkey(hotkey)
 
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
@@ -47,7 +46,7 @@ export function Hotkey({ onNext }: HotkeyProps) {
   return (
     <div className="flex flex-col animate-fade-in">
       <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
-        STEP 3 OF 4
+        STEP 4 OF 6
       </span>
 
       {/* Styled keyboard card */}

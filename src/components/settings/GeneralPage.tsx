@@ -1,7 +1,9 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
-import { SILENCE_TIMEOUT_OPTIONS } from '../../lib/constants'
+import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
+import { TONE_MODES } from '../../lib/constants'
+import { formatHotkey } from '../../lib/utils'
 import { SettingGroup } from './SettingGroup'
 import { Button } from '../shared/Button'
 import { Checkbox } from '../shared/Checkbox'
@@ -13,14 +15,8 @@ export function GeneralPage() {
   const store = useAppStore()
   const tauri = useTauri()
   const [capturing, setCapturing] = useState(false)
-  const [llmDownloaded, setLlmDownloaded] = useState(false)
+  const [llmDownloaded] = useLlmDownloaded()
   const [cleanupStarting, setCleanupStarting] = useState(false)
-
-  useEffect(() => {
-    tauri.getLlmStatus().then((status) => {
-      setLlmDownloaded(status.binaryDownloaded && status.modelDownloaded)
-    }).catch(() => {})
-  }, [])
 
   const handleCleanupToggle = async (enabled: boolean) => {
     store.updateSettings({ aiCleanup: enabled })
@@ -29,19 +25,17 @@ export function GeneralPage() {
       try {
         await tauri.startLlm()
         store.setLlmReady(true)
-      } catch {}
+      } catch (e) { console.debug('Failed to start LLM:', e) }
       setCleanupStarting(false)
     } else if (!enabled && store.llmReady) {
       try {
         await tauri.stopLlm()
         store.setLlmReady(false)
-      } catch {}
+      } catch (e) { console.debug('Failed to stop LLM:', e) }
     }
   }
 
-  const hotkeyParts = store.hotkey
-    .replace('CmdOrCtrl', navigator.platform.includes('Mac') ? '\u2318' : 'Ctrl')
-    .split('+')
+  const hotkeyParts = formatHotkey(store.hotkey)
 
   const handleCapture = () => {
     setCapturing(true)
@@ -137,17 +131,6 @@ export function GeneralPage() {
             onChange={(v) => store.updateSettings({ overlayPosition: v as 'bottom' | 'top' })}
           />
         </div>
-        <div>
-          <p className="font-body text-sm text-chirp-stone-700 mb-2">Silence timeout</p>
-          <Select
-            options={SILENCE_TIMEOUT_OPTIONS.map((o) => ({
-              value: o.value,
-              label: o.label,
-            }))}
-            value={store.silenceTimeout}
-            onChange={(v) => store.updateSettings({ silenceTimeout: v as number })}
-          />
-        </div>
       </SettingGroup>
 
       <SettingGroup label="Output">
@@ -201,6 +184,19 @@ export function GeneralPage() {
             disabled={cleanupStarting}
           />
         </div>
+        {store.aiCleanup && (
+          <div>
+            <p className="font-body text-sm text-chirp-stone-700 mb-2">Tone mode</p>
+            <Select
+              options={TONE_MODES.map(m => ({ value: m.id, label: m.label }))}
+              value={store.toneMode}
+              onChange={(v) => store.updateSettings({ toneMode: String(v) })}
+            />
+            <p className="font-body text-[13px] text-chirp-stone-500 mt-1.5">
+              {TONE_MODES.find(m => m.id === store.toneMode)?.description}
+            </p>
+          </div>
+        )}
       </SettingGroup>
     </div>
   )

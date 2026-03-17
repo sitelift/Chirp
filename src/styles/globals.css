@@ -4,12 +4,6 @@
 @tailwind components;
 @tailwind utilities;
 
-@layer utilities {
-  .bg-gradient-warm {
-    background: linear-gradient(135deg, #FFFBEB 0%, #FFFFFF 50%, #F5F5F4 100%);
-  }
-}
-
 @layer base {
   body {
     @apply font-body text-chirp-stone-700 bg-transparent;

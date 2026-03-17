@@ -29,7 +29,6 @@ export interface AppState {
   errorType: ErrorType | null
   wordCount: number | null
   amplitudes: number[]
-  liveTranscription: string
 
   // Settings
   hotkey: string
@@ -37,8 +36,6 @@ export interface AppState {
   showInMenuBar: boolean
   playSoundOnComplete: boolean
   autoDismissOverlay: boolean
-  silenceTimeout: number
-  language: string
   smartFormatting: boolean
 
   // Audio
@@ -68,12 +65,15 @@ export interface AppState {
   // Onboarding
   onboardingComplete: boolean
 
+  // Tone
+  toneMode: string
+
   // Overlay
   overlayPosition: 'bottom' | 'top'
   showPassiveOverlay: boolean
 
-  // Smart Cleanup promo
-  smartCleanupDismissed: boolean
+  // Settings saved indicator
+  settingsSaved: boolean
 
   // Loading
   settingsLoaded: boolean
@@ -84,7 +84,6 @@ export interface AppState {
   // Actions
   setStatus: (status: AppStatus) => void
   setError: (errorType: ErrorType) => void
-  setLiveTranscription: (text: string) => void
   setAmplitudes: (data: number[]) => void
   setWordCount: (count: number) => void
   setInputLevel: (level: number) => void
@@ -96,13 +95,14 @@ export interface AppState {
   removeDictionaryEntry: (index: number) => void
   setSnippets: (snippets: SnippetEntry[]) => void
   addSnippet: (trigger: string, expansion: string) => void
+  updateSnippet: (index: number, trigger: string, expansion: string) => void
   removeSnippet: (index: number) => void
   setSettingsLoaded: () => void
   setHistory: (history: TranscriptionEntry[]) => void
   removeHistoryEntry: (timestamp: string) => void
   setSettingsPage: (page: string) => void
   setOnboardingComplete: (complete: boolean) => void
-  setSmartCleanupDismissed: (dismissed: boolean) => void
+  setSettingsSaved: (saved: boolean) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -111,7 +111,6 @@ export const useAppStore = create<AppState>((set) => ({
   errorType: null,
   wordCount: null,
   amplitudes: [],
-  liveTranscription: '',
 
   // Settings (from defaults)
   hotkey: DEFAULT_SETTINGS.hotkey,
@@ -119,8 +118,6 @@ export const useAppStore = create<AppState>((set) => ({
   showInMenuBar: DEFAULT_SETTINGS.showInMenuBar,
   playSoundOnComplete: DEFAULT_SETTINGS.playSoundOnComplete,
   autoDismissOverlay: DEFAULT_SETTINGS.autoDismissOverlay,
-  silenceTimeout: DEFAULT_SETTINGS.silenceTimeout,
-  language: DEFAULT_SETTINGS.language,
   smartFormatting: DEFAULT_SETTINGS.smartFormatting,
 
   // Audio
@@ -150,12 +147,15 @@ export const useAppStore = create<AppState>((set) => ({
   // Onboarding
   onboardingComplete: DEFAULT_SETTINGS.onboardingComplete,
 
+  // Tone
+  toneMode: DEFAULT_SETTINGS.toneMode,
+
   // Overlay
   overlayPosition: DEFAULT_SETTINGS.overlayPosition,
   showPassiveOverlay: DEFAULT_SETTINGS.showPassiveOverlay,
 
-  // Smart Cleanup promo
-  smartCleanupDismissed: false,
+  // Settings saved indicator
+  settingsSaved: false,
 
   // Loading
   settingsLoaded: false,
@@ -166,7 +166,6 @@ export const useAppStore = create<AppState>((set) => ({
   // Actions
   setStatus: (status) => set({ status, errorType: status !== 'error' ? null : undefined }),
   setError: (errorType) => set({ status: 'error', errorType }),
-  setLiveTranscription: (liveTranscription) => set({ liveTranscription }),
   setAmplitudes: (amplitudes) => set({ amplitudes }),
   setWordCount: (wordCount) => set({ wordCount }),
   setInputLevel: (inputLevel) => set({ inputLevel }),
@@ -181,6 +180,10 @@ export const useAppStore = create<AppState>((set) => ({
   setSnippets: (snippets) => set({ snippets }),
   addSnippet: (trigger, expansion) =>
     set((state) => ({ snippets: [...state.snippets, { trigger, expansion }] })),
+  updateSnippet: (index, trigger, expansion) =>
+    set((state) => ({
+      snippets: state.snippets.map((s, i) => (i === index ? { trigger, expansion } : s)),
+    })),
   removeSnippet: (index) =>
     set((state) => ({ snippets: state.snippets.filter((_, i) => i !== index) })),
   setSettingsLoaded: () => set({ settingsLoaded: true }),
@@ -189,5 +192,5 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({ history: state.history.filter((e) => e.timestamp !== timestamp) })),
   setSettingsPage: (settingsPage) => set({ settingsPage }),
   setOnboardingComplete: (onboardingComplete) => set({ onboardingComplete }),
-  setSmartCleanupDismissed: (smartCleanupDismissed) => set({ smartCleanupDismissed }),
+  setSettingsSaved: (settingsSaved) => set({ settingsSaved }),
 }))

@@ -3,16 +3,13 @@ import { useAppStore } from '../../stores/appStore'
 
 export function Listening() {
   const amplitudes = useAppStore((s) => s.amplitudes)
-  const liveText = useAppStore((s) => s.liveTranscription)
 
   return (
     <div className="flex items-center gap-3">
-      <Waveform amplitudes={amplitudes} />
-      {liveText && (
-        <span className="font-body text-sm text-chirp-stone-500 max-w-[200px] truncate">
-          {liveText}
-        </span>
-      )}
+      <span className="font-mono text-[12px] font-medium text-chirp-stone-600">Listening...</span>
+      <div className="flex items-center h-4 overflow-hidden">
+        <Waveform amplitudes={amplitudes} />
+      </div>
     </div>
   )
 }

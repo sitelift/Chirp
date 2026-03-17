@@ -14,7 +14,7 @@ export function Welcome({ onNext }: WelcomeProps) {
   return (
     <div className="flex flex-col animate-fade-in">
       <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
-        STEP 1 OF 4
+        STEP 1 OF 6
       </span>
 
       <h1 className="font-display font-extrabold text-3xl text-chirp-stone-900 mt-4">

@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback } from 'react'
+import { listen } from '@tauri-apps/api/event'
 import { useTauri } from '../../hooks/useTauri'
 import { BirdMark } from '../shared/BirdMark'
 import { Button } from '../shared/Button'
@@ -12,7 +13,7 @@ export function AboutPage() {
   const [downloadProgress, setDownloadProgress] = useState<string | null>(null)
   const [doRelaunch, setDoRelaunch] = useState<(() => Promise<void>) | null>(null)
 
-  const handleCheckUpdates = async () => {
+  const handleCheckUpdates = useCallback(async () => {
     setUpdateStatus('checking')
     try {
       const result = await tauri.checkForUpdates((downloaded, total) => {
@@ -41,7 +42,14 @@ export function AboutPage() {
     } catch {
       setUpdateStatus('error')
     }
-  }
+  }, [tauri])
+
+  useEffect(() => {
+    const unlisten = listen('check-for-updates', () => {
+      handleCheckUpdates()
+    })
+    return () => { unlisten.then((f) => f()) }
+  }, [handleCheckUpdates])
 
   const handleRelaunch = async () => {
     if (doRelaunch) await doRelaunch()

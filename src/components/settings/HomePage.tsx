@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react'
 import { Copy, Download, FileText, Search, Sparkles, Trash2, X } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
-import { STT_MODELS, LLM_MODEL } from '../../lib/constants'
-import { formatRelativeTime } from '../../lib/utils'
+import { STT_MODELS } from '../../lib/constants'
+import { formatHotkey, formatRelativeTime } from '../../lib/utils'
 import { Button } from '../shared/Button'
 import { KeyBadge } from '../shared/KeyBadge'
 
@@ -30,49 +30,13 @@ export function HomePage() {
   const [expandedTimestamp, setExpandedTimestamp] = useState<string | null>(null)
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null)
   const [copiedTimestamp, setCopiedTimestamp] = useState<string | null>(null)
-  const [llmDownloaded, setLlmDownloaded] = useState(false)
-  const [llmDownloadError, setLlmDownloadError] = useState<string | null>(null)
 
   const [searchQuery, setSearchQuery] = useState('')
 
   const currentModel = STT_MODELS.find((m) => m.id === store.model)
   const isDownloaded = store.modelDownloaded[store.model]
 
-  useEffect(() => {
-    tauri.getLlmStatus().then((status) => {
-      setLlmDownloaded(status.binaryDownloaded && status.modelDownloaded)
-    }).catch(() => {})
-  }, [])
-
-  const handleLlmDownload = async () => {
-    setLlmDownloadError(null)
-    store.setLlmDownloadProgress(0)
-    try {
-      await tauri.downloadLlm((progress) => {
-        store.setLlmDownloadProgress(progress)
-      })
-      setLlmDownloaded(true)
-      if (store.aiCleanup) {
-        try {
-          await tauri.startLlm()
-          store.setLlmReady(true)
-        } catch {}
-      }
-    } catch {
-      setLlmDownloadError('Download failed. Check your internet connection.')
-    } finally {
-      store.setLlmDownloadProgress(null)
-    }
-  }
-
-  const handleEnableCleanup = () => {
-    store.updateSettings({ aiCleanup: true })
-    store.setSmartCleanupDismissed(false)
-  }
-
-  const hotkeyParts = store.hotkey
-    .replace('CmdOrCtrl', navigator.platform.includes('Mac') ? '\u2318' : 'Ctrl')
-    .split('+')
+  const hotkeyParts = formatHotkey(store.hotkey)
 
   // Stats
   const totalWords = store.history.reduce((sum, e) => sum + e.wordCount, 0)
@@ -236,80 +200,6 @@ export function HomePage() {
           Hold to dictate
         </span>
       </div>
-
-      {/* Smart Cleanup banners */}
-      {store.aiCleanup && !llmDownloaded && (
-        <div className="mt-6 rounded-xl border border-chirp-amber-200 bg-chirp-amber-50/50 p-5">
-          <div className="flex items-start gap-3">
-            <Sparkles size={18} className="text-chirp-amber-500 mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <span className="font-body text-sm font-medium text-chirp-stone-900">
-                Smart Cleanup needs a quick setup
-              </span>
-              <p className="font-body text-xs text-chirp-stone-500 mt-0.5">
-                {LLM_MODEL.friendlySize} · runs entirely on your device
-              </p>
-            </div>
-            {store.llmDownloadProgress === null && (
-              <Button onClick={handleLlmDownload}>
-                Set up now
-              </Button>
-            )}
-          </div>
-          {store.llmDownloadProgress !== null && (
-            <div className="mt-3">
-              <div className="flex items-center gap-2">
-                <div className="h-2 flex-1 overflow-hidden rounded-full bg-chirp-stone-200">
-                  <div
-                    className="h-full rounded-full bg-chirp-amber-400 transition-all duration-200 relative overflow-hidden"
-                    style={{ width: `${store.llmDownloadProgress}%` }}
-                  >
-                    <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
-                  </div>
-                </div>
-                <span className="font-mono text-xs text-chirp-stone-500 w-10 text-right">
-                  {store.llmDownloadProgress}%
-                </span>
-              </div>
-              <p className="font-body text-xs text-chirp-stone-500 mt-1">
-                {store.llmDownloadProgress < 96
-                  ? 'Downloading Smart Cleanup...'
-                  : 'Extracting model...'}
-              </p>
-            </div>
-          )}
-          {llmDownloadError && (
-            <p className="font-body text-xs text-chirp-error mt-2">{llmDownloadError}</p>
-          )}
-        </div>
-      )}
-
-      {!store.aiCleanup && !store.smartCleanupDismissed && (
-        <div className="mt-6 rounded-xl border border-chirp-stone-200 bg-white p-5">
-          <div className="flex items-start gap-3">
-            <Sparkles size={18} className="text-chirp-amber-500 mt-0.5 shrink-0" />
-            <div className="flex-1">
-              <span className="font-body text-sm font-medium text-chirp-stone-900">
-                Make your text sound polished
-              </span>
-              <p className="font-body text-xs text-chirp-stone-500 mt-0.5">
-                Automatically clean up grammar and filler words.
-              </p>
-            </div>
-            <div className="flex items-center gap-2">
-              <Button onClick={handleEnableCleanup}>
-                Turn on
-              </Button>
-              <button
-                onClick={() => store.setSmartCleanupDismissed(true)}
-                className="text-chirp-stone-400 hover:text-chirp-stone-600 transition-colors p-1"
-              >
-                <X size={16} />
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
       {/* Recent transcriptions */}
       <div className="mt-8">

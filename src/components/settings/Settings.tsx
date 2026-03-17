@@ -1,7 +1,8 @@
-import { useState, useEffect } from 'react'
-import { LayoutDashboard, Settings as SettingsIcon, Mic, Cpu, BookOpen, Zap, Info } from 'lucide-react'
+import { useEffect } from 'react'
+import { listen } from '@tauri-apps/api/event'
+import { LayoutDashboard, Settings as SettingsIcon, Mic, Cpu, BookOpen, Zap, Info, FileAudio } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
-import { useTauri } from '../../hooks/useTauri'
+import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
 import { BirdMark } from '../shared/BirdMark'
 import { HomePage } from './HomePage'
 import { GeneralPage } from './GeneralPage'
@@ -10,6 +11,7 @@ import { ModelPage } from './ModelPage'
 import { DictionaryPage } from './DictionaryPage'
 import { SnippetsPage } from './SnippetsPage'
 import { AboutPage } from './AboutPage'
+import { TranscribePage } from './TranscribePage'
 
 const NAV_SECTIONS = [
   {
@@ -31,6 +33,7 @@ const NAV_SECTIONS = [
     items: [
       { id: 'dictionary', label: 'Dictionary', icon: BookOpen },
       { id: 'snippets', label: 'Snippets', icon: Zap },
+      { id: 'transcribe', label: 'Transcribe File', icon: FileAudio },
     ],
   },
 ]
@@ -43,6 +46,7 @@ const PAGES: Record<string, React.FC> = {
   dictionary: DictionaryPage,
   snippets: SnippetsPage,
   about: AboutPage,
+  transcribe: TranscribePage,
 }
 
 export function Settings() {
@@ -51,16 +55,25 @@ export function Settings() {
   const modelDownloaded = useAppStore((s) => s.modelDownloaded)
   const model = useAppStore((s) => s.model)
   const aiCleanup = useAppStore((s) => s.aiCleanup)
-  const tauri = useTauri()
-  const [llmDownloaded, setLlmDownloaded] = useState(false)
+  const settingsSaved = useAppStore((s) => s.settingsSaved)
+  const setSettingsSaved = useAppStore((s) => s.setSettingsSaved)
+  const [llmDownloaded] = useLlmDownloaded()
 
   const sttReady = modelDownloaded[model]
 
   useEffect(() => {
-    tauri.getLlmStatus().then((status) => {
-      setLlmDownloaded(status.binaryDownloaded && status.modelDownloaded)
-    }).catch(() => {})
-  }, [])
+    if (settingsSaved) {
+      const timer = setTimeout(() => setSettingsSaved(false), 1500)
+      return () => clearTimeout(timer)
+    }
+  }, [settingsSaved, setSettingsSaved])
+
+  useEffect(() => {
+    const unlisten = listen('check-for-updates', () => {
+      setSettingsPage('about')
+    })
+    return () => { unlisten.then((f) => f()) }
+  }, [setSettingsPage])
 
   const isReady = sttReady && (!aiCleanup || llmDownloaded)
   const statusLabel = !sttReady
@@ -83,10 +96,19 @@ export function Settings() {
         </div>
 
         {/* Status pill */}
-        <div className="flex items-center gap-2 px-3 pb-4 mb-2 border-b border-chirp-stone-200">
-          <div className={`w-2 h-2 rounded-full ${isReady ? 'bg-chirp-success' : 'bg-chirp-amber-400'}`} />
-          <span className="font-body text-xs text-chirp-stone-500">
-            {statusLabel}
+        <div className="flex items-center justify-between gap-2 px-3 pb-4 mb-2 border-b border-chirp-stone-200">
+          <div className="flex items-center gap-2">
+            <div className={`w-2 h-2 rounded-full ${isReady ? 'bg-chirp-success' : 'bg-chirp-amber-400'}`} />
+            <span className="font-body text-xs text-chirp-stone-500">
+              {statusLabel}
+            </span>
+          </div>
+          <span
+            className={`font-body text-xs text-chirp-success transition-opacity duration-300 ${
+              settingsSaved ? 'opacity-100' : 'opacity-0'
+            }`}
+          >
+            Saved
           </span>
         </div>
 

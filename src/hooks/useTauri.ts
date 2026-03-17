@@ -6,6 +6,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { check } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
+import type { TranscriptionEntry } from '../stores/appStore'
 
 export interface AudioDevice {
   name: string
@@ -16,14 +17,7 @@ export interface TranscriptionResult {
   text: string
   wordCount: number
   durationMs: number
-}
-
-export interface TranscriptionEntry {
-  text: string
-  timestamp: string
-  wordCount: number
-  durationMs: number
-  speechDurationMs: number
+  wasCleanedUp?: boolean
 }
 
 export interface ModelStatus {
@@ -136,8 +130,8 @@ export function useTauri() {
     await invoke('stop_llm')
   }
 
-  const testLlmCleanup = async (text: string): Promise<string> => {
-    return await invoke<string>('test_llm_cleanup', { text })
+  const testLlmCleanup = async (text: string, mode?: string): Promise<string> => {
+    return await invoke<string>('test_llm_cleanup', { text, mode })
   }
 
   const getSnippets = async (): Promise<Array<{ trigger: string; expansion: string }>> => {

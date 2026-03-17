@@ -1,3 +1,9 @@
+export function formatHotkey(hotkey: string): string[] {
+  return hotkey
+    .replace('CmdOrCtrl', navigator.platform.includes('Mac') ? '\u2318' : 'Ctrl')
+    .split('+')
+}
+
 export function formatRelativeTime(isoString: string): string {
   const date = new Date(isoString)
   const now = new Date()

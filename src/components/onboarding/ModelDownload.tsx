@@ -56,7 +56,7 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
   return (
     <div className="flex flex-col animate-fade-in">
       <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
-        STEP 4 OF 4
+        STEP 5 OF 6
       </span>
 
       {/* Icon card */}
@@ -79,14 +79,14 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
       {state === 'complete' ? (
         <>
           <h1 className="mt-6 font-display font-extrabold text-3xl text-chirp-stone-900">
-            You're all set!
+            Speech model ready!
           </h1>
           <p className="mt-2 font-body text-[15px] text-chirp-stone-500">
-            Chirp is ready to transcribe your voice.
+            Chirp can now transcribe your voice. One more optional step...
           </p>
           <div className="mt-8">
             <Button size="onboarding" className="w-full text-base" onClick={onFinish}>
-              Start Using Chirp →
+              Continue
             </Button>
           </div>
         </>

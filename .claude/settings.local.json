@@ -1,7 +1,29 @@
 {
   "permissions": {
     "allow": [
-      "Bash(cd:*)"
+      "Bash(cd:*)",
+      "Bash(npm run:*)",
+      "Bash(npx tauri:*)",
+      "Bash(npm install:*)",
+      "Bash(find:*)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(gh api:*)",
+      "Read(//c/tmp/**)",
+      "Bash(curl -L -o sherpa-onnx-win-x64.tar.bz2 \"https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.29/sherpa-onnx-v1.12.29-win-x64-shared-MD-Release-no-tts.tar.bz2\")",
+      "Bash(netstat:*)",
+      "Bash(taskkill:*)",
+      "Bash(cp:*)",
+      "Bash(grep:*)",
+      "Bash(mkdir -p \"$APPDATA/com.chirp.app/models/cleanup\")",
+      "Bash(cp \"C:\\\\Users\\\\dutch\\\\chirp\\\\training\\\\output\\\\onnx\\\\deploy\"/* \"$APPDATA/com.chirp.app/models/cleanup/\")",
+      "Read(//c/Users/dutch/chirp/src-tauri/$APPDATA/com.chirp.app/models/**)",
+      "WebFetch(domain:superwhisper.com)",
+      "WebFetch(domain:docs.nvidia.com)",
+      "Bash(npx tsc:*)",
+      "Bash(cargo check:*)",
+      "Bash(wc:*)",
+      "Bash(ls:*)"
     ]
   }
 }

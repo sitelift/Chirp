@@ -22,7 +22,7 @@ export function Microphone({ onNext }: MicrophoneProps) {
   return (
     <div className="flex flex-col animate-fade-in">
       <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
-        STEP 2 OF 4
+        STEP 2 OF 6
       </span>
 
       {/* Styled mic card */}
@@ -31,7 +31,7 @@ export function Microphone({ onNext }: MicrophoneProps) {
       </div>
 
       <h1 className="mt-6 font-display font-extrabold text-3xl text-chirp-stone-900">
-        Chirp needs your microphone
+        Microphone access
       </h1>
 
       {denied ? (
@@ -44,14 +44,14 @@ export function Microphone({ onNext }: MicrophoneProps) {
         <div className="rounded-lg bg-chirp-stone-50 border border-chirp-stone-200 p-3 mt-4 flex items-start gap-2.5">
           <Lock size={16} className="text-chirp-stone-400 mt-0.5 shrink-0" />
           <p className="font-body text-sm text-chirp-stone-600">
-            We only listen when you press your hotkey. Nothing runs in the background.
+            We'll verify your mic works. Chirp only listens when you press your hotkey — nothing runs in the background.
           </p>
         </div>
       )}
 
       <div className="mt-8 flex flex-col gap-3">
         <Button size="onboarding" className="min-w-[180px] text-base" onClick={handleAllow}>
-          Allow Microphone →
+          Verify Microphone →
         </Button>
         {denied && (
           <Button
