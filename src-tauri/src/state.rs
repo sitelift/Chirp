@@ -27,8 +27,6 @@ pub struct Settings {
     pub show_in_menu_bar: bool,
     pub play_sound_on_complete: bool,
     pub auto_dismiss_overlay: bool,
-    pub silence_timeout: u32,
-    pub language: String,
     pub smart_formatting: bool,
     pub input_device: String,
     pub noise_suppression: bool,
@@ -41,6 +39,10 @@ pub struct Settings {
     pub overlay_position: String,
     #[serde(default = "default_true")]
     pub show_passive_overlay: bool,
+    #[serde(default = "default_tone_mode")]
+    pub tone_mode: String,
+    #[serde(default)]
+    pub translate_to_english: bool,
 }
 
 fn default_overlay_position() -> String {
@@ -51,6 +53,10 @@ fn default_true() -> bool {
     true
 }
 
+fn default_tone_mode() -> String {
+    "message".into()
+}
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -59,16 +65,16 @@ impl Default for Settings {
             show_in_menu_bar: true,
             play_sound_on_complete: false,
             auto_dismiss_overlay: true,
-            silence_timeout: 3,
-            language: "auto".into(),
             smart_formatting: true,
             input_device: "default".into(),
             noise_suppression: true,
             model: "parakeet-tdt-0.6b".into(),
             onboarding_complete: false,
-            ai_cleanup: false,
+            ai_cleanup: true,
             overlay_position: "bottom".into(),
             show_passive_overlay: true,
+            tone_mode: "message".into(),
+            translate_to_english: false,
         }
     }
 }
@@ -101,6 +107,8 @@ pub struct TranscriptionResult {
     pub text: String,
     pub word_count: usize,
     pub duration_ms: u64,
+    #[serde(default)]
+    pub was_cleaned_up: bool,
 }
 
 /// Persisted transcription history entry
@@ -113,6 +121,8 @@ pub struct TranscriptionEntry {
     pub duration_ms: u64,
     #[serde(default)]
     pub speech_duration_ms: u64,
+    #[serde(default)]
+    pub was_cleaned_up: bool,
 }
 
 /// Model download/presence status
@@ -130,29 +140,14 @@ pub struct AmplitudeData {
     pub bars: Vec<f32>,
 }
 
-/// Error types matching the frontend's ErrorType
+/// File transcription result
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ChirpErrorType {
-    MicNotFound,
-    MicPermission,
-    ModelNotLoaded,
-    TranscriptionFailed,
-    InjectionFailed,
-    Unknown,
-}
-
-impl std::fmt::Display for ChirpErrorType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::MicNotFound => write!(f, "mic_not_found"),
-            Self::MicPermission => write!(f, "mic_permission"),
-            Self::ModelNotLoaded => write!(f, "model_not_loaded"),
-            Self::TranscriptionFailed => write!(f, "transcription_failed"),
-            Self::InjectionFailed => write!(f, "injection_failed"),
-            Self::Unknown => write!(f, "unknown"),
-        }
-    }
+#[serde(rename_all = "camelCase")]
+pub struct FileTranscriptionResult {
+    pub text: String,
+    pub duration_secs: f32,
+    pub word_count: usize,
+    pub chunks: usize,
 }
 
 /// Main application state shared across commands
@@ -162,7 +157,9 @@ pub struct AppState {
     pub snippets: Vec<SnippetEntry>,
     pub history: Vec<TranscriptionEntry>,
     pub recording_state: RecordingState,
-    pub recognizer: Option<SherpaRecognizer>,
+    /// Recognizer is in its own Arc so transcription can proceed without holding
+    /// the main state lock. The sherpa C API is thread-safe (Send+Sync).
+    pub recognizer: Option<Arc<SherpaRecognizer>>,
     pub llm_process: Option<tokio::process::Child>,
     pub llm_port: Option<u16>,
 }

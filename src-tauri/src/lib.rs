@@ -2,6 +2,7 @@ mod audio;
 mod cleanup;
 mod commands;
 mod dictionary;
+mod file_transcribe;
 mod history;
 mod inject;
 mod llm;
@@ -70,11 +71,10 @@ pub fn run() {
                 })
                 .build(),
         )
-        .plugin(tauri_plugin_notification::init())
-        .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_dialog::init())
         .manage::<SharedState>({
             Arc::new(tokio::sync::Mutex::new(AppState::new(
                 initial_settings,
@@ -91,18 +91,14 @@ pub fn run() {
             commands::update_dictionary,
             commands::get_audio_devices,
             commands::get_input_level,
-            commands::request_mic_permission,
             commands::start_recording,
             commands::stop_recording,
             commands::cancel_recording,
             commands::download_model,
             commands::get_model_status,
-            commands::check_accessibility_permission,
-            commands::open_accessibility_settings,
             commands::get_history,
             commands::clear_history,
             commands::delete_history_entry,
-            commands::detect_hardware,
             commands::get_llm_status,
             commands::download_llm,
             commands::start_llm,
@@ -111,6 +107,8 @@ pub fn run() {
             commands::test_microphone,
             commands::get_snippets,
             commands::update_snippets,
+            commands::play_completion_sound,
+            commands::transcribe_file,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -139,7 +137,7 @@ pub fn run() {
                 if transcribe::model_exists(&model) {
                     match transcribe::load_model(&model) {
                         Ok(recognizer) => {
-                            s.recognizer = Some(recognizer);
+                            s.recognizer = Some(Arc::new(recognizer));
                             log::info!("Speech model '{model}' loaded");
                         }
                         Err(e) => log::error!("Failed to load speech model: {e}"),
@@ -160,7 +158,13 @@ pub fn run() {
                     let state_clone = handle.state::<SharedState>().inner().clone();
                     tauri::async_runtime::spawn(async move {
                         let port = match std::net::TcpListener::bind("127.0.0.1:0") {
-                            Ok(listener) => listener.local_addr().unwrap().port(),
+                            Ok(listener) => match listener.local_addr() {
+                                Ok(addr) => addr.port(),
+                                Err(e) => {
+                                    log::warn!("Failed to get local address for LLM: {e}");
+                                    return;
+                                }
+                            },
                             Err(e) => {
                                 log::warn!("Failed to find free port for LLM: {e}");
                                 return;
@@ -231,6 +235,10 @@ pub fn run() {
                         let _ = app.emit("toggle-recording", ());
                     }
                     "updates" => {
+                        if let Some(win) = app.get_webview_window("settings") {
+                            let _ = win.show();
+                            let _ = win.set_focus();
+                        }
                         let _ = app.emit("check-for-updates", ());
                     }
                     _ => {}

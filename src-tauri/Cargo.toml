@@ -19,8 +19,6 @@ tauri-build = { version = "2.5.6", features = [] }
 tauri = { version = "2.10.3", features = ["tray-icon", "image-png"] }
 tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
-tauri-plugin-notification = "2"
-tauri-plugin-shell = "2"
 tauri-plugin-autostart = "2"
 tauri-plugin-updater = "2"
 tauri-plugin-process = "2"
@@ -42,4 +40,14 @@ bzip2 = "0.5"
 arboard = "3.6.1"
 chrono = { version = "0.4", features = ["serde"] }
 zip = "2"
+rodio = "0.19"
+symphonia = { version = "0.5", features = ["all"] }
+tauri-plugin-dialog = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
 

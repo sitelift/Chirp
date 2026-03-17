@@ -196,7 +196,7 @@ fn process_audio(
 
     if let Some(resampler) = resampler {
         // Accumulate for resampler
-        let mut rbuf = resample_buf.lock().unwrap();
+        let mut rbuf = resample_buf.lock().unwrap_or_else(|e| e.into_inner());
         rbuf.extend_from_slice(&mono);
 
         // Process complete chunks
@@ -205,21 +205,21 @@ fn process_audio(
             if let Ok(mut rs) = resampler.lock() {
                 if let Ok(resampled) = rs.process(&[chunk], None) {
                     if let Some(output) = resampled.first() {
-                        buffer.lock().unwrap().extend_from_slice(output);
+                        buffer.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(output);
                     }
                 }
             }
         }
     } else {
-        buffer.lock().unwrap().extend_from_slice(&mono);
+        buffer.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(&mono);
     }
 
     // Emit amplitude data periodically
-    let mut counter = amp_counter.lock().unwrap();
+    let mut counter = amp_counter.lock().unwrap_or_else(|e| e.into_inner());
     *counter += mono.len() as u32;
     if *counter >= amp_interval {
         *counter = 0;
-        let buf = buffer.lock().unwrap();
+        let buf = buffer.lock().unwrap_or_else(|e| e.into_inner());
         let bars = compute_amplitude_bars(&buf, BAR_COUNT);
         let _ = app_handle.emit("amplitude-data", AmplitudeData { bars });
     }
@@ -268,15 +268,4 @@ pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> 
     }
     writer.finalize().map_err(|e| format!("WAV finalize failed: {e}"))?;
     Ok(cursor.into_inner())
-}
-
-/// Check if trailing N seconds of the buffer are below threshold (silence detection)
-pub fn detect_silence(buffer: &[f32], seconds: f32, threshold: f32) -> bool {
-    let sample_count = (TARGET_SAMPLE_RATE as f32 * seconds) as usize;
-    if buffer.len() < sample_count {
-        return false;
-    }
-    let tail = &buffer[buffer.len() - sample_count..];
-    let rms = (tail.iter().map(|s| s * s).sum::<f32>() / tail.len() as f32).sqrt();
-    rms < threshold
 }

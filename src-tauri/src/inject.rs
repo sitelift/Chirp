@@ -13,7 +13,7 @@ pub fn inject_text(text: &str) -> Result<(), String> {
     let saved = {
         let mut cb = Clipboard::new().map_err(|e| format!("Failed to access clipboard: {e}"))?;
         let s = cb.get_text().ok();
-        log::info!(
+        log::debug!(
             "Clipboard before inject: {:?}",
             s.as_deref().map(|t| if t.len() > 80 { &t[..80] } else { t })
         );

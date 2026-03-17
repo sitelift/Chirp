@@ -60,8 +60,11 @@ pub fn load_model(model: &str) -> Result<SherpaRecognizer, String> {
         return Err("tokens.txt not found".to_string());
     }
 
+    // Use at most half the available threads (min 2, max 6) so the LLM server
+    // and OS have headroom. On the Intel Core Ultra 7 256V (8 threads) this
+    // gives sherpa 4 threads instead of 8.
     let n_threads = std::thread::available_parallelism()
-        .map(|n| n.get() as i32)
+        .map(|n| (n.get() / 2).clamp(2, 6) as i32)
         .unwrap_or(4);
 
     log::info!(
@@ -183,7 +186,6 @@ pub async fn download_model(model: &str, app_handle: AppHandle) -> Result<(), St
 pub fn transcribe(
     recognizer: &SherpaRecognizer,
     audio: &[f32],
-    _language: &str,
 ) -> Result<String, String> {
     let stream = recognizer.0.create_stream();
     stream.accept_waveform(16000, audio);

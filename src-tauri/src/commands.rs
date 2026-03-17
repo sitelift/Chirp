@@ -8,42 +8,12 @@ use crate::settings;
 use crate::snippets;
 use crate::state::*;
 use crate::transcribe;
+use std::io::Cursor;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
-/// Request microphone permission on macOS via AVCaptureDevice.
-/// Returns "granted", "denied", or "undetermined".
-#[tauri::command]
-pub async fn request_mic_permission() -> String {
-    #[cfg(target_os = "macos")]
-    {
-        use std::ffi::c_long;
-
-        extern "C" {
-            fn AVCaptureDevice_authorizationStatusForAudio() -> c_long;
-            fn AVCaptureDevice_requestAccessForAudio();
-        }
-
-        let status = unsafe { AVCaptureDevice_authorizationStatusForAudio() };
-        match status {
-            3 => "granted".to_string(),
-            0 => {
-                // Not determined — trigger the prompt
-                unsafe { AVCaptureDevice_requestAccessForAudio() };
-                // Give the system a moment, then re-check
-                tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                let new_status = unsafe { AVCaptureDevice_authorizationStatusForAudio() };
-                if new_status == 3 { "granted".to_string() } else { "undetermined".to_string() }
-            }
-            _ => "denied".to_string(),
-        }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        "granted".to_string()
-    }
-}
+const CHIRP_SOUND: &[u8] = include_bytes!("../sounds/chirp.wav");
 
 /// Active audio stream handle — wrapped in an unsafe Send wrapper because
 /// cpal::Stream is !Send but we only access it from the main thread.
@@ -52,6 +22,7 @@ pub struct StreamHandle(pub std::sync::Mutex<Option<StreamWrapper>>);
 pub struct StreamWrapper(cpal::Stream);
 unsafe impl Send for StreamWrapper {}
 unsafe impl Sync for StreamWrapper {}
+
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, SharedState>) -> Result<Settings, String> {
@@ -164,7 +135,7 @@ pub async fn get_audio_devices() -> Result<Vec<AudioDevice>, String> {
 
 #[tauri::command]
 pub async fn get_input_level(buffer: State<'_, AudioBuffer>) -> Result<f32, String> {
-    let buf = buffer.lock().unwrap();
+    let buf = buffer.lock().unwrap_or_else(|e| e.into_inner());
     if buf.is_empty() {
         return Ok(0.0);
     }
@@ -194,7 +165,7 @@ pub async fn start_recording(
     }
 
     // Clear audio buffer
-    buffer.lock().unwrap().clear();
+    buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
 
     let device_id = s.settings.input_device.clone();
     s.recording_state = RecordingState::Recording;
@@ -208,7 +179,7 @@ pub async fn start_recording(
         app_handle.clone(),
     ) {
         Ok(stream) => {
-            *stream_handle.0.lock().unwrap() = Some(StreamWrapper(stream));
+            *stream_handle.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(StreamWrapper(stream));
             None
         }
         Err(e) => {
@@ -242,7 +213,7 @@ pub async fn stop_recording(
 
     // Stop the audio stream
     {
-        let mut handle = stream_handle.0.lock().unwrap();
+        let mut handle = stream_handle.0.lock().unwrap_or_else(|e| e.into_inner());
         *handle = None; // Drop stream → stops capture
     }
 
@@ -261,7 +232,7 @@ pub async fn stop_recording(
     // internal delay and model warm-up don't eat the first word.
     // Clear the buffer afterward to prevent stale data on next recording.
     let audio_data = {
-        let mut buf = buffer.lock().unwrap();
+        let mut buf = buffer.lock().unwrap_or_else(|e| e.into_inner());
         let pad_samples = 16000 * 150 / 1000; // 150ms at 16kHz
         let mut padded = vec![0.0f32; pad_samples];
         padded.extend_from_slice(&buf);
@@ -273,18 +244,7 @@ pub async fn stop_recording(
     let duration_secs = sample_count as f32 / 16000.0;
     let speech_duration_ms = (duration_secs * 1000.0) as u64;
 
-    // Audio fingerprint: log RMS, min/max, and a few sample values so we can
-    // verify the buffer actually contains NEW audio on each recording.
-    let rms = (audio_data.iter().map(|s| s * s).sum::<f32>() / sample_count as f32).sqrt();
-    let min_val = audio_data.iter().cloned().fold(f32::INFINITY, f32::min);
-    let max_val = audio_data.iter().cloned().fold(f32::NEG_INFINITY, f32::max);
-    // Grab a few samples from the middle of the (non-padding) audio
-    let mid = sample_count / 2;
-    let samples_snapshot: Vec<f32> = audio_data[mid..mid.min(sample_count).max(mid) + 5.min(sample_count - mid)]
-        .to_vec();
-    log::info!(
-        "Audio buffer: {sample_count} samples ({duration_secs:.1}s), RMS={rms:.6}, min={min_val:.6}, max={max_val:.6}, mid_samples={samples_snapshot:?}"
-    );
+    log::info!("Audio buffer: {sample_count} samples ({duration_secs:.1}s)");
 
     if audio_data.is_empty() {
         log::error!("Audio buffer is empty!");
@@ -297,36 +257,34 @@ pub async fn stop_recording(
         log::warn!("Audio too short (<1s), may produce poor results");
     }
 
-    // Grab what we need from state before entering blocking thread
-    let (language, smart_fmt, dict, snips, ai_cleanup, llm_port) = {
+    // Grab what we need from state before entering blocking thread.
+    // Clone the Arc<SherpaRecognizer> so we can release the state lock
+    // before the expensive transcription step.
+    let (recognizer, smart_fmt, dict, snips, ai_cleanup, llm_port, tone_mode) = {
         let s = state.lock().await;
+        let rec = s.recognizer.clone().ok_or("model_not_loaded".to_string())?;
         (
-            s.settings.language.clone(),
+            rec,
             s.settings.smart_formatting,
             s.dictionary.clone(),
             s.snippets.clone(),
             s.settings.ai_cleanup,
             s.llm_port,
+            s.settings.tone_mode.clone(),
         )
     };
 
     // Transcribe using the sherpa-onnx recognizer.
-    // OfflineRecognizer is Send+Sync so we can use it from spawn_blocking safely.
-    let state_inner = state.inner().clone();
+    // The recognizer Arc is cloned above so the state lock is NOT held during inference.
     let result = tokio::task::spawn_blocking(move || {
-        let rt = tokio::runtime::Handle::current();
-        let s = rt.block_on(state_inner.lock());
-
-        let recognizer = s.recognizer.as_ref().ok_or("model_not_loaded".to_string())?;
-
         log::info!("Starting Parakeet TDT transcription...");
-        let raw = transcribe::transcribe(recognizer, &audio_data, &language)
+        let raw = transcribe::transcribe(&recognizer, &audio_data)
             .map_err(|e| {
                 log::error!("Transcription error: {e}");
                 "transcription_failed".to_string()
             })?;
 
-        log::info!("Transcription raw output: '{raw}'");
+        log::debug!("Transcription raw output: '{raw}'");
 
         if raw.is_empty() {
             log::warn!("Transcription returned empty text");
@@ -340,7 +298,12 @@ pub async fn stop_recording(
             cleanup::cleanup_text(&raw, smart_fmt)
         };
 
-        Ok(formatted)
+        // Apply dictionary and snippet expansions BEFORE AI cleanup so the
+        // LLM doesn't alter trigger phrases (e.g. "my email" → "My E-mail").
+        let after_dict = dictionary::apply_dictionary(&formatted, &dict);
+        let after_snips = snippets::apply_snippets(&after_dict, &snips);
+
+        Ok(after_snips)
     })
     .await
     .map_err(|e| format!("Task failed: {e}"))?;
@@ -356,13 +319,15 @@ pub async fn stop_recording(
     };
 
     // AI cleanup pass (if enabled and server is running)
+    let mut was_cleaned_up = false;
     let after_llm = if ai_cleanup && llm_port.is_some() {
         let port = llm_port.unwrap();
         let _ = app_handle.emit("recording-state", "polishing");
         log::info!("Running AI cleanup on text...");
-        match llm::cleanup_text(port, &formatted).await {
+        match llm::cleanup_text(port, &formatted, &tone_mode).await {
             Ok(cleaned) => {
-                log::info!("AI cleanup result: '{cleaned}'");
+                log::debug!("AI cleanup result: '{cleaned}'");
+                was_cleaned_up = true;
                 cleaned
             }
             Err(e) => {
@@ -374,15 +339,13 @@ pub async fn stop_recording(
         formatted.clone()
     };
 
-    // Dictionary replacements, then snippet expansions
-    let after_dict = dictionary::apply_dictionary(&after_llm, &dict);
-    let result = snippets::apply_snippets(&after_dict, &snips);
+    let result = after_llm;
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
     let word_count = result.split_whitespace().count();
 
     // Inject text at cursor
-    log::info!("Injecting transcribed text: '{result}'");
+    log::debug!("Injecting transcribed text: '{result}'");
     let text_for_inject = result.clone();
     let inject_result =
         tokio::task::spawn_blocking(move || inject::inject_text(&text_for_inject))
@@ -404,6 +367,7 @@ pub async fn stop_recording(
         word_count,
         duration_ms,
         speech_duration_ms,
+        was_cleaned_up,
     });
     let _ = history::save_history(&s.history);
     let new_entry = s.history.last().cloned();
@@ -418,6 +382,7 @@ pub async fn stop_recording(
         text: result,
         word_count,
         duration_ms,
+        was_cleaned_up,
     })
 }
 
@@ -429,12 +394,12 @@ pub async fn cancel_recording(
 ) -> Result<(), String> {
     // Stop stream
     {
-        let mut handle = stream_handle.0.lock().unwrap();
+        let mut handle = stream_handle.0.lock().unwrap_or_else(|e| e.into_inner());
         *handle = None;
     }
 
     // Clear buffer
-    buffer.lock().unwrap().clear();
+    buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
 
     // Reset state
     let mut s = state.lock().await;
@@ -455,33 +420,6 @@ pub async fn get_model_status(model: String) -> Result<ModelStatus, String> {
         size_bytes: transcribe::model_size_bytes(&model),
         model,
     })
-}
-
-#[tauri::command]
-pub async fn check_accessibility_permission() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        extern "C" {
-            fn AXIsProcessTrusted() -> bool;
-        }
-        unsafe { AXIsProcessTrusted() }
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        true
-    }
-}
-
-#[tauri::command]
-pub async fn open_accessibility_settings() -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg("x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility")
-            .spawn()
-            .map_err(|e| format!("Failed to open settings: {e}"))?;
-    }
-    Ok(())
 }
 
 #[tauri::command]
@@ -524,37 +462,32 @@ pub async fn test_microphone(
     };
 
     // Clear buffer before recording
-    buffer.lock().unwrap().clear();
+    buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
 
     // Start capture
     let stream = audio::start_capture(&device_id, buffer.inner().clone(), app_handle)?;
-    *stream_handle.0.lock().unwrap() = Some(StreamWrapper(stream));
+    *stream_handle.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(StreamWrapper(stream));
 
     // Record for 3 seconds
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
 
     // Stop capture
-    *stream_handle.0.lock().unwrap() = None;
+    *stream_handle.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     // Get audio and encode as WAV
     let wav_bytes = {
-        let buf = buffer.lock().unwrap();
+        let buf = buffer.lock().unwrap_or_else(|e| e.into_inner());
         audio::encode_wav(&buf, 16000)?
     };
 
     // Clear the buffer
-    buffer.lock().unwrap().clear();
+    buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
 
     Ok(wav_bytes)
 }
 
 // ── LLM commands ──────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn detect_hardware() -> Result<llm::HardwareInfo, String> {
-    Ok(llm::detect_hardware())
-}
 
 #[tauri::command]
 pub async fn get_llm_status(
@@ -592,7 +525,9 @@ pub async fn start_llm(
     let port = {
         let listener = std::net::TcpListener::bind("127.0.0.1:0")
             .map_err(|e| format!("Failed to find free port: {e}"))?;
-        listener.local_addr().unwrap().port()
+        listener.local_addr()
+            .map_err(|e| format!("Failed to get local address: {e}"))?
+            .port()
     };
 
     let child = llm::start_server(port).await?;
@@ -620,11 +555,104 @@ pub async fn stop_llm(
 #[tauri::command]
 pub async fn test_llm_cleanup(
     text: String,
+    mode: Option<String>,
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
     let port = {
         let s = state.lock().await;
         s.llm_port.ok_or("LLM server is not running")?
     };
-    llm::cleanup_text(port, &text).await
+    llm::cleanup_text(port, &text, &mode.unwrap_or_else(|| "message".to_string())).await
 }
+
+#[tauri::command]
+pub async fn play_completion_sound() -> Result<(), String> {
+    tokio::task::spawn_blocking(|| {
+        let cursor = Cursor::new(CHIRP_SOUND);
+        let (_stream, stream_handle) = rodio::OutputStream::try_default()
+            .map_err(|e| format!("Audio output error: {e}"))?;
+        let sink = rodio::Sink::try_new(&stream_handle)
+            .map_err(|e| format!("Sink error: {e}"))?;
+        let source = rodio::Decoder::new(cursor)
+            .map_err(|e| format!("Decode error: {e}"))?;
+        sink.append(source);
+        sink.sleep_until_end();
+        Ok(())
+    })
+    .await
+    .map_err(|e| format!("Task error: {e}"))?
+}
+
+// ── File transcription ────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn transcribe_file(
+    path: String,
+    app_handle: AppHandle,
+    state: State<'_, SharedState>,
+) -> Result<FileTranscriptionResult, String> {
+    use crate::file_transcribe;
+
+    let file_path = std::path::PathBuf::from(&path);
+    if !file_path.exists() {
+        return Err("File not found".to_string());
+    }
+
+    let _ = app_handle.emit("file-transcribe-progress", serde_json::json!({"phase": "decoding", "progress": 0}));
+
+    // Decode audio file (blocking - heavy CPU work)
+    let (samples, _sample_rate) = tokio::task::spawn_blocking(move || {
+        file_transcribe::decode_audio_file(&file_path)
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))??;
+
+    let duration_secs = samples.len() as f32 / 16000.0;
+    let _ = app_handle.emit("file-transcribe-progress", serde_json::json!({"phase": "transcribing", "progress": 0}));
+
+    // Chunk the audio
+    let chunks = file_transcribe::chunk_audio(&samples, 16000, 30.0, 1.0);
+    let total_chunks = chunks.len();
+    let mut transcriptions = Vec::new();
+
+    // Clone the recognizer Arc so we don't hold the state lock during transcription
+    let recognizer = {
+        let s = state.lock().await;
+        s.recognizer.clone().ok_or("model_not_loaded".to_string())?
+    };
+
+    // Transcribe each chunk
+    for (i, chunk) in chunks.into_iter().enumerate() {
+        let chunk_owned = chunk.to_vec();
+        let rec = recognizer.clone();
+
+        let segment = tokio::task::spawn_blocking(move || {
+            crate::transcribe::transcribe(&rec, &chunk_owned)
+        })
+        .await
+        .map_err(|e| format!("Task failed: {e}"))??;
+
+        transcriptions.push(segment);
+
+        let progress = ((i + 1) as f32 / total_chunks as f32 * 100.0) as u32;
+        let _ = app_handle.emit("file-transcribe-progress", serde_json::json!({
+            "phase": "transcribing",
+            "progress": progress,
+            "chunk": i + 1,
+            "totalChunks": total_chunks,
+        }));
+    }
+
+    let text = file_transcribe::merge_transcriptions(transcriptions);
+    let word_count = text.split_whitespace().count();
+
+    let _ = app_handle.emit("file-transcribe-progress", serde_json::json!({"phase": "done", "progress": 100}));
+
+    Ok(FileTranscriptionResult {
+        text,
+        duration_secs,
+        word_count,
+        chunks: total_chunks,
+    })
+}
+
