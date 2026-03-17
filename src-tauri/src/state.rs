@@ -35,6 +35,8 @@ pub struct Settings {
     #[serde(alias = "whisperModel")]
     pub model: String,
     pub onboarding_complete: bool,
+    #[serde(default)]
+    pub ai_cleanup: bool,
 }
 
 impl Default for Settings {
@@ -52,6 +54,7 @@ impl Default for Settings {
             noise_suppression: true,
             model: "parakeet-tdt-0.6b".into(),
             onboarding_complete: false,
+            ai_cleanup: false,
         }
     }
 }
@@ -138,6 +141,8 @@ pub struct AppState {
     pub history: Vec<TranscriptionEntry>,
     pub recording_state: RecordingState,
     pub recognizer: Option<SherpaRecognizer>,
+    pub llm_process: Option<tokio::process::Child>,
+    pub llm_port: Option<u16>,
 }
 
 impl AppState {
@@ -148,6 +153,8 @@ impl AppState {
             history,
             recording_state: RecordingState::Idle,
             recognizer: None,
+            llm_process: None,
+            llm_port: None,
         }
     }
 }

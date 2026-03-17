@@ -13,11 +13,18 @@ export const DEFAULT_SETTINGS = {
   noiseSuppression: true,
   model: 'parakeet-tdt-0.6b' as const,
   onboardingComplete: false,
+  aiCleanup: false,
 }
 
 export const STT_MODELS = [
   { id: 'parakeet-tdt-0.6b' as const, name: 'Parakeet TDT 0.6B', size: '465 MB', description: 'Best accuracy, fast on any PC', recommended: true },
 ]
+
+export const LLM_MODEL = {
+  name: 'Qwen 2.5 1.5B',
+  size: '1.1 GB',
+  description: 'Fast, local AI cleanup on any PC.',
+}
 
 export const SILENCE_TIMEOUT_OPTIONS = [
   { value: 2, label: '2 seconds' },

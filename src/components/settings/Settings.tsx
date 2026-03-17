@@ -1,10 +1,11 @@
-import { LayoutDashboard, Settings as SettingsIcon, Mic, Cpu, BookOpen, Info } from 'lucide-react'
+import { LayoutDashboard, Settings as SettingsIcon, Mic, Cpu, BookOpen, Info, Sparkles } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { BirdMark } from '../shared/BirdMark'
 import { HomePage } from './HomePage'
 import { GeneralPage } from './GeneralPage'
 import { AudioPage } from './AudioPage'
 import { ModelPage } from './ModelPage'
+import { AiCleanupPage } from './AiCleanupPage'
 import { DictionaryPage } from './DictionaryPage'
 import { AboutPage } from './AboutPage'
 
@@ -21,6 +22,7 @@ const NAV_SECTIONS = [
       { id: 'general', label: 'General', icon: SettingsIcon },
       { id: 'audio', label: 'Audio', icon: Mic },
       { id: 'model', label: 'Model', icon: Cpu },
+      { id: 'ai-cleanup', label: 'AI Cleanup', icon: Sparkles },
     ],
   },
   {
@@ -36,6 +38,7 @@ const PAGES: Record<string, React.FC> = {
   general: GeneralPage,
   audio: AudioPage,
   model: ModelPage,
+  'ai-cleanup': AiCleanupPage,
   dictionary: DictionaryPage,
   about: AboutPage,
 }

@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import { DEFAULT_SETTINGS, type ErrorType } from '../lib/constants'
 
-export type AppStatus = 'idle' | 'listening' | 'processing' | 'done' | 'error'
+export type AppStatus = 'idle' | 'listening' | 'processing' | 'polishing' | 'done' | 'error'
 export type SttModel = 'parakeet-tdt-0.6b'
 
 export interface DictionaryEntry {
@@ -44,6 +44,11 @@ export interface AppState {
   modelDownloaded: Record<string, boolean>
   modelDownloadProgress: number | null
 
+  // AI Cleanup
+  aiCleanup: boolean
+  llmReady: boolean
+  llmDownloadProgress: number | null
+
   // Dictionary
   dictionary: DictionaryEntry[]
 
@@ -66,6 +71,8 @@ export interface AppState {
   setWordCount: (count: number) => void
   setInputLevel: (level: number) => void
   setModelDownloadProgress: (progress: number | null) => void
+  setLlmDownloadProgress: (progress: number | null) => void
+  setLlmReady: (ready: boolean) => void
   updateSettings: (partial: Partial<AppState>) => void
   addDictionaryEntry: (from: string, to: string) => void
   removeDictionaryEntry: (index: number) => void
@@ -103,6 +110,11 @@ export const useAppStore = create<AppState>((set) => ({
   modelDownloaded: {},
   modelDownloadProgress: null,
 
+  // AI Cleanup
+  aiCleanup: DEFAULT_SETTINGS.aiCleanup,
+  llmReady: false,
+  llmDownloadProgress: null,
+
   // Dictionary
   dictionary: [],
 
@@ -125,6 +137,8 @@ export const useAppStore = create<AppState>((set) => ({
   setWordCount: (wordCount) => set({ wordCount }),
   setInputLevel: (inputLevel) => set({ inputLevel }),
   setModelDownloadProgress: (modelDownloadProgress) => set({ modelDownloadProgress }),
+  setLlmDownloadProgress: (llmDownloadProgress) => set({ llmDownloadProgress }),
+  setLlmReady: (llmReady) => set({ llmReady }),
   updateSettings: (partial) => set(partial),
   addDictionaryEntry: (from, to) =>
     set((state) => ({ dictionary: [...state.dictionary, { from, to }] })),

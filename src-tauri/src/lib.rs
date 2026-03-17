@@ -4,6 +4,7 @@ mod commands;
 mod dictionary;
 mod history;
 mod inject;
+mod llm;
 mod settings;
 mod state;
 mod transcribe;
@@ -98,6 +99,12 @@ pub fn run() {
             commands::get_history,
             commands::clear_history,
             commands::delete_history_entry,
+            commands::detect_hardware,
+            commands::get_llm_status,
+            commands::download_llm,
+            commands::start_llm,
+            commands::stop_llm,
+            commands::test_llm_cleanup,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -133,6 +140,39 @@ pub fn run() {
                     }
                 }
 
+            }
+
+            // Auto-start LLM server if AI cleanup is enabled and files exist
+            {
+                let state = handle.state::<SharedState>();
+                let s = state.blocking_lock();
+                let ai_cleanup = s.settings.ai_cleanup;
+                drop(s);
+
+                if ai_cleanup && llm::binary_exists() && llm::model_exists() {
+                    let state_clone = handle.state::<SharedState>().inner().clone();
+                    tauri::async_runtime::spawn(async move {
+                        let port = match std::net::TcpListener::bind("127.0.0.1:0") {
+                            Ok(listener) => listener.local_addr().unwrap().port(),
+                            Err(e) => {
+                                log::warn!("Failed to find free port for LLM: {e}");
+                                return;
+                            }
+                        };
+
+                        match llm::start_server(port).await {
+                            Ok(child) => {
+                                let mut s = state_clone.lock().await;
+                                s.llm_process = Some(child);
+                                s.llm_port = Some(port);
+                                log::info!("LLM server auto-started on port {port}");
+                            }
+                            Err(e) => {
+                                log::warn!("Failed to auto-start LLM server: {e}");
+                            }
+                        }
+                    });
+                }
             }
 
             // Build system tray

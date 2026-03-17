@@ -32,6 +32,12 @@ export interface ModelStatus {
   sizeBytes: number
 }
 
+export interface LlmStatus {
+  binaryDownloaded: boolean
+  modelDownloaded: boolean
+  serverRunning: boolean
+}
+
 export function useTauri() {
   const startRecording = async (): Promise<void> => {
     await invoke('start_recording')
@@ -102,6 +108,38 @@ export function useTauri() {
     await invoke('delete_history_entry', { timestamp })
   }
 
+  const getLlmStatus = async (): Promise<LlmStatus> => {
+    return await invoke<LlmStatus>('get_llm_status')
+  }
+
+  const downloadLlm = async (
+    onProgress?: (progress: number) => void
+  ): Promise<void> => {
+    let unlisten: (() => void) | undefined
+    if (onProgress) {
+      unlisten = await listen<number>('llm-download-progress', (event) => {
+        onProgress(event.payload)
+      })
+    }
+    try {
+      await invoke('download_llm')
+    } finally {
+      unlisten?.()
+    }
+  }
+
+  const startLlm = async (): Promise<void> => {
+    await invoke('start_llm')
+  }
+
+  const stopLlm = async (): Promise<void> => {
+    await invoke('stop_llm')
+  }
+
+  const testLlmCleanup = async (text: string): Promise<string> => {
+    return await invoke<string>('test_llm_cleanup', { text })
+  }
+
   const checkForUpdates = async (onProgress?: (downloaded: number, total: number | null) => void) => {
     const update = await check()
     if (!update) {
@@ -141,6 +179,11 @@ export function useTauri() {
     getHistory,
     clearHistory,
     deleteHistoryEntry,
+    getLlmStatus,
+    downloadLlm,
+    startLlm,
+    stopLlm,
+    testLlmCleanup,
     checkForUpdates,
   }
 }

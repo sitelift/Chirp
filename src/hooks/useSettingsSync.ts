@@ -10,6 +10,7 @@ const SYNCED_KEYS = [
   'hotkey', 'launchAtLogin', 'showInMenuBar', 'playSoundOnComplete',
   'autoDismissOverlay', 'silenceTimeout', 'language', 'smartFormatting',
   'inputDevice', 'noiseSuppression', 'model', 'onboardingComplete',
+  'aiCleanup',
 ] as const
 
 /**

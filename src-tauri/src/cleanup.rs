@@ -125,7 +125,18 @@ fn regexes() -> &'static CleanupRegexes {
 }
 
 /// Full cleanup pipeline: filler removal → regex formatting
+/// When `ai_cleanup` is true, skip list detection and sentence restructuring
+/// since the AI model handles those better.
 pub fn cleanup_text(text: &str, smart_formatting: bool) -> String {
+    cleanup_text_inner(text, smart_formatting, false)
+}
+
+/// Same as cleanup_text but with option to skip transforms the AI handles
+pub fn cleanup_text_for_ai(text: &str, smart_formatting: bool) -> String {
+    cleanup_text_inner(text, smart_formatting, true)
+}
+
+fn cleanup_text_inner(text: &str, smart_formatting: bool, skip_ai_overlap: bool) -> String {
     if text.is_empty() {
         return String::new();
     }
@@ -138,7 +149,7 @@ pub fn cleanup_text(text: &str, smart_formatting: bool) -> String {
     }
 
     // Step 2: Regex-based formatting (spoken punctuation, numbers, etc.)
-    smart_format(&cleaned)
+    smart_format(&cleaned, skip_ai_overlap)
 }
 
 /// Remove common filler words from transcript
@@ -168,7 +179,7 @@ fn capitalize_first(text: &str) -> String {
 }
 
 /// Smart formatting: punctuation, capitalization, numbers, common patterns
-fn smart_format(text: &str) -> String {
+fn smart_format(text: &str, skip_ai_overlap: bool) -> String {
     let re = regexes();
     let mut result = text.to_string();
 
@@ -209,7 +220,10 @@ fn smart_format(text: &str) -> String {
         .to_string();
 
     // Detect list patterns and format as numbered list
-    result = format_lists(&result);
+    // Skip when AI cleanup is enabled — the AI model handles lists better
+    if !skip_ai_overlap {
+        result = format_lists(&result);
+    }
 
     result
 }
@@ -298,7 +312,13 @@ fn format_lists(text: &str) -> String {
                     format!("{}. {}", i + 1, s)
                 })
                 .collect();
-            return numbered.join("\n");
+            let match_start = caps.get(0).unwrap().start();
+            let preamble = text[..match_start].trim();
+            if preamble.is_empty() {
+                return numbered.join("\n");
+            } else {
+                return format!("{}\n{}", preamble, numbered.join("\n"));
+            }
         }
     }
 
@@ -320,38 +340,38 @@ mod tests {
 
     #[test]
     fn test_capitalize_i() {
-        let result = smart_format("i want to go and i need help");
+        let result = smart_format("i want to go and i need help", false);
         assert!(result.contains("I want"));
         assert!(result.contains("I need"));
     }
 
     #[test]
     fn test_sentence_ending() {
-        let result = smart_format("hello world");
+        let result = smart_format("hello world", false);
         assert!(result.ends_with('.'));
     }
 
     #[test]
     fn test_spoken_punctuation() {
-        let result = smart_format("hello comma how are you question mark");
+        let result = smart_format("hello comma how are you question mark", false);
         assert!(result.contains("Hello, how are you?"));
     }
 
     #[test]
     fn test_percentage() {
-        let result = smart_format("it was about fifty percent done");
+        let result = smart_format("it was about fifty percent done", false);
         assert!(result.contains("50%"));
     }
 
     #[test]
     fn test_email() {
-        let result = smart_format("send it to john at example dot com");
+        let result = smart_format("send it to john at example dot com", false);
         assert!(result.contains("john@example.com"));
     }
 
     #[test]
     fn test_new_paragraph() {
-        let result = smart_format("hello new paragraph world");
+        let result = smart_format("hello new paragraph world", false);
         assert!(result.contains("\n\n"));
     }
 
