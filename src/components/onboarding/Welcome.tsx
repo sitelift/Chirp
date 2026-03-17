@@ -1,4 +1,3 @@
-import { BirdMark } from '../shared/BirdMark'
 import { Button } from '../shared/Button'
 
 interface WelcomeProps {
@@ -6,23 +5,35 @@ interface WelcomeProps {
 }
 
 export function Welcome({ onNext }: WelcomeProps) {
-  return (
-    <div className="flex flex-col items-center">
-      <BirdMark size={80} />
+  const valueProps = [
+    'Free, local voice-to-text for everyone',
+    'Your voice never leaves your device',
+    'No accounts, no cloud, no subscriptions',
+  ]
 
-      <h1 className="mt-6 font-display font-extrabold text-[28px] text-chirp-stone-900">
+  return (
+    <div className="flex flex-col animate-fade-in">
+      <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
+        STEP 1 OF 4
+      </span>
+
+      <h1 className="font-display font-extrabold text-3xl text-chirp-stone-900 mt-4">
         Welcome to Chirp
       </h1>
 
-      <p className="mt-4 max-w-[360px] text-center font-body text-[15px] leading-[1.7] text-chirp-stone-700">
-        Free, local voice-to-text for everyone.
-      </p>
-      <p className="mt-2 max-w-[360px] text-center font-body text-[15px] leading-[1.7] text-chirp-stone-700">
-        Your voice never leaves your device. No accounts. No cloud. No subscriptions.
-      </p>
+      <div className="flex flex-col gap-4 mt-6">
+        {valueProps.map((text) => (
+          <div key={text} className="flex items-start gap-3">
+            <div className="w-2 h-2 rounded-full bg-chirp-amber-400 mt-2 shrink-0" />
+            <span className="font-body text-[15px] leading-[1.7] text-chirp-stone-700">
+              {text}
+            </span>
+          </div>
+        ))}
+      </div>
 
       <div className="mt-8">
-        <Button size="onboarding" className="min-w-[180px]" onClick={onNext}>
+        <Button size="onboarding" className="min-w-[180px] text-base" onClick={onNext}>
           Get Started →
         </Button>
       </div>

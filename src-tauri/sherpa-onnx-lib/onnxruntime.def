@@ -1,0 +1,4 @@
+LIBRARY onnxruntime
+EXPORTS
+    OrtGetApiBase
+    OrtSessionOptionsAppendExecutionProvider_CPU

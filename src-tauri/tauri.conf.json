@@ -28,19 +28,27 @@
       },
       {
         "label": "settings",
-        "title": "Chirp Settings",
-        "width": 640,
-        "height": 520,
+        "title": "Chirp",
+        "width": 1400,
+        "height": 900,
         "resizable": true,
-        "minWidth": 560,
-        "minHeight": 440,
+        "minWidth": 900,
+        "minHeight": 600,
         "decorations": true,
         "visible": true,
         "center": true
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://huggingface.co https://*.huggingface.co https://github.com https://objects.githubusercontent.com"
+    }
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/sitelift/Chirp/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBMkEyMkNGRkMyRjQyQTcKUldTblFpLzh6eUlxeXN6RjRWZWtWaFM1RElMb2g3OXBBNUZkUW10NzRCT0tDTjVyTzJFa3BDSysK"
     }
   },
   "bundle": {

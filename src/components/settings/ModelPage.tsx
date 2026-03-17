@@ -4,6 +4,7 @@ import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { STT_MODELS } from '../../lib/constants'
 import { SettingGroup } from './SettingGroup'
+import { Button } from '../shared/Button'
 
 export function ModelPage() {
   const store = useAppStore()
@@ -11,91 +12,58 @@ export function ModelPage() {
   const [downloadError, setDownloadError] = useState<string | null>(null)
 
   const currentModel = STT_MODELS.find((m) => m.id === store.model)
+  const isDownloaded = store.modelDownloaded[store.model]
 
-  const handleModelSelect = async (modelId: typeof store.model) => {
-    store.updateSettings({ model: modelId })
+  const handleDownload = async () => {
     setDownloadError(null)
-
-    if (!store.modelDownloaded[modelId]) {
-      store.setModelDownloadProgress(0)
-      try {
-        await tauri.downloadModel(modelId, (progress) => {
-          store.setModelDownloadProgress(progress)
-        })
-        store.updateSettings({
-          modelDownloaded: { ...store.modelDownloaded, [modelId]: true },
-        })
-      } catch {
-        setDownloadError('Download failed. Check your internet connection and try again.')
-      } finally {
-        store.setModelDownloadProgress(null)
-      }
+    store.setModelDownloadProgress(0)
+    try {
+      await tauri.downloadModel(store.model, (progress) => {
+        store.setModelDownloadProgress(progress)
+      })
+      store.updateSettings({
+        modelDownloaded: { ...store.modelDownloaded, [store.model]: true },
+      })
+    } catch {
+      setDownloadError('Download failed. Check your internet connection and try again.')
+    } finally {
+      store.setModelDownloadProgress(null)
     }
   }
 
   return (
     <div className="flex flex-col gap-6">
-      <SettingGroup label="Speech Model">
-        <div className="mb-2">
-          <p className="font-body text-sm text-chirp-stone-700">
-            Current: {currentModel?.name}
-          </p>
-          <p className="font-body text-xs text-chirp-stone-500 mt-0.5">
-            Size: {currentModel?.size}
-          </p>
-        </div>
+      <div className="mb-2">
+        <h1 className="font-display font-extrabold text-2xl text-chirp-stone-900">Speech Model</h1>
+        <p className="font-body text-sm text-chirp-stone-500 mt-1">Manage the AI model used for transcription.</p>
+      </div>
 
-        <div className="flex flex-col gap-2">
-          {STT_MODELS.map((model) => {
-            const isSelected = store.model === model.id
-            const isDownloaded = store.modelDownloaded[model.id]
-            return (
-              <button
-                key={model.id}
-                onClick={() => handleModelSelect(model.id)}
-                className={`flex items-center gap-3 rounded-lg border p-3 text-left transition-colors duration-150 ease-out ${
-                  isSelected
-                    ? 'border-chirp-amber-400 bg-chirp-amber-50'
-                    : 'border-chirp-stone-200 hover:bg-chirp-stone-100'
-                }`}
-              >
-                <div
-                  className={`flex h-5 w-5 items-center justify-center rounded-full border-2 ${
-                    isSelected
-                      ? 'border-chirp-amber-400'
-                      : 'border-chirp-stone-300'
-                  }`}
-                >
-                  {isSelected && (
-                    <div className="h-2.5 w-2.5 rounded-full bg-chirp-amber-400" />
-                  )}
-                </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-body text-sm font-medium text-chirp-stone-900">
-                      {model.name}
-                    </span>
-                    <span className="font-body text-xs text-chirp-stone-500">
-                      — {model.size}
-                    </span>
-                    {model.recommended && (
-                      <span className="rounded-md bg-chirp-amber-100 px-1.5 py-0.5 font-body text-[11px] font-medium text-chirp-amber-500">
-                        Recommended
-                      </span>
-                    )}
-                  </div>
-                  <p className="font-body text-xs text-chirp-stone-500 mt-0.5">
-                    {model.description}
-                  </p>
-                </div>
-                {isDownloaded ? (
-                  <Check size={16} className="text-chirp-success" />
-                ) : (
-                  <Download size={16} className="text-chirp-stone-400" />
-                )}
-              </button>
-            )
-          })}
+      <SettingGroup label="Speech Model">
+        <div className="flex items-center gap-3 rounded-xl border border-chirp-stone-200 bg-white p-4">
+          <div className="flex-1">
+            <div className="flex items-center gap-2">
+              <span className="font-body text-sm font-medium text-chirp-stone-900">
+                {currentModel?.name}
+              </span>
+              <span className="font-body text-xs text-chirp-stone-500">
+                {currentModel?.size}
+              </span>
+            </div>
+            <p className="font-body text-xs text-chirp-stone-500 mt-0.5">
+              {currentModel?.description}
+            </p>
+          </div>
+          {isDownloaded ? (
+            <div className="flex items-center gap-1.5">
+              <Check size={16} className="text-chirp-success" />
+              <span className="font-body text-sm text-chirp-stone-700">Ready</span>
+            </div>
+          ) : (
+            <Button onClick={handleDownload} disabled={store.modelDownloadProgress !== null}>
+              <Download size={14} className="mr-1.5" />
+              Download
+            </Button>
+          )}
         </div>
 
         {store.modelDownloadProgress !== null && (
@@ -122,21 +90,12 @@ export function ModelPage() {
         {downloadError && (
           <p className="mt-2 font-body text-xs text-chirp-error">{downloadError}</p>
         )}
-      </SettingGroup>
 
-      <SettingGroup label="Text Cleanup">
-        <div>
-          <p className="font-body text-sm text-chirp-stone-700">
-            Model: Chirp Cleanup v1
-          </p>
-          <p className="font-body text-xs text-chirp-stone-500 mt-0.5">
-            Size: 38 MB · Bundled
-          </p>
-        </div>
-        <p className="font-body text-[13px] text-chirp-stone-500 leading-relaxed">
-          This model runs locally to format your transcripts. It handles punctuation,
-          lists, paragraphs, and filler word removal.
-        </p>
+        {isDownloaded && (
+          <Button variant="ghost" onClick={handleDownload} className="self-start mt-1">
+            Re-download model
+          </Button>
+        )}
       </SettingGroup>
     </div>
   )

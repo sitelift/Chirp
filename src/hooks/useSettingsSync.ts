@@ -1,6 +1,8 @@
 import { useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '../stores/appStore'
+import type { TranscriptionEntry } from '../stores/appStore'
 import { useTauri } from './useTauri'
 
 // Settings keys that should be synced to the backend
@@ -27,8 +29,17 @@ export function useSettingsSync() {
       if (settings && Object.keys(settings).length > 0) {
         updateSettings(settings as Partial<ReturnType<typeof useAppStore.getState>>)
       }
+      useAppStore.getState().setSettingsLoaded()
     }).catch((e) => {
       console.warn('Failed to load settings:', e)
+      useAppStore.getState().setSettingsLoaded()
+    })
+
+    // Load transcription history
+    tauri.getHistory().then((entries) => {
+      useAppStore.getState().setHistory(entries)
+    }).catch((e) => {
+      console.warn('Failed to load history:', e)
     })
 
     // Check model download status
@@ -42,8 +53,18 @@ export function useSettingsSync() {
             },
           })
         }
-      }).catch(() => {})
+      }).catch((e) => {
+        console.warn('Failed to check model status:', e)
+      })
     }
+
+    // Listen for new transcription entries from the backend (cross-window)
+    listen<TranscriptionEntry>('history-updated', (event) => {
+      const state = useAppStore.getState()
+      state.setHistory([...state.history, event.payload])
+    }).then((fn) => unlisteners.push(fn))
+
+    const unlisteners: Array<() => void> = []
 
     // Subscribe to store changes and sync settings + dictionary to backend
     const unsub = useAppStore.subscribe((state, prevState) => {
@@ -67,6 +88,9 @@ export function useSettingsSync() {
       }
     })
 
-    return () => unsub()
+    return () => {
+      unsub()
+      unlisteners.forEach((fn) => fn())
+    }
   }, [])
 }

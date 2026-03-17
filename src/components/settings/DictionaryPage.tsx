@@ -26,10 +26,8 @@ export function DictionaryPage() {
 
   return (
     <div className="flex flex-col gap-6">
-      <div>
-        <h2 className="font-display font-bold text-lg text-chirp-stone-900">
-          Personal Dictionary
-        </h2>
+      <div className="mb-2">
+        <h1 className="font-display font-extrabold text-2xl text-chirp-stone-900">Personal Dictionary</h1>
         <p className="font-body text-sm text-chirp-stone-500 mt-1">
           Words and phrases Chirp should always spell or format a specific way.
         </p>
@@ -72,7 +70,7 @@ export function DictionaryPage() {
           ))}
         </div>
       ) : (
-        <div className="flex items-center justify-center rounded-xl border border-chirp-stone-200 bg-white px-6 py-10">
+        <div className="flex items-center justify-center rounded-xl border border-dashed border-chirp-stone-200 bg-chirp-stone-100/50 px-6 py-10">
           <p className="font-body text-sm text-chirp-stone-500 text-center">
             No entries yet. Add words and phrases Chirp should always format
             correctly.

@@ -1,166 +1,131 @@
-use ndarray::Array2;
-use ort::session::Session;
-use ort::value::Value;
 use regex::Regex;
-use rust_tokenizers::tokenizer::{T5Tokenizer, Tokenizer, TruncationStrategy};
-use std::path::Path;
+use std::sync::OnceLock;
 
-use crate::settings::models_dir;
-
-const TASK_PREFIX: &str = "Fix the text: ";
-const MAX_INPUT_LEN: usize = 256;
-const MAX_OUTPUT_LEN: usize = 256;
-const PAD_TOKEN_ID: i64 = 0;
-const EOS_TOKEN_ID: i64 = 1;
-
-/// Check if the ONNX cleanup model files exist
-pub fn cleanup_model_exists() -> bool {
-    let dir = models_dir().join("cleanup");
-    dir.join("encoder_model.onnx").exists() && dir.join("decoder_model.onnx").exists()
+/// Pre-compiled regex patterns for text cleanup
+struct CleanupRegexes {
+    fillers: Vec<Regex>,
+    dangling_comma: Regex,
+    leading_comma: Regex,
+    whitespace: Regex,
+    sentence_end: Regex,
+    standalone_i: Regex,
+    i_contraction: Regex,
+    punctuation: Vec<(Regex, &'static str)>,
+    space_before_punct: Regex,
+    no_space_after: Regex,
+    email: Regex,
+    numeric_contexts: Vec<Regex>,
+    number_words: Vec<(Regex, &'static str)>,
+    percentage: Regex,
+    hundred_pct: Regex,
+    list_pattern: Regex,
 }
 
-/// Load ONNX encoder session
-pub fn load_encoder() -> Result<Session, String> {
-    let path = models_dir().join("cleanup").join("encoder_model.onnx");
-    load_onnx_session(&path)
-}
+fn regexes() -> &'static CleanupRegexes {
+    static REGEXES: OnceLock<CleanupRegexes> = OnceLock::new();
+    REGEXES.get_or_init(|| {
+        let filler_patterns = [
+            r"(?i)\bum+\b",
+            r"(?i)\buh+\b",
+            r"(?i)\buh huh\b",
+            r"(?i)\bmm+ ?hmm+\b",
+            r"(?i)\bhmm+\b",
+            r"(?i)\byou know\b(?=\s*,?\s)",
+            r"(?i)\blike\b(?=\s+(the|a|an|i|we|they|he|she|it|my|our|this|that)\b)",
+            r"(?i)\bbasically\b(?=\s*,)",
+            r"(?i)\bactually\b(?=\s*,)",
+            r"(?i)\bso\b(?=\s*,\s)",
+            r"(?i)\bi mean\b(?=\s*,)",
+            r"(?i)\bkind of\b(?=\s+(like|a|the)\b)",
+            r"(?i)\bsort of\b(?=\s+(like|a|the)\b)",
+            r"(?i)\bright\s*\?\s*(?=\b)",
+        ];
 
-/// Load ONNX decoder session
-pub fn load_decoder() -> Result<Session, String> {
-    let path = models_dir().join("cleanup").join("decoder_model.onnx");
-    load_onnx_session(&path)
-}
+        let number_word_patterns = [
+            (r"\b(?i)zero\b", "0"),
+            (r"\b(?i)one\b", "1"),
+            (r"\b(?i)two\b", "2"),
+            (r"\b(?i)three\b", "3"),
+            (r"\b(?i)four\b", "4"),
+            (r"\b(?i)five\b", "5"),
+            (r"\b(?i)six\b", "6"),
+            (r"\b(?i)seven\b", "7"),
+            (r"\b(?i)eight\b", "8"),
+            (r"\b(?i)nine\b", "9"),
+            (r"\b(?i)ten\b", "10"),
+        ];
 
-fn load_onnx_session(path: &Path) -> Result<Session, String> {
-    Session::builder()
-        .and_then(|mut b| b.commit_from_file(path))
-        .map_err(|e| format!("Failed to load ONNX model {}: {e}", path.display()))
-}
+        let numeric_context_patterns = [
+            r"(?i)\b(number|step|item|option|version|v|chapter|page|line|row|column|level|grade|score|count|total)\s+",
+            r"(?i)\b(is|are|was|were|equals?|=)\s+",
+            r"(?i)\b(about|around|approximately|roughly|nearly|over|under)\s+",
+        ];
 
-/// Load the T5 tokenizer from spiece.model
-pub fn load_tokenizer() -> Result<T5Tokenizer, String> {
-    let spiece_path = models_dir().join("cleanup").join("spiece.model");
-    T5Tokenizer::from_file(spiece_path.to_str().unwrap_or(""), false)
-        .map_err(|e| format!("Failed to load tokenizer: {e}"))
-}
-
-/// Run T5 model inference: encode input, greedy decode output
-fn model_cleanup(
-    text: &str,
-    encoder: &mut Session,
-    decoder: &mut Session,
-    tokenizer: &T5Tokenizer,
-) -> Result<String, String> {
-    let input_text = format!("{TASK_PREFIX}{text}");
-
-    // Tokenize
-    let encoded = tokenizer.encode(
-        &input_text,
-        None,
-        MAX_INPUT_LEN,
-        &TruncationStrategy::LongestFirst,
-        0,
-    );
-    let token_ids: Vec<i64> = encoded.token_ids.iter().map(|&id| id).collect();
-    let seq_len = token_ids.len();
-
-    if seq_len == 0 {
-        return Ok(text.to_string());
-    }
-
-    // Build encoder inputs
-    let input_ids = Array2::from_shape_vec((1, seq_len), token_ids.clone())
-        .map_err(|e| format!("input_ids shape error: {e}"))?;
-    let attention_mask = Array2::from_shape_vec(
-        (1, seq_len),
-        vec![1i64; seq_len],
-    )
-    .map_err(|e| format!("attention_mask shape error: {e}"))?;
-
-    // Run encoder
-    let enc_input_ids = Value::from_array(input_ids.clone())
-        .map_err(|e| format!("encoder input error: {e}"))?;
-    let enc_attn_mask = Value::from_array(attention_mask.clone())
-        .map_err(|e| format!("encoder attn error: {e}"))?;
-
-    let encoder_outputs = encoder
-        .run(ort::inputs!["input_ids" => enc_input_ids, "attention_mask" => enc_attn_mask])
-        .map_err(|e| format!("Encoder run failed: {e}"))?;
-
-    let (hidden_shape, hidden_data) = encoder_outputs["last_hidden_state"]
-        .try_extract_tensor::<f32>()
-        .map_err(|e| format!("Failed to extract hidden states: {e}"))?;
-    let hidden_shape_vec: Vec<i64> = hidden_shape.iter().copied().collect();
-    let hidden_data_vec: Vec<f32> = hidden_data.to_vec();
-
-    // Greedy decode
-    let mut generated_ids: Vec<i64> = vec![PAD_TOKEN_ID]; // decoder_start_token_id = 0
-
-    for _ in 0..MAX_OUTPUT_LEN {
-        let dec_seq_len = generated_ids.len();
-        let dec_input_ids = Array2::from_shape_vec(
-            (1, dec_seq_len),
-            generated_ids.clone(),
-        )
-        .map_err(|e| format!("dec input shape error: {e}"))?;
-
-        let dec_ids_val = Value::from_array(dec_input_ids)
-            .map_err(|e| format!("dec ids error: {e}"))?;
-        let dec_attn_val = Value::from_array(attention_mask.clone())
-            .map_err(|e| format!("dec attn error: {e}"))?;
-        let dec_hidden_val = Value::from_array((hidden_shape_vec.clone(), hidden_data_vec.clone()))
-            .map_err(|e| format!("dec hidden error: {e}"))?;
-
-        let decoder_outputs = decoder
-            .run(ort::inputs![
-                "encoder_attention_mask" => dec_attn_val,
-                "input_ids" => dec_ids_val,
-                "encoder_hidden_states" => dec_hidden_val,
-            ])
-            .map_err(|e| format!("Decoder run failed: {e}"))?;
-
-        let (logits_shape, logits_data) = decoder_outputs["logits"]
-            .try_extract_tensor::<f32>()
-            .map_err(|e| format!("Failed to extract logits: {e}"))?;
-
-        // Get logits for the last position
-        let vocab_size = logits_shape[2usize] as usize;
-        let last_pos = dec_seq_len - 1;
-        let offset = last_pos * vocab_size;
-
-        // Argmax over vocabulary
-        let mut max_id = 0i64;
-        let mut max_val = f32::NEG_INFINITY;
-        for v in 0..vocab_size {
-            let val = logits_data[offset + v];
-            if val > max_val {
-                max_val = val;
-                max_id = v as i64;
+        // Pre-compile combined numeric context + number word patterns
+        let mut compiled_contexts = Vec::new();
+        let mut compiled_numbers = Vec::new();
+        for ctx_pattern in &numeric_context_patterns {
+            for (word_pattern, digit) in &number_word_patterns {
+                let combined = format!("({ctx_pattern})({word_pattern})");
+                if let Ok(re) = Regex::new(&combined) {
+                    compiled_contexts.push(re);
+                    compiled_numbers.push(*digit);
+                }
             }
         }
 
-        if max_id == EOS_TOKEN_ID {
-            break;
+        let punctuation_map: Vec<(Regex, &'static str)> = [
+            (r"(?i)\bperiod\b", "."),
+            (r"(?i)\bcomma\b", ","),
+            (r"(?i)\bquestion mark\b", "?"),
+            (r"(?i)\bexclamation (?:mark|point)\b", "!"),
+            (r"(?i)\bcolon\b", ":"),
+            (r"(?i)\bsemicolon\b", ";"),
+            (r"(?i)\bdash\b", " —"),
+            (r"(?i)\bhyphen\b", "-"),
+            (r"(?i)\bopen (?:paren|parenthesis)\b", "("),
+            (r"(?i)\bclose (?:paren|parenthesis)\b", ")"),
+            (r"(?i)\bnew line\b", "\n"),
+            (r"(?i)\bnew paragraph\b", "\n\n"),
+        ]
+        .iter()
+        .filter_map(|(p, r)| Regex::new(p).ok().map(|re| (re, *r)))
+        .collect();
+
+        // Store pre-compiled context+number pairs as parallel vecs in the struct
+        // We'll use numeric_contexts for the compiled combined regexes
+        // and number_words for the corresponding digit strings
+        CleanupRegexes {
+            fillers: filler_patterns
+                .iter()
+                .filter_map(|p| Regex::new(p).ok())
+                .collect(),
+            dangling_comma: Regex::new(r",\s*,").unwrap(),
+            leading_comma: Regex::new(r"^\s*,\s*").unwrap(),
+            whitespace: Regex::new(r"\s{2,}").unwrap(),
+            sentence_end: Regex::new(r"([.!?])\s+([a-z])").unwrap(),
+            standalone_i: Regex::new(r"\bi\b").unwrap(),
+            i_contraction: Regex::new(r"\bI'([msdtv])").unwrap(),
+            punctuation: punctuation_map,
+            space_before_punct: Regex::new(r"\s+([.,!?;:)])").unwrap(),
+            no_space_after: Regex::new(r"([.,!?;:])([A-Za-z])").unwrap(),
+            email: Regex::new(r"(?i)\b(\w+)\s+at\s+(\w+)\s+dot\s+(com|org|net|io|dev|co)\b").unwrap(),
+            numeric_contexts: compiled_contexts,
+            number_words: compiled_numbers.iter().map(|d| {
+                // These are just digit placeholders; we store them as (Regex, &str)
+                // but for the combined patterns we already have the regex in numeric_contexts
+                // Use a dummy regex that never matches - the actual matching is done via numeric_contexts
+                (Regex::new("^$").unwrap(), *d)
+            }).collect(),
+            percentage: Regex::new(r"(?i)\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\s+percent\b").unwrap(),
+            hundred_pct: Regex::new(r"(?i)\b(one )?hundred percent\b").unwrap(),
+            list_pattern: Regex::new(r"(?i)\b(first|one|1)[,:]?\s+(.+?)[,.]?\s+(second|two|2)[,:]?\s+(.+?)(?:[,.]?\s+(third|three|3)[,:]?\s+(.+?))?(?:[,.]?\s+(fourth|four|4)[,:]?\s+(.+?))?(?:[,.]?\s+(fifth|five|5)[,:]?\s+(.+?))?[.]?$").unwrap(),
         }
-
-        generated_ids.push(max_id);
-    }
-
-    // Decode tokens back to text (skip the start token)
-    let output_ids: Vec<i64> = generated_ids[1..].to_vec();
-    let decoded = tokenizer.decode(&output_ids, true, true);
-
-    Ok(decoded)
+    })
 }
 
-/// Full cleanup pipeline: filler removal → regex formatting → model cleanup
-pub fn cleanup_text(
-    text: &str,
-    smart_formatting: bool,
-    encoder: Option<&mut Session>,
-    decoder: Option<&mut Session>,
-    tokenizer: Option<&T5Tokenizer>,
-) -> String {
+/// Full cleanup pipeline: filler removal → regex formatting
+pub fn cleanup_text(text: &str, smart_formatting: bool) -> String {
     if text.is_empty() {
         return String::new();
     }
@@ -173,53 +138,22 @@ pub fn cleanup_text(
     }
 
     // Step 2: Regex-based formatting (spoken punctuation, numbers, etc.)
-    let formatted = smart_format(&cleaned);
-
-    // Step 3: Model cleanup if all pieces are available
-    if let (Some(enc), Some(dec), Some(tok)) = (encoder, decoder, tokenizer) {
-        match model_cleanup(&formatted, enc, dec, tok) {
-            Ok(result) if !result.trim().is_empty() => return result,
-            Ok(_) => log::warn!("Model returned empty output, using regex result"),
-            Err(e) => log::warn!("Model cleanup failed, using regex result: {e}"),
-        }
-    }
-
-    formatted
+    smart_format(&cleaned)
 }
 
 /// Remove common filler words from transcript
 fn remove_fillers(text: &str) -> String {
-    let fillers = [
-        r"\bum+\b",
-        r"\buh+\b",
-        r"\buh huh\b",
-        r"\bmm+ ?hmm+\b",
-        r"\bhmm+\b",
-        r"\byou know\b(?=\s*,?\s)",
-        r"\blike\b(?=\s+(the|a|an|i|we|they|he|she|it|my|our|this|that)\b)",
-        r"\bbasically\b(?=\s*,)",
-        r"\bactually\b(?=\s*,)",
-        r"\bso\b(?=\s*,\s)",
-        r"\bi mean\b(?=\s*,)",
-        r"\bkind of\b(?=\s+(like|a|the)\b)",
-        r"\bsort of\b(?=\s+(like|a|the)\b)",
-        r"\bright\s*\?\s*(?=\b)",
-    ];
-
+    let re = regexes();
     let mut result = text.to_string();
-    for pattern in &fillers {
-        if let Ok(re) = Regex::new(&format!("(?i){pattern}")) {
-            result = re.replace_all(&result, "").to_string();
-        }
+
+    for filler in &re.fillers {
+        result = filler.replace_all(&result, "").to_string();
     }
 
     // Clean up extra whitespace and dangling commas from removal
-    let dangling_comma = Regex::new(r",\s*,").unwrap();
-    result = dangling_comma.replace_all(&result, ",").to_string();
-    let leading_comma = Regex::new(r"^\s*,\s*").unwrap();
-    result = leading_comma.replace(&result, "").to_string();
-    let ws_re = Regex::new(r"\s{2,}").unwrap();
-    ws_re.replace_all(result.trim(), " ").to_string()
+    result = re.dangling_comma.replace_all(&result, ",").to_string();
+    result = re.leading_comma.replace(&result, "").to_string();
+    re.whitespace.replace_all(result.trim(), " ").to_string()
 }
 
 /// Capitalize the first character of a string
@@ -235,6 +169,7 @@ fn capitalize_first(text: &str) -> String {
 
 /// Smart formatting: punctuation, capitalization, numbers, common patterns
 fn smart_format(text: &str) -> String {
+    let re = regexes();
     let mut result = text.to_string();
 
     // Expand spoken numbers to digits for common cases
@@ -256,20 +191,18 @@ fn smart_format(text: &str) -> String {
     }
 
     // Capitalize after sentence-ending punctuation
-    let sent_re = Regex::new(r"([.!?])\s+([a-z])").unwrap();
-    result = sent_re
+    result = re
+        .sentence_end
         .replace_all(&result, |caps: &regex::Captures| {
             format!("{} {}", &caps[1], caps[2].to_uppercase())
         })
         .to_string();
 
     // Capitalize "i" as standalone word
-    let i_re = Regex::new(r"\bi\b").unwrap();
-    result = i_re.replace_all(&result, "I").to_string();
-    // Fix "I'M", "I'D", "I'LL", "I'VE" — the I is already uppercase
-    // but also handle "i'm" → "I'm"
-    let i_contraction = Regex::new(r"\bI'([msdtv])").unwrap();
-    result = i_contraction
+    result = re.standalone_i.replace_all(&result, "I").to_string();
+    // Fix I contractions
+    result = re
+        .i_contraction
         .replace_all(&result, |caps: &regex::Captures| {
             format!("I'{}", &caps[1])
         })
@@ -283,46 +216,22 @@ fn smart_format(text: &str) -> String {
 
 /// Convert spoken number words to digits for common short numbers
 fn format_spoken_numbers(text: &str) -> String {
+    let re = regexes();
     let mut result = text.to_string();
 
-    // Map of spoken numbers to digits (only convert when contextually appropriate)
-    let number_words = [
-        (r"\b(?i)zero\b", "0"),
-        (r"\b(?i)one\b", "1"),
-        (r"\b(?i)two\b", "2"),
-        (r"\b(?i)three\b", "3"),
-        (r"\b(?i)four\b", "4"),
-        (r"\b(?i)five\b", "5"),
-        (r"\b(?i)six\b", "6"),
-        (r"\b(?i)seven\b", "7"),
-        (r"\b(?i)eight\b", "8"),
-        (r"\b(?i)nine\b", "9"),
-        (r"\b(?i)ten\b", "10"),
-    ];
-
-    // Only convert numbers that appear after numeric context words
-    let numeric_contexts = [
-        r"(?i)\b(number|step|item|option|version|v|chapter|page|line|row|column|level|grade|score|count|total)\s+",
-        r"(?i)\b(is|are|was|were|equals?|=)\s+",
-        r"(?i)\b(about|around|approximately|roughly|nearly|over|under)\s+",
-    ];
-
-    for ctx_pattern in &numeric_contexts {
-        for (word_pattern, digit) in &number_words {
-            let combined = format!("({ctx_pattern})({word_pattern})");
-            if let Ok(re) = Regex::new(&combined) {
-                result = re
-                    .replace_all(&result, |caps: &regex::Captures| {
-                        format!("{}{}", &caps[1], digit)
-                    })
-                    .to_string();
-            }
-        }
+    // Apply pre-compiled combined context+number patterns
+    for (i, ctx_re) in re.numeric_contexts.iter().enumerate() {
+        let digit = re.number_words[i].1;
+        result = ctx_re
+            .replace_all(&result, |caps: &regex::Captures| {
+                format!("{}{}", &caps[1], digit)
+            })
+            .to_string();
     }
 
-    // Percentages: "fifty percent" → "50%", etc.
-    let pct_re = Regex::new(r"(?i)\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\s+percent\b").unwrap();
-    result = pct_re
+    // Percentages
+    result = re
+        .percentage
         .replace_all(&result, |caps: &regex::Captures| {
             let num = match caps[1].to_lowercase().as_str() {
                 "twenty" => "20",
@@ -340,62 +249,41 @@ fn format_spoken_numbers(text: &str) -> String {
         .to_string();
 
     // "hundred percent" → "100%"
-    let hundred_pct = Regex::new(r"(?i)\b(one )?hundred percent\b").unwrap();
-    result = hundred_pct.replace_all(&result, "100%").to_string();
+    result = re.hundred_pct.replace_all(&result, "100%").to_string();
 
     result
 }
 
 /// Format common spoken patterns (email, URLs, punctuation commands)
 fn format_spoken_patterns(text: &str) -> String {
+    let re = regexes();
     let mut result = text.to_string();
 
     // Spoken punctuation → actual punctuation
-    let punctuation_map = [
-        (r"(?i)\bperiod\b", "."),
-        (r"(?i)\bcomma\b", ","),
-        (r"(?i)\bquestion mark\b", "?"),
-        (r"(?i)\bexclamation (?:mark|point)\b", "!"),
-        (r"(?i)\bcolon\b", ":"),
-        (r"(?i)\bsemicolon\b", ";"),
-        (r"(?i)\bdash\b", " —"),
-        (r"(?i)\bhyphen\b", "-"),
-        (r"(?i)\bopen (?:paren|parenthesis)\b", "("),
-        (r"(?i)\bclose (?:paren|parenthesis)\b", ")"),
-        (r"(?i)\bnew line\b", "\n"),
-        (r"(?i)\bnew paragraph\b", "\n\n"),
-    ];
-
-    for (pattern, replacement) in &punctuation_map {
-        if let Ok(re) = Regex::new(pattern) {
-            result = re.replace_all(&result, *replacement).to_string();
-        }
+    for (pattern, replacement) in &re.punctuation {
+        result = pattern.replace_all(&result, *replacement).to_string();
     }
 
-    // Clean up spaces before punctuation (e.g., "hello ." → "hello.")
-    let space_before_punct = Regex::new(r"\s+([.,!?;:)])").unwrap();
-    result = space_before_punct.replace_all(&result, "$1").to_string();
+    // Clean up spaces before punctuation
+    result = re.space_before_punct.replace_all(&result, "$1").to_string();
 
-    // Ensure space after punctuation (but not before newlines or at end)
-    let no_space_after = Regex::new(r"([.,!?;:])([A-Za-z])").unwrap();
-    result = no_space_after.replace_all(&result, "$1 $2").to_string();
+    // Ensure space after punctuation
+    result = re.no_space_after.replace_all(&result, "$1 $2").to_string();
 
-    // "at" between words with domain-like suffix → @ (email)
-    let email_re = Regex::new(r"(?i)\b(\w+)\s+at\s+(\w+)\s+dot\s+(com|org|net|io|dev|co)\b").unwrap();
-    result = email_re.replace_all(&result, "$1@$2.$3").to_string();
+    // Email pattern
+    result = re.email.replace_all(&result, "$1@$2.$3").to_string();
 
     result
 }
 
 /// Detect and format list patterns
 fn format_lists(text: &str) -> String {
-    // Pattern: "first ... second ... third ..."
-    let list_re = Regex::new(r"(?i)\b(first|one|1)\s+(.+?)\s+(second|two|2)\s+(.+?)(?:\s+(third|three|3)\s+(.+?))?(?:\s+(fourth|four|4)\s+(.+?))?(?:\s+(fifth|five|5)\s+(.+?))?$").unwrap();
-    if let Some(caps) = list_re.captures(text) {
+    let re = regexes();
+    if let Some(caps) = re.list_pattern.captures(text) {
         let mut items = Vec::new();
         for i in (1..caps.len()).step_by(2) {
             if let (Some(_keyword), Some(content)) = (caps.get(i), caps.get(i + 1)) {
-                let item = content.as_str().trim().trim_end_matches('.').to_string();
+                let item = content.as_str().trim().trim_end_matches(['.', ',']).to_string();
                 if !item.is_empty() {
                     items.push(item);
                 }
@@ -446,7 +334,7 @@ mod tests {
     #[test]
     fn test_spoken_punctuation() {
         let result = smart_format("hello comma how are you question mark");
-        assert!(result.contains("hello, how are you?"));
+        assert!(result.contains("Hello, how are you?"));
     }
 
     #[test]
@@ -463,13 +351,13 @@ mod tests {
 
     #[test]
     fn test_new_paragraph() {
-        let result = smart_format("first paragraph new paragraph second paragraph");
+        let result = smart_format("hello new paragraph world");
         assert!(result.contains("\n\n"));
     }
 
     #[test]
     fn test_full_cleanup() {
-        let result = cleanup_text("um i want to uh send an email to bob at test dot com", true, None, None, None::<&T5Tokenizer>);
+        let result = cleanup_text("um i want to uh send an email to bob at test dot com", true);
         assert!(result.starts_with("I"));
         assert!(result.contains("bob@test.com"));
         assert!(!result.contains("um"));

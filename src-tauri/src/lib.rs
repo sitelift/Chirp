@@ -2,6 +2,7 @@ mod audio;
 mod cleanup;
 mod commands;
 mod dictionary;
+mod history;
 mod inject;
 mod settings;
 mod state;
@@ -22,6 +23,7 @@ pub fn run() {
     // Read settings early so we can configure the shortcut before building
     let initial_settings = settings::load_settings();
     let initial_dictionary = settings::load_dictionary();
+    let initial_history = history::load_history();
     let hotkey_str = initial_settings.hotkey.clone();
 
     // Parse the hotkey for the global shortcut plugin
@@ -68,10 +70,13 @@ pub fn run() {
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .manage::<SharedState>({
             Arc::new(tokio::sync::Mutex::new(AppState::new(
                 initial_settings,
                 initial_dictionary,
+                initial_history,
             )))
         })
         .manage::<AudioBuffer>(Arc::new(std::sync::Mutex::new(Vec::new())))
@@ -90,7 +95,9 @@ pub fn run() {
             commands::get_model_status,
             commands::check_accessibility_permission,
             commands::open_accessibility_settings,
-            commands::check_for_updates,
+            commands::get_history,
+            commands::clear_history,
+            commands::delete_history_entry,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -101,9 +108,13 @@ pub fn run() {
                 let state = handle.state::<SharedState>();
                 let s = state.blocking_lock();
                 if s.settings.launch_at_login {
-                    let _ = autostart.enable();
+                    if let Err(e) = autostart.enable() {
+                        log::warn!("Failed to enable autostart: {e}");
+                    }
                 } else {
-                    let _ = autostart.disable();
+                    if let Err(e) = autostart.disable() {
+                        log::warn!("Failed to disable autostart: {e}");
+                    }
                 }
             }
 
@@ -122,25 +133,6 @@ pub fn run() {
                     }
                 }
 
-                // Load cleanup model if available
-                if cleanup::cleanup_model_exists() {
-                    match (cleanup::load_encoder(), cleanup::load_decoder()) {
-                        (Ok(enc), Ok(dec)) => {
-                            s.cleanup_encoder = Some(enc);
-                            s.cleanup_decoder = Some(dec);
-                            match cleanup::load_tokenizer() {
-                                Ok(tok) => {
-                                    s.cleanup_tokenizer = Some(tok);
-                                    log::info!("Cleanup model loaded (with tokenizer)");
-                                }
-                                Err(e) => log::warn!("Cleanup tokenizer not loaded: {e}"),
-                            }
-                        }
-                        (Err(e), _) | (_, Err(e)) => {
-                            log::warn!("Cleanup model not loaded: {e}");
-                        }
-                    }
-                }
             }
 
             // Build system tray
@@ -169,7 +161,12 @@ pub fn run() {
                 ],
             )?;
 
+            let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
+            let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)
+                .expect("Failed to load tray icon");
+
             TrayIconBuilder::new()
+                .icon(tray_icon)
                 .menu(&menu)
                 .tooltip("Chirp — Voice to Text")
                 .on_menu_event(move |app, event| match event.id().as_ref() {
@@ -185,6 +182,9 @@ pub fn run() {
                     "toggle" => {
                         // Tray toggle acts as press/release toggle
                         let _ = app.emit("toggle-recording", ());
+                    }
+                    "updates" => {
+                        let _ = app.emit("check-for-updates", ());
                     }
                     _ => {}
                 })

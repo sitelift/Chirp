@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useAppStore } from '../../stores/appStore'
-import { SILENCE_TIMEOUT_OPTIONS, LANGUAGES } from '../../lib/constants'
+import { SILENCE_TIMEOUT_OPTIONS } from '../../lib/constants'
 import { SettingGroup } from './SettingGroup'
 import { Button } from '../shared/Button'
 import { Checkbox } from '../shared/Checkbox'
@@ -43,6 +43,11 @@ export function GeneralPage() {
 
   return (
     <div className="flex flex-col gap-6">
+      <div className="mb-2">
+        <h1 className="font-display font-extrabold text-2xl text-chirp-stone-900">General</h1>
+        <p className="font-body text-sm text-chirp-stone-500 mt-1">Hotkey, behavior, and output preferences.</p>
+      </div>
+
       <SettingGroup label="Hotkey">
         <div>
           <p className="font-body text-sm text-chirp-stone-700 mb-3">Dictation toggle</p>
@@ -79,11 +84,6 @@ export function GeneralPage() {
           label="Show in menu bar"
         />
         <Checkbox
-          checked={store.playSoundOnComplete}
-          onChange={(v) => store.updateSettings({ playSoundOnComplete: v })}
-          label="Play sound on complete"
-        />
-        <Checkbox
           checked={store.autoDismissOverlay}
           onChange={(v) => store.updateSettings({ autoDismissOverlay: v })}
           label="Auto-dismiss overlay"
@@ -102,14 +102,6 @@ export function GeneralPage() {
       </SettingGroup>
 
       <SettingGroup label="Output">
-        <div>
-          <p className="font-body text-sm text-chirp-stone-700 mb-2">Language</p>
-          <Select
-            options={LANGUAGES}
-            value={store.language}
-            onChange={(v) => store.updateSettings({ language: v as string })}
-          />
-        </div>
         <div className="flex items-center justify-between">
           <div className="flex flex-col">
             <span className="font-body text-sm text-chirp-stone-700">Smart formatting</span>

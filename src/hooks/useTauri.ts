@@ -4,6 +4,8 @@
  */
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { check } from '@tauri-apps/plugin-updater'
+import { relaunch } from '@tauri-apps/plugin-process'
 
 export interface AudioDevice {
   name: string
@@ -16,16 +18,18 @@ export interface TranscriptionResult {
   durationMs: number
 }
 
+export interface TranscriptionEntry {
+  text: string
+  timestamp: string
+  wordCount: number
+  durationMs: number
+  speechDurationMs: number
+}
+
 export interface ModelStatus {
   model: string
   downloaded: boolean
   sizeBytes: number
-}
-
-export interface UpdateInfo {
-  available: boolean
-  version: string | null
-  url: string | null
 }
 
 export function useTauri() {
@@ -86,8 +90,41 @@ export function useTauri() {
     await invoke('update_dictionary', { entries })
   }
 
-  const checkForUpdates = async (): Promise<UpdateInfo> => {
-    return await invoke<UpdateInfo>('check_for_updates')
+  const getHistory = async (): Promise<TranscriptionEntry[]> => {
+    return await invoke<TranscriptionEntry[]>('get_history')
+  }
+
+  const clearHistory = async (): Promise<void> => {
+    await invoke('clear_history')
+  }
+
+  const deleteHistoryEntry = async (timestamp: string): Promise<void> => {
+    await invoke('delete_history_entry', { timestamp })
+  }
+
+  const checkForUpdates = async (onProgress?: (downloaded: number, total: number | null) => void) => {
+    const update = await check()
+    if (!update) {
+      return { available: false as const }
+    }
+    return {
+      available: true as const,
+      version: update.version,
+      date: update.date,
+      download: async () => {
+        let downloaded = 0
+        let contentLength: number | null = null
+        await update.downloadAndInstall((event) => {
+          if (event.event === 'Started') {
+            contentLength = event.data.contentLength ?? null
+          } else if (event.event === 'Progress') {
+            downloaded += event.data.chunkLength
+            onProgress?.(downloaded, contentLength)
+          }
+        })
+      },
+      relaunch,
+    }
   }
 
   return {
@@ -101,6 +138,9 @@ export function useTauri() {
     updateSettings,
     getSettings,
     updateDictionary,
+    getHistory,
+    clearHistory,
+    deleteHistoryEntry,
     checkForUpdates,
   }
 }

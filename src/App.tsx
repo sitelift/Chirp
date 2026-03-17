@@ -4,6 +4,7 @@ import { Overlay } from './components/overlay/Overlay'
 import { Settings } from './components/settings/Settings'
 import { Onboarding } from './components/onboarding/Onboarding'
 import { useSettingsSync } from './hooks/useSettingsSync'
+import { ErrorBoundary } from './components/shared/ErrorBoundary'
 
 /**
  * Routes to the appropriate component based on window label.
@@ -32,20 +33,38 @@ function getWindowLabel(): string {
 
 export function App() {
   const onboardingComplete = useAppStore((s) => s.onboardingComplete)
+  const settingsLoaded = useAppStore((s) => s.settingsLoaded)
   const windowLabel = getWindowLabel()
 
   useSettingsSync()
 
-  // Overlay window
+  // Overlay window — render immediately, no need to wait for settings
   if (windowLabel === 'overlay') {
-    return <Overlay />
+    return (
+      <ErrorBoundary fallback="overlay">
+        <Overlay />
+      </ErrorBoundary>
+    )
   }
 
-  // Show onboarding if not complete (for settings/main window)
-  if (!onboardingComplete && windowLabel !== 'overlay') {
-    return <Onboarding />
+  // Wait for settings to load before deciding onboarding vs main app
+  if (!settingsLoaded) {
+    return null
+  }
+
+  // Show onboarding if not complete
+  if (!onboardingComplete) {
+    return (
+      <ErrorBoundary fallback="settings">
+        <Onboarding />
+      </ErrorBoundary>
+    )
   }
 
   // Settings window (default)
-  return <Settings />
+  return (
+    <ErrorBoundary fallback="settings">
+      <Settings />
+    </ErrorBoundary>
+  )
 }

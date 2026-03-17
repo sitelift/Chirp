@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Mic } from 'lucide-react'
+import { Mic, Lock } from 'lucide-react'
 import { open } from '@tauri-apps/plugin-shell'
 import { Button } from '../shared/Button'
 
@@ -20,21 +20,37 @@ export function Microphone({ onNext }: MicrophoneProps) {
   }
 
   return (
-    <div className="flex flex-col items-center">
-      <Mic size={48} className="text-chirp-stone-700" strokeWidth={1.5} />
+    <div className="flex flex-col animate-fade-in">
+      <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
+        STEP 2 OF 4
+      </span>
 
-      <h1 className="mt-6 font-display font-extrabold text-2xl text-chirp-stone-900">
+      {/* Styled mic card */}
+      <div className="w-20 h-20 rounded-2xl bg-chirp-amber-50 border border-chirp-amber-200 flex items-center justify-center mt-6">
+        <Mic size={32} className="text-chirp-amber-500" strokeWidth={1.5} />
+      </div>
+
+      <h1 className="mt-6 font-display font-extrabold text-3xl text-chirp-stone-900">
         Chirp needs your microphone
       </h1>
 
-      <p className="mt-4 max-w-[360px] text-center font-body text-[15px] leading-[1.7] text-chirp-stone-700">
-        {denied
-          ? 'Microphone access was denied. You can enable it in your system settings.'
-          : "We only listen when you press your hotkey. That's it. Nothing runs in the background."}
-      </p>
+      {denied ? (
+        <div className="rounded-lg bg-red-50 border border-red-200 p-3 mt-4">
+          <p className="font-body text-sm text-red-700">
+            Microphone access was denied. You can enable it in your system settings.
+          </p>
+        </div>
+      ) : (
+        <div className="rounded-lg bg-chirp-stone-50 border border-chirp-stone-200 p-3 mt-4 flex items-start gap-2.5">
+          <Lock size={16} className="text-chirp-stone-400 mt-0.5 shrink-0" />
+          <p className="font-body text-sm text-chirp-stone-600">
+            We only listen when you press your hotkey. Nothing runs in the background.
+          </p>
+        </div>
+      )}
 
-      <div className="mt-8 flex flex-col items-center gap-3">
-        <Button size="onboarding" className="min-w-[180px]" onClick={handleAllow}>
+      <div className="mt-8 flex flex-col gap-3">
+        <Button size="onboarding" className="min-w-[180px] text-base" onClick={handleAllow}>
           Allow Microphone →
         </Button>
         {denied && (

@@ -1,12 +1,13 @@
 use crate::audio;
 use crate::cleanup;
 use crate::dictionary;
+use crate::history;
 use crate::inject;
 use crate::settings;
 use crate::state::*;
 use crate::transcribe;
 use std::time::Instant;
-use tauri::{AppHandle, Emitter, Manager, State};
+use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
 
 /// Request microphone permission on macOS via AVCaptureDevice.
@@ -251,6 +252,7 @@ pub async fn stop_recording(
 
     let sample_count = audio_data.len();
     let duration_secs = sample_count as f32 / 16000.0;
+    let speech_duration_ms = (duration_secs * 1000.0) as u64;
 
     // Audio fingerprint: log RMS, min/max, and a few sample values so we can
     // verify the buffer actually contains NEW audio on each recording.
@@ -291,7 +293,7 @@ pub async fn stop_recording(
     let state_inner = state.inner().clone();
     let result = tokio::task::spawn_blocking(move || {
         let rt = tokio::runtime::Handle::current();
-        let mut s = rt.block_on(state_inner.lock());
+        let s = rt.block_on(state_inner.lock());
 
         let recognizer = s.recognizer.as_ref().ok_or("model_not_loaded".to_string())?;
 
@@ -309,19 +311,8 @@ pub async fn stop_recording(
             return Err("transcription_failed".to_string());
         }
 
-        // Cleanup/formatting — take sessions out temporarily to satisfy borrow checker
-        let mut enc = s.cleanup_encoder.take();
-        let mut dec = s.cleanup_decoder.take();
-        let tok = &s.cleanup_tokenizer;
-        let formatted = cleanup::cleanup_text(
-            &raw,
-            smart_fmt,
-            enc.as_mut(),
-            dec.as_mut(),
-            tok.as_ref(),
-        );
-        s.cleanup_encoder = enc;
-        s.cleanup_decoder = dec;
+        // Cleanup/formatting
+        let formatted = cleanup::cleanup_text(&raw, smart_fmt);
 
         // Dictionary replacements
         let final_text = dictionary::apply_dictionary(&formatted, &dict);
@@ -359,9 +350,23 @@ pub async fn stop_recording(
         return Err("injection_failed".into());
     }
 
-    // Reset state
+    // Save to history and reset state
     let mut s = state.lock().await;
+    s.history.push(TranscriptionEntry {
+        text: result.clone(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+        word_count,
+        duration_ms,
+        speech_duration_ms,
+    });
+    let _ = history::save_history(&s.history);
+    let new_entry = s.history.last().cloned();
     s.recording_state = RecordingState::Idle;
+
+    // Notify all windows (including settings) that history changed
+    if let Some(entry) = new_entry {
+        let _ = app_handle.emit("history-updated", entry);
+    }
 
     Ok(TranscriptionResult {
         text: result,
@@ -434,10 +439,26 @@ pub async fn open_accessibility_settings() -> Result<(), String> {
 }
 
 #[tauri::command]
-pub async fn check_for_updates() -> Result<UpdateInfo, String> {
-    Ok(UpdateInfo {
-        available: false,
-        version: None,
-        url: None,
-    })
+pub async fn get_history(state: State<'_, SharedState>) -> Result<Vec<TranscriptionEntry>, String> {
+    let s = state.lock().await;
+    Ok(s.history.clone())
+}
+
+#[tauri::command]
+pub async fn clear_history(state: State<'_, SharedState>) -> Result<(), String> {
+    let mut s = state.lock().await;
+    s.history.clear();
+    history::save_history(&s.history)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn delete_history_entry(
+    timestamp: String,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    let mut s = state.lock().await;
+    s.history.retain(|e| e.timestamp != timestamp);
+    history::save_history(&s.history)?;
+    Ok(())
 }

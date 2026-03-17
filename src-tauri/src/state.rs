@@ -1,5 +1,3 @@
-use ort::session::Session;
-use rust_tokenizers::tokenizer::T5Tokenizer;
 use serde::{Deserialize, Serialize};
 use sherpa_onnx::OfflineRecognizer;
 use std::sync::Arc;
@@ -81,6 +79,18 @@ pub struct TranscriptionResult {
     pub duration_ms: u64,
 }
 
+/// Persisted transcription history entry
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptionEntry {
+    pub text: String,
+    pub timestamp: String,
+    pub word_count: usize,
+    pub duration_ms: u64,
+    #[serde(default)]
+    pub speech_duration_ms: u64,
+}
+
 /// Model download/presence status
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -88,14 +98,6 @@ pub struct ModelStatus {
     pub model: String,
     pub downloaded: bool,
     pub size_bytes: u64,
-}
-
-/// Update check result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct UpdateInfo {
-    pub available: bool,
-    pub version: Option<String>,
-    pub url: Option<String>,
 }
 
 /// Amplitude data event payload
@@ -133,23 +135,19 @@ impl std::fmt::Display for ChirpErrorType {
 pub struct AppState {
     pub settings: Settings,
     pub dictionary: Vec<DictionaryEntry>,
+    pub history: Vec<TranscriptionEntry>,
     pub recording_state: RecordingState,
     pub recognizer: Option<SherpaRecognizer>,
-    pub cleanup_encoder: Option<Session>,
-    pub cleanup_decoder: Option<Session>,
-    pub cleanup_tokenizer: Option<T5Tokenizer>,
 }
 
 impl AppState {
-    pub fn new(settings: Settings, dictionary: Vec<DictionaryEntry>) -> Self {
+    pub fn new(settings: Settings, dictionary: Vec<DictionaryEntry>, history: Vec<TranscriptionEntry>) -> Self {
         Self {
             settings,
             dictionary,
+            history,
             recording_state: RecordingState::Idle,
             recognizer: None,
-            cleanup_encoder: None,
-            cleanup_decoder: None,
-            cleanup_tokenizer: None,
         }
     }
 }

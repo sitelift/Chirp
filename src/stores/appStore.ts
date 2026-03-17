@@ -9,6 +9,14 @@ export interface DictionaryEntry {
   to: string
 }
 
+export interface TranscriptionEntry {
+  text: string
+  timestamp: string
+  wordCount: number
+  durationMs: number
+  speechDurationMs: number
+}
+
 export interface AppState {
   // Recording state
   status: AppStatus
@@ -39,8 +47,14 @@ export interface AppState {
   // Dictionary
   dictionary: DictionaryEntry[]
 
+  // History
+  history: TranscriptionEntry[]
+
   // Onboarding
   onboardingComplete: boolean
+
+  // Loading
+  settingsLoaded: boolean
 
   // Settings page
   settingsPage: string
@@ -55,6 +69,9 @@ export interface AppState {
   updateSettings: (partial: Partial<AppState>) => void
   addDictionaryEntry: (from: string, to: string) => void
   removeDictionaryEntry: (index: number) => void
+  setSettingsLoaded: () => void
+  setHistory: (history: TranscriptionEntry[]) => void
+  removeHistoryEntry: (timestamp: string) => void
   setSettingsPage: (page: string) => void
   setOnboardingComplete: (complete: boolean) => void
 }
@@ -89,11 +106,17 @@ export const useAppStore = create<AppState>((set) => ({
   // Dictionary
   dictionary: [],
 
+  // History
+  history: [],
+
   // Onboarding
   onboardingComplete: DEFAULT_SETTINGS.onboardingComplete,
 
+  // Loading
+  settingsLoaded: false,
+
   // Settings page
-  settingsPage: 'general',
+  settingsPage: 'home',
 
   // Actions
   setStatus: (status) => set({ status, errorType: status !== 'error' ? null : undefined }),
@@ -107,6 +130,10 @@ export const useAppStore = create<AppState>((set) => ({
     set((state) => ({ dictionary: [...state.dictionary, { from, to }] })),
   removeDictionaryEntry: (index) =>
     set((state) => ({ dictionary: state.dictionary.filter((_, i) => i !== index) })),
+  setSettingsLoaded: () => set({ settingsLoaded: true }),
+  setHistory: (history) => set({ history }),
+  removeHistoryEntry: (timestamp) =>
+    set((state) => ({ history: state.history.filter((e) => e.timestamp !== timestamp) })),
   setSettingsPage: (settingsPage) => set({ settingsPage }),
   setOnboardingComplete: (onboardingComplete) => set({ onboardingComplete }),
 }))

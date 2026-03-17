@@ -43,7 +43,7 @@ export function Overlay() {
 
   // Auto-dismiss after done/error state
   useEffect(() => {
-    const delay = status === 'done' && autoDismiss ? 250 : status === 'error' ? 300 : null
+    const delay = status === 'done' && autoDismiss ? 600 : status === 'error' ? 2000 : null
     if (delay === null) return
 
     const timer = setTimeout(() => {

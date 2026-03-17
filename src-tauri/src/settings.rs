@@ -24,7 +24,10 @@ fn dictionary_path() -> PathBuf {
 pub fn load_settings() -> Settings {
     let path = settings_path();
     let mut settings = match std::fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Ok(data) => serde_json::from_str(&data).unwrap_or_else(|e| {
+            log::warn!("Corrupted settings JSON, using defaults: {e}");
+            Settings::default()
+        }),
         Err(_) => Settings::default(),
     };
 
@@ -52,7 +55,10 @@ pub fn save_settings(settings: &Settings) -> Result<(), String> {
 pub fn load_dictionary() -> Vec<DictionaryEntry> {
     let path = dictionary_path();
     match std::fs::read_to_string(&path) {
-        Ok(data) => serde_json::from_str(&data).unwrap_or_default(),
+        Ok(data) => serde_json::from_str(&data).unwrap_or_else(|e| {
+            log::warn!("Corrupted dictionary JSON, resetting: {e}");
+            Vec::new()
+        }),
         Err(_) => Vec::new(),
     }
 }
