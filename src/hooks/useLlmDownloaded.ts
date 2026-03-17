@@ -1,0 +1,15 @@
+import { useState, useEffect } from 'react'
+import { useTauri } from './useTauri'
+
+export function useLlmDownloaded() {
+  const tauri = useTauri()
+  const [llmDownloaded, setLlmDownloaded] = useState(false)
+
+  useEffect(() => {
+    tauri.getLlmStatus().then((status) => {
+      setLlmDownloaded(status.binaryDownloaded && status.modelDownloaded)
+    }).catch((e) => console.debug('Failed to check LLM status:', e))
+  }, [])
+
+  return [llmDownloaded, setLlmDownloaded] as const
+}
