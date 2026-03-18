@@ -64,6 +64,15 @@ jobs:
             -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security list-keychain -d user -s $KEYCHAIN_PATH
 
+      - name: Codesign sherpa-onnx dylibs
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          for dylib in src-tauri/sherpa-onnx-lib/macos/*.dylib; do
+            codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$dylib"
+            echo "Signed: $dylib"
+          done
+
       - name: Build Tauri app
         uses: tauri-apps/tauri-action@v0
         env:
