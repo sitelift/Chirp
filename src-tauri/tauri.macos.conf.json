@@ -1,0 +1,7 @@
+{
+  "bundle": {
+    "resources": [
+      "sherpa-onnx-lib/macos/*.dylib"
+    ]
+  }
+}

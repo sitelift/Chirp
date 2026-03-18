@@ -54,10 +54,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "resources": [
-      "sherpa-onnx-lib/*.dll",
-      "sherpa-onnx-lib/macos/*.dylib"
-    ],
+    "resources": [],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
