@@ -69,10 +69,7 @@
       "entitlements": "entitlements.plist",
       "signingIdentity": "-",
       "minimumSystemVersion": "11.0",
-      "infoPlist": {
-        "NSMicrophoneUsageDescription": "Chirp needs microphone access to transcribe your speech to text.",
-        "NSAppleEventsUsageDescription": "Chirp needs automation access to paste transcribed text into your active application."
-      }
+      "infoPlist": "Info.plist"
     }
   }
 }
