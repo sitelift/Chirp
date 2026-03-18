@@ -31,16 +31,16 @@ jobs:
 
       - name: Download sherpa-onnx macOS dylibs
         run: |
-          SHERPA_VERSION="1.10.30"
-          ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-osx-arm64-shared.tar.bz2"
+          SHERPA_VERSION="1.12.29"
+          ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-osx-universal2-shared.tar.bz2"
           URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${ARCHIVE}"
 
-          echo "Downloading sherpa-onnx v${SHERPA_VERSION} for macOS ARM64..."
+          echo "Downloading sherpa-onnx v${SHERPA_VERSION} for macOS..."
           curl -fSL "$URL" -o "$ARCHIVE"
           tar xjf "$ARCHIVE"
 
           mkdir -p src-tauri/sherpa-onnx-lib/macos
-          cp sherpa-onnx-v${SHERPA_VERSION}-osx-arm64-shared/lib/*.dylib src-tauri/sherpa-onnx-lib/macos/
+          cp sherpa-onnx-v${SHERPA_VERSION}-osx-universal2-shared/lib/*.dylib src-tauri/sherpa-onnx-lib/macos/
           ls -la src-tauri/sherpa-onnx-lib/macos/
 
       - name: Import Apple certificate
