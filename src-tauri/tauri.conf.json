@@ -48,14 +48,15 @@
       "endpoints": [
         "https://github.com/sitelift/Chirp/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IENBMkEyMkNGRkMyRjQyQTcKUldTblFpLzh6eUlxeXN6RjRWZWtWaFM1RElMb2g3OXBBNUZkUW10NzRCT0tDTjVyTzJFa3BDSysK"
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEJBN0NGMzkxQ0YxQjE3QzAKUldUQUZ4dlBrZk44dWd5VjVxc0ZBa2FRalY2b04yV0xROHRwL0FKSTBpMjJqNkZObkt5bEpiNG0K"
     }
   },
   "bundle": {
     "active": true,
     "targets": "all",
     "resources": [
-      "sherpa-onnx-lib/*.dll"
+      "sherpa-onnx-lib/*.dll",
+      "sherpa-onnx-lib/macos/*.dylib"
     ],
     "icon": [
       "icons/32x32.png",
@@ -63,6 +64,15 @@
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "entitlements": "entitlements.plist",
+      "signingIdentity": "-",
+      "minimumSystemVersion": "11.0",
+      "infoPlist": {
+        "NSMicrophoneUsageDescription": "Chirp needs microphone access to transcribe your speech to text.",
+        "NSAppleEventsUsageDescription": "Chirp needs automation access to paste transcribed text into your active application."
+      }
+    }
   }
 }
