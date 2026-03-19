@@ -1,0 +1,206 @@
+{
+  "model": "Qwen_Qwen3-4B-Q4_K_M",
+  "timestamp": "2026-03-19 01:13:48",
+  "results": [
+    {
+      "id": 1,
+      "name": "Clean, short",
+      "mode": "regex+AI",
+      "input": "I need to go to the store and pick up some milk",
+      "raw_input": "I need to go to the store and pick up some milk",
+      "output": "I need to go to the store and pick up some milk.",
+      "expected": "I need to go to the store and pick up some milk.",
+      "time_ms": 1650.8
+    },
+    {
+      "id": 2,
+      "name": "Light fillers",
+      "mode": "regex+AI",
+      "input": "So I was thinking we could maybe go to the park",
+      "raw_input": "um so I was thinking we could um maybe go to the park",
+      "output": "So I was thinking we could maybe go to the park.",
+      "expected": "I was thinking we could maybe go to the park.",
+      "time_ms": 610.5
+    },
+    {
+      "id": 3,
+      "name": "Heavy fillers",
+      "mode": "regex+AI",
+      "input": "So I was basically going to like tell him that we need to figure this out",
+      "raw_input": "so like um you know I was uh basically going to like tell him that we need to uh figure this out",
+      "output": "I was going to tell him that we need to figure this out.",
+      "expected": "I was going to tell him that we need to figure this out.",
+      "time_ms": 682.6
+    },
+    {
+      "id": 4,
+      "name": "Self-correction",
+      "mode": "regex+AI",
+      "input": "Send it to the team on Tuesday sorry I mean Wednesday morning",
+      "raw_input": "send it to the team on Tuesday sorry I mean Wednesday morning",
+      "output": "Send it to the team on Wednesday morning.",
+      "expected": "Send it to the team on Wednesday morning.",
+      "time_ms": 523.3
+    },
+    {
+      "id": 5,
+      "name": "Multiple self-corrections",
+      "mode": "regex+AI",
+      "input": "We need to update the app not the app I mean the website or rather the landing page before Friday",
+      "raw_input": "we need to update the app not the app I mean the website or rather the landing page before Friday",
+      "output": "We need to update the app. I mean the website. Or rather, the landing page before Friday.",
+      "expected": "We need to update the landing page before Friday.",
+      "time_ms": 906.3
+    },
+    {
+      "id": 6,
+      "name": "Repetition/stutter",
+      "mode": "regex+AI",
+      "input": "I want to I want to make sure that the the project is is done by next week",
+      "raw_input": "I want to I want to make sure that the the project is is done by next week",
+      "output": "I want to make sure the project is done by next week.",
+      "expected": "I want to make sure that the project is done by next week.",
+      "time_ms": 648.7
+    },
+    {
+      "id": 7,
+      "name": "Spoken formatting",
+      "mode": "regex+AI",
+      "input": "Send an email to john at example dot com and tell him the meeting is at three thirty PM new paragraph also remind him to bring the quarterly report",
+      "raw_input": "send an email to john at example dot com and tell him the meeting is at three thirty PM new paragraph also remind him to bring the quarterly report",
+      "output": "Send an email to john at example dot com and tell him the meeting is at three thirty PM.  \nNew paragraph. Also remind him to bring the quarterly report.",
+      "expected": "Send an email to john@example.com and tell him the meeting is at 3:30 PM.\n\nAlso remind him to bring the quarterly report.",
+      "time_ms": 1351.5
+    },
+    {
+      "id": 8,
+      "name": "List dictation",
+      "mode": "regex+AI",
+      "input": "The agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+      "raw_input": "the agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+      "output": "The agenda items are first, budget review; second, hiring update; third, product roadmap; and fourth, customer feedback.",
+      "expected": "The agenda items are:\n1. Budget review\n2. Hiring update\n3. Product roadmap\n4. Customer feedback",
+      "time_ms": 1016.9
+    },
+    {
+      "id": 9,
+      "name": "Long rambling",
+      "mode": "regex+AI",
+      "input": "So basically what I'm trying to say is the thing with the project is that we we really need to like focus on the the core features right and not get distracted by all the other stuff that people are asking for I mean some of it is important but we can't do everything at once",
+      "raw_input": "so basically what I'm trying to say is um you know the thing with the project is that we we really need to like focus on the um the core features right and not get distracted by all the other stuff that people are asking for I mean some of it is important but like we can't do everything at once",
+      "output": "We really need to focus on the core features and not get distracted by all the other stuff people are asking for. Some of it is important, but we can't do everything at once.",
+      "expected": "The thing with the project is that we really need to focus on the core features and not get distracted by all the other stuff that people are asking for. Some of it is important, but we can't do everything at once.",
+      "time_ms": 1529.3
+    },
+    {
+      "id": 10,
+      "name": "Already clean",
+      "mode": "regex+AI",
+      "input": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "raw_input": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "output": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "expected": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "time_ms": 816.2
+    },
+    {
+      "id": 1,
+      "name": "Clean, short",
+      "mode": "AI-only",
+      "input": "I need to go to the store and pick up some milk",
+      "raw_input": "I need to go to the store and pick up some milk",
+      "output": "I need to go to the store and pick up some milk.",
+      "expected": "I need to go to the store and pick up some milk.",
+      "time_ms": 658.5
+    },
+    {
+      "id": 2,
+      "name": "Light fillers",
+      "mode": "AI-only",
+      "input": "um so I was thinking we could um maybe go to the park",
+      "raw_input": "um so I was thinking we could um maybe go to the park",
+      "output": "So I was thinking we could go to the park.",
+      "expected": "I was thinking we could maybe go to the park.",
+      "time_ms": 571.6
+    },
+    {
+      "id": 3,
+      "name": "Heavy fillers",
+      "mode": "AI-only",
+      "input": "so like um you know I was uh basically going to like tell him that we need to uh figure this out",
+      "raw_input": "so like um you know I was uh basically going to like tell him that we need to uh figure this out",
+      "output": "so like you know I was basically going to tell him that we need to figure this out.",
+      "expected": "I was going to tell him that we need to figure this out.",
+      "time_ms": 835.6
+    },
+    {
+      "id": 4,
+      "name": "Self-correction",
+      "mode": "AI-only",
+      "input": "send it to the team on Tuesday sorry I mean Wednesday morning",
+      "raw_input": "send it to the team on Tuesday sorry I mean Wednesday morning",
+      "output": "send it to the team on Wednesday morning",
+      "expected": "Send it to the team on Wednesday morning.",
+      "time_ms": 481.2
+    },
+    {
+      "id": 5,
+      "name": "Multiple self-corrections",
+      "mode": "AI-only",
+      "input": "we need to update the app not the app I mean the website or rather the landing page before Friday",
+      "raw_input": "we need to update the app not the app I mean the website or rather the landing page before Friday",
+      "output": "we need to update the app not the app I mean the website or rather the landing page before Friday.",
+      "expected": "We need to update the landing page before Friday.",
+      "time_ms": 901.0
+    },
+    {
+      "id": 6,
+      "name": "Repetition/stutter",
+      "mode": "AI-only",
+      "input": "I want to I want to make sure that the the project is is done by next week",
+      "raw_input": "I want to I want to make sure that the the project is is done by next week",
+      "output": "I want to make sure the project is done by next week.",
+      "expected": "I want to make sure that the project is done by next week.",
+      "time_ms": 648.7
+    },
+    {
+      "id": 7,
+      "name": "Spoken formatting",
+      "mode": "AI-only",
+      "input": "send an email to john at example dot com and tell him the meeting is at three thirty PM new paragraph also remind him to bring the quarterly report",
+      "raw_input": "send an email to john at example dot com and tell him the meeting is at three thirty PM new paragraph also remind him to bring the quarterly report",
+      "output": "send an email to john at example.com  \ntell him the meeting is at three thirty PM  \nnew paragraph  \nalso remind him to bring the quarterly report",
+      "expected": "Send an email to john@example.com and tell him the meeting is at 3:30 PM.\n\nAlso remind him to bring the quarterly report.",
+      "time_ms": 1268.5
+    },
+    {
+      "id": 8,
+      "name": "List dictation",
+      "mode": "AI-only",
+      "input": "the agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+      "raw_input": "the agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+      "output": "the agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+      "expected": "The agenda items are:\n1. Budget review\n2. Hiring update\n3. Product roadmap\n4. Customer feedback",
+      "time_ms": 760.6
+    },
+    {
+      "id": 9,
+      "name": "Long rambling",
+      "mode": "AI-only",
+      "input": "so basically what I'm trying to say is um you know the thing with the project is that we we really need to like focus on the um the core features right and not get distracted by all the other stuff that people are asking for I mean some of it is important but like we can't do everything at once",
+      "raw_input": "so basically what I'm trying to say is um you know the thing with the project is that we we really need to like focus on the um the core features right and not get distracted by all the other stuff that people are asking for I mean some of it is important but like we can't do everything at once",
+      "output": "so basically what I'm trying to say is we really need to focus on the core features and not get distracted by all the other stuff that people are asking for. Some of it is important but we can't do everything at once.",
+      "expected": "The thing with the project is that we really need to focus on the core features and not get distracted by all the other stuff that people are asking for. Some of it is important, but we can't do everything at once.",
+      "time_ms": 1903.7
+    },
+    {
+      "id": 10,
+      "name": "Already clean",
+      "mode": "AI-only",
+      "input": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "raw_input": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "output": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "expected": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "time_ms": 810.8
+    }
+  ]
+}

@@ -23,16 +23,27 @@ dist-ssr
 *.sln
 *.sw?
 
-# Training artifacts (keep scripts, ignore intermediate data)
+# Training artifacts (keep scripts, ignore model weights and intermediate data)
 training/data/*.log
 training/data/test_sample.jsonl
 training/output/chirp-cleanup/
 training/output/onnx/encoder_model.onnx
 training/output/onnx/decoder_model.onnx
 training/output/onnx/decoder_with_past_model.onnx
+training/output/qwen-lora/
+training/output/qwen3-0-6b-lora/
+training/output/llama_cpp_tools/
+training/output/*.log
+training/output/overnight*.log
 training/venv/
 training/.venv/
 training/__pycache__/
+
+# GGUF model files
+*.gguf
+
+# Benchmark downloaded models
+chirp-benchmark-models/
 
 # Debug output
 err.txt

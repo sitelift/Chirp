@@ -1,0 +1,62 @@
+[
+  {
+    "id": 1,
+    "name": "Clean, short",
+    "input": "I need to go to the store and pick up some milk",
+    "expected": "I need to go to the store and pick up some milk."
+  },
+  {
+    "id": 2,
+    "name": "Light fillers",
+    "input": "um so I was thinking we could um maybe go to the park",
+    "expected": "I was thinking we could maybe go to the park."
+  },
+  {
+    "id": 3,
+    "name": "Heavy fillers",
+    "input": "so like um you know I was uh basically going to like tell him that we need to uh figure this out",
+    "expected": "I was going to tell him that we need to figure this out."
+  },
+  {
+    "id": 4,
+    "name": "Self-correction",
+    "input": "send it to the team on Tuesday sorry I mean Wednesday morning",
+    "expected": "Send it to the team on Wednesday morning."
+  },
+  {
+    "id": 5,
+    "name": "Multiple self-corrections",
+    "input": "we need to update the app not the app I mean the website or rather the landing page before Friday",
+    "expected": "We need to update the landing page before Friday."
+  },
+  {
+    "id": 6,
+    "name": "Repetition/stutter",
+    "input": "I want to I want to make sure that the the project is is done by next week",
+    "expected": "I want to make sure that the project is done by next week."
+  },
+  {
+    "id": 7,
+    "name": "Spoken formatting",
+    "input": "send an email to john at example dot com and tell him the meeting is at three thirty PM new paragraph also remind him to bring the quarterly report",
+    "expected": "Send an email to john@example.com and tell him the meeting is at 3:30 PM.\n\nAlso remind him to bring the quarterly report."
+  },
+  {
+    "id": 8,
+    "name": "List dictation",
+    "input": "the agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+    "expected": "The agenda items are:\n1. Budget review\n2. Hiring update\n3. Product roadmap\n4. Customer feedback"
+  },
+  {
+    "id": 9,
+    "name": "Long rambling",
+    "input": "so basically what I'm trying to say is um you know the thing with the project is that we we really need to like focus on the um the core features right and not get distracted by all the other stuff that people are asking for I mean some of it is important but like we can't do everything at once",
+    "expected": "The thing with the project is that we really need to focus on the core features and not get distracted by all the other stuff that people are asking for. Some of it is important, but we can't do everything at once."
+  },
+  {
+    "id": 10,
+    "name": "Already clean",
+    "input": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+    "expected": "The quarterly earnings report shows a 15% increase in revenue compared to last year."
+  }
+]

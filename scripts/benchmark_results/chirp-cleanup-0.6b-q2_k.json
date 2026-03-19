@@ -1,0 +1,206 @@
+{
+  "model": "chirp-cleanup-0.6b-q2_k",
+  "timestamp": "2026-03-19 09:45:47",
+  "results": [
+    {
+      "id": 1,
+      "name": "Clean, short",
+      "mode": "regex+AI",
+      "input": "I need to go to the store and pick up some milk",
+      "raw_input": "I need to go to the store and pick up some milk",
+      "output": "\u0627\u0644\n\nIm\nWe\nfor\nas\nas\nas\nas\nas\nas\nas\nas\nas\nas\nas\nugh\nugh\nugh\nugh\ni\ni\ni\ni\ni\ni\ni\ni\ni\ni\ni\ni\ni",
+      "expected": "I need to go to the store and pick up some milk.",
+      "time_ms": 740.6
+    },
+    {
+      "id": 2,
+      "name": "Light fillers",
+      "mode": "regex+AI",
+      "input": "So I was thinking we could maybe go to the park",
+      "raw_input": "um so I was thinking we could um maybe go to the park",
+      "output": "\u0442\u043e\n\nPossible:\n\nWhat's in with ?\n\nWhat's in with\n\nWhat's in with\n\nWhat's in with\n\nWhat's in with\n\nWhat's in with\n\nWhat's in with\n\n(\n\nWhat's in with\n\n(\n\n( \n\n( \n\n( \n\n( \n\n( \n\n( \n\n( \n\n(",
+      "expected": "I was thinking we could maybe go to the park.",
+      "time_ms": 570.9
+    },
+    {
+      "id": 3,
+      "name": "Heavy fillers",
+      "mode": "regex+AI",
+      "input": "So I was basically going to like tell him that we need to figure this out",
+      "raw_input": "so like um you know I was uh basically going to like tell him that we need to uh figure this out",
+      "output": "\u0e49\n\n\u30fb\n\n1. .\n\n\u30fb\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.",
+      "expected": "I was going to tell him that we need to figure this out.",
+      "time_ms": 506.1
+    },
+    {
+      "id": 4,
+      "name": "Self-correction",
+      "mode": "regex+AI",
+      "input": "Send it to the team on Tuesday sorry I mean Wednesday morning",
+      "raw_input": "send it to the team on Tuesday sorry I mean Wednesday morning",
+      "output": "\u0442\u043e\n\nIm\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let\n. Let",
+      "expected": "Send it to the team on Wednesday morning.",
+      "time_ms": 573.5
+    },
+    {
+      "id": 5,
+      "name": "Multiple self-corrections",
+      "mode": "regex+AI",
+      "input": "We need to update the app not the app I mean the website or rather the landing page before Friday",
+      "raw_input": "we need to update the app not the app I mean the website or rather the landing page before Friday",
+      "output": "ting\n\tI do not have the same amount of information. It's a range from 1\u20131900s with the start of 4\u20134\u28e3up to 10\u201310\u28e7-24\u03c4 (nty-std\u201310\u2df0-\ufffd",
+      "expected": "We need to update the landing page before Friday.",
+      "time_ms": 593.5
+    },
+    {
+      "id": 6,
+      "name": "Repetition/stutter",
+      "mode": "regex+AI",
+      "input": "I want to I want to make sure that the the project is is done by next week",
+      "raw_input": "I want to I want to make sure that the the project is is done by next week",
+      "output": "\u0e49\n\n6. For the purpose of the other, this is\n- 1. For the other, 2. For the other, the\n- 1. For the other, 2. For the other, the\n- 1. For the other, 2. For the other, the",
+      "expected": "I want to make sure that the project is done by next week.",
+      "time_ms": 763.8
+    },
+    {
+      "id": 7,
+      "name": "Spoken formatting",
+      "mode": "regex+AI",
+      "input": "Send an email to john at example dot com and tell him the meeting is at three thirty PM new paragraph also remind him to bring the quarterly report",
+      "raw_input": "send an email to john at example dot com and tell him the meeting is at three thirty PM new paragraph also remind him to bring the quarterly report",
+      "output": "horizontal\n--\n--\n--\n--\n--\n--\n--\n--\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a\n\n\t\t\u266a",
+      "expected": "Send an email to john@example.com and tell him the meeting is at 3:30 PM.\n\nAlso remind him to bring the quarterly report.",
+      "time_ms": 848.5
+    },
+    {
+      "id": 8,
+      "name": "List dictation",
+      "mode": "regex+AI",
+      "input": "The agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+      "raw_input": "the agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+      "output": ":\n\n\u0627\u0644izando 15 files.\nfore\nfore\nfore\nfore\nfore\nfore\nfore\nfore\nfore\nfore\nfore\nfore\nfore\nfore\nfor\nfore\nfore\nfore\nfor\nfore\nfore\nfore\nfor\nfore\nfore\nfore\nfor\nfore",
+      "expected": "The agenda items are:\n1. Budget review\n2. Hiring update\n3. Product roadmap\n4. Customer feedback",
+      "time_ms": 813.0
+    },
+    {
+      "id": 9,
+      "name": "Long rambling",
+      "mode": "regex+AI",
+      "input": "So basically what I'm trying to say is the thing with the project is that we we really need to like focus on the the core features right and not get distracted by all the other stuff that people are asking for I mean some of it is important but we can't do everything at once",
+      "raw_input": "so basically what I'm trying to say is um you know the thing with the project is that we we really need to like focus on the um the core features right and not get distracted by all the other stuff that people are asking for I mean some of it is important but like we can't do everything at once",
+      "output": "oxy\n\nThe other way, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other, the other",
+      "expected": "The thing with the project is that we really need to focus on the core features and not get distracted by all the other stuff that people are asking for. Some of it is important, but we can't do everything at once.",
+      "time_ms": 1336.6
+    },
+    {
+      "id": 10,
+      "name": "Already clean",
+      "mode": "regex+AI",
+      "input": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "raw_input": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "output": "\u043b\u0443\u0447\n\nThese are the same as\n1. For all the\n2. This is\nThe\n3. This\n6. This\n15. This\n7. This\n16. This\n17. This\n2. This\n4. This\n5. This\n6. This",
+      "expected": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "time_ms": 867.5
+    },
+    {
+      "id": 1,
+      "name": "Clean, short",
+      "mode": "AI-only",
+      "input": "I need to go to the store and pick up some milk",
+      "raw_input": "I need to go to the store and pick up some milk",
+      "output": "\u0627\u0644\n\nIm\nWe\nfor\nas\nas\nas\nas\nas\nas\nas\nas\nas\nas\nas\nugh\nugh\nugh\nugh\ni\ni\ni\ni\ni\ni\ni\ni\ni\ni\ni\ni\ni",
+      "expected": "I need to go to the store and pick up some milk.",
+      "time_ms": 685.0
+    },
+    {
+      "id": 2,
+      "name": "Light fillers",
+      "mode": "AI-only",
+      "input": "um so I was thinking we could um maybe go to the park",
+      "raw_input": "um so I was thinking we could um maybe go to the park",
+      "output": "\ufffd\n\u0430\u043d\n\n\ufffd\n\nThe\n\n\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,\n\n,",
+      "expected": "I was thinking we could maybe go to the park.",
+      "time_ms": 611.5
+    },
+    {
+      "id": 3,
+      "name": "Heavy fillers",
+      "mode": "AI-only",
+      "input": "so like um you know I was uh basically going to like tell him that we need to uh figure this out",
+      "raw_input": "so like um you know I was uh basically going to like tell him that we need to uh figure this out",
+      "output": "post\nfighting\n\tre\n\t\tjust\n\t\tjust\n\t\tground\n\t\t,\n\t\t,\n\t\t,\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022\n\n\t\t\u2022",
+      "expected": "I was going to tell him that we need to figure this out.",
+      "time_ms": 796.2
+    },
+    {
+      "id": 4,
+      "name": "Self-correction",
+      "mode": "AI-only",
+      "input": "send it to the team on Tuesday sorry I mean Wednesday morning",
+      "raw_input": "send it to the team on Tuesday sorry I mean Wednesday morning",
+      "output": "\u0442\u043e\n\t\n\t\n\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\n\n\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022\t\t\u2022",
+      "expected": "Send it to the team on Wednesday morning.",
+      "time_ms": 719.0
+    },
+    {
+      "id": 5,
+      "name": "Multiple self-corrections",
+      "mode": "AI-only",
+      "input": "we need to update the app not the app I mean the website or rather the landing page before Friday",
+      "raw_input": "we need to update the app not the app I mean the website or rather the landing page before Friday",
+      "output": "fe\u0e34\u0e07\n\nThese are the same as the previous version. It's a tiny speedutation. It's a tiny speed. It's a tiny speed. It's a tiny speed. It's a tiny speed. It's a tiny speed. It's a tiny speed. It's a tiny speed. It's a",
+      "expected": "We need to update the landing page before Friday.",
+      "time_ms": 732.6
+    },
+    {
+      "id": 6,
+      "name": "Repetition/stutter",
+      "mode": "AI-only",
+      "input": "I want to I want to make sure that the the project is is done by next week",
+      "raw_input": "I want to I want to make sure that the the project is is done by next week",
+      "output": "\u0e49\n\n6. For the purpose of the other, this is\n- 1. For the other, 2. For the other, the\n- 1. For the other, 2. For the other, the\n- 1. For the other, 2. For the other, the",
+      "expected": "I want to make sure that the project is done by next week.",
+      "time_ms": 775.6
+    },
+    {
+      "id": 7,
+      "name": "Spoken formatting",
+      "mode": "AI-only",
+      "input": "send an email to john at example dot com and tell him the meeting is at three thirty PM new paragraph also remind him to bring the quarterly report",
+      "raw_input": "send an email to john at example dot com and tell him the meeting is at three thirty PM new paragraph also remind him to bring the quarterly report",
+      "output": ".post\n.\n.\n.\n.\n.\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.",
+      "expected": "Send an email to john@example.com and tell him the meeting is at 3:30 PM.\n\nAlso remind him to bring the quarterly report.",
+      "time_ms": 729.2
+    },
+    {
+      "id": 8,
+      "name": "List dictation",
+      "mode": "AI-only",
+      "input": "the agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+      "raw_input": "the agenda items are first budget review second hiring update third product roadmap and fourth customer feedback",
+      "output": "\ufffd\n\n\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.\n\n.",
+      "expected": "The agenda items are:\n1. Budget review\n2. Hiring update\n3. Product roadmap\n4. Customer feedback",
+      "time_ms": 701.0
+    },
+    {
+      "id": 9,
+      "name": "Long rambling",
+      "mode": "AI-only",
+      "input": "so basically what I'm trying to say is um you know the thing with the project is that we we really need to like focus on the um the core features right and not get distracted by all the other stuff that people are asking for I mean some of it is important but like we can't do everything at once",
+      "raw_input": "so basically what I'm trying to say is um you know the thing with the project is that we we really need to like focus on the um the core features right and not get distracted by all the other stuff that people are asking for I mean some of it is important but like we can't do everything at once",
+      "output": "oxys\n\nAs a core feature, we need to like it, with the project, in the we need to like it, with the project, with the project, like the project, with the project, like the project, with the project, with the project, with the project, like the project, with the project, with the project, like the project, with the project, with the project, like the project.\n\nCore features:\ncore features, core features, core features, core features, core features, core features, core features, 1. 2. 3. 4. 5. 6. 7. 8. 9. 10. 11. 12. 13. 14.",
+      "expected": "The thing with the project is that we really need to focus on the core features and not get distracted by all the other stuff that people are asking for. Some of it is important, but we can't do everything at once.",
+      "time_ms": 1616.2
+    },
+    {
+      "id": 10,
+      "name": "Already clean",
+      "mode": "AI-only",
+      "input": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "raw_input": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "output": "\u043b\u0443\u0447\n\nThese are the same as\n1. For all the\n2. This is\nThe\n3. This\n6. This\n15. This\n7. This\n16. This\n17. This\n2. This\n4. This\n5. This\n6. This",
+      "expected": "The quarterly earnings report shows a 15% increase in revenue compared to last year.",
+      "time_ms": 793.5
+    }
+  ]
+}
