@@ -39,6 +39,7 @@
         "center": true
       }
     ],
+    "macOSPrivateApi": true,
     "security": {
       "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' asset: https://asset.localhost; font-src 'self' data:; connect-src 'self' ipc: http://ipc.localhost https://huggingface.co https://*.huggingface.co https://github.com https://objects.githubusercontent.com"
     }

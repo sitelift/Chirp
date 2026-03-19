@@ -2,6 +2,7 @@ use crate::audio;
 use crate::cleanup;
 use crate::dictionary;
 use crate::history;
+use crate::hotkey;
 use crate::inject;
 use crate::llm;
 use crate::settings;
@@ -38,6 +39,8 @@ pub async fn update_settings(
 ) -> Result<(), String> {
     let mut s = state.lock().await;
     let old_hotkey = s.settings.hotkey.clone();
+    let old_hotkey_mode = s.settings.hotkey_mode.clone();
+    let old_hotkey_keycode = s.settings.hotkey_keycode;
 
     // Merge partial into current settings
     let mut settings_val = serde_json::to_value(&s.settings).unwrap();
@@ -90,10 +93,28 @@ pub async fn update_settings(
     } else {
         // Sync autostart with launch_at_login setting
         let autostart = app_handle.autolaunch();
-        if s.settings.launch_at_login {
+        let launch_at_login = s.settings.launch_at_login;
+        let new_mode = s.settings.hotkey_mode.clone();
+        let new_keycode = s.settings.hotkey_keycode;
+        drop(s); // Release lock before restart
+
+        if launch_at_login {
             let _ = autostart.enable();
         } else {
             let _ = autostart.disable();
+        }
+
+        // Auto-restart key listener if mode or keycode changed
+        if new_mode != old_hotkey_mode || new_keycode != old_hotkey_keycode {
+            hotkey::stop_key_listener();
+            if new_mode == "dedicated_key" && new_keycode > 0 {
+                let shared = state.inner().clone();
+                hotkey::start_key_listener(app_handle.clone(), new_keycode, shared);
+            } else {
+                let mut s = state.lock().await;
+                s.hotkey_status = crate::state::HotkeyStatus::Idle;
+                let _ = app_handle.emit("hotkey-status", "idle");
+            }
         }
     }
 
@@ -347,10 +368,17 @@ pub async fn stop_recording(
     // Inject text at cursor
     log::debug!("Injecting transcribed text: '{result}'");
     let text_for_inject = result.clone();
-    let inject_result =
-        tokio::task::spawn_blocking(move || inject::inject_text(&text_for_inject))
-            .await
-            .map_err(|e| format!("Task failed: {e}"))?;
+    let app_for_inject = app_handle.clone();
+    let inject_result: Result<(), String> = {
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        app_for_inject
+            .run_on_main_thread(move || {
+                let r = inject::inject_text(&text_for_inject);
+                let _ = tx.send(r);
+            })
+            .map_err(|e| format!("Dispatch failed: {e}"))?;
+        rx.await.map_err(|e| format!("Channel failed: {e}"))?
+    };
 
     if let Err(e) = inject_result {
         let mut s = state.lock().await;
@@ -656,3 +684,62 @@ pub async fn transcribe_file(
     })
 }
 
+#[tauri::command]
+pub async fn restart_hotkey_listener(
+    app_handle: AppHandle,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    hotkey::stop_key_listener();
+
+    let s = state.lock().await;
+    if s.settings.hotkey_mode == "dedicated_key" && s.settings.hotkey_keycode > 0 {
+        let kc = s.settings.hotkey_keycode;
+        let name = s.settings.hotkey_key_name.clone();
+        let shared = state.inner().clone();
+        drop(s);
+        log::info!("Restarting key listener for '{name}' (keycode {kc})");
+        hotkey::start_key_listener(app_handle, kc, shared);
+    } else {
+        let mut s_mut = state.lock().await;
+        s_mut.hotkey_status = crate::state::HotkeyStatus::Idle;
+        drop(s_mut);
+        let _ = app_handle.emit("hotkey-status", "idle");
+    }
+
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_hotkey_status(
+    state: State<'_, SharedState>,
+) -> Result<String, String> {
+    let s = state.lock().await;
+    let status = match s.hotkey_status {
+        crate::state::HotkeyStatus::Idle => "idle",
+        crate::state::HotkeyStatus::Retrying => "retrying",
+        crate::state::HotkeyStatus::Active => "active",
+        crate::state::HotkeyStatus::Failed => "failed",
+    };
+    Ok(status.to_string())
+}
+
+#[tauri::command]
+pub async fn check_input_monitoring() -> Result<bool, String> {
+    Ok(hotkey::preflight_listen_access())
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CapturedKey {
+    pub keycode: i64,
+    pub name: String,
+}
+
+#[tauri::command]
+pub async fn capture_hotkey_key() -> Result<CapturedKey, String> {
+    // Run capture on a blocking thread since it blocks until a key is pressed
+    let (keycode, name) = tokio::task::spawn_blocking(hotkey::capture_next_key)
+        .await
+        .map_err(|e| format!("capture task failed: {e}"))?;
+    Ok(CapturedKey { keycode, name })
+}

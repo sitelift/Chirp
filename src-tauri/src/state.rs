@@ -18,6 +18,16 @@ pub enum RecordingState {
     Processing,
 }
 
+/// Hotkey listener lifecycle state
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HotkeyStatus {
+    Idle,
+    Retrying,
+    Active,
+    Failed,
+}
+
 /// User-facing app settings, persisted as JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -43,6 +53,12 @@ pub struct Settings {
     pub tone_mode: String,
     #[serde(default)]
     pub translate_to_english: bool,
+    #[serde(default = "default_hotkey_mode")]
+    pub hotkey_mode: String,
+    #[serde(default)]
+    pub hotkey_keycode: i64,
+    #[serde(default = "default_hotkey_key_name")]
+    pub hotkey_key_name: String,
 }
 
 fn default_overlay_position() -> String {
@@ -55,6 +71,14 @@ fn default_true() -> bool {
 
 fn default_tone_mode() -> String {
     "message".into()
+}
+
+fn default_hotkey_mode() -> String {
+    "dedicated_key".into()
+}
+
+fn default_hotkey_key_name() -> String {
+    "Not set".into()
 }
 
 impl Default for Settings {
@@ -75,6 +99,9 @@ impl Default for Settings {
             show_passive_overlay: true,
             tone_mode: "message".into(),
             translate_to_english: false,
+            hotkey_mode: "dedicated_key".into(),
+            hotkey_keycode: 0,
+            hotkey_key_name: "Not set".into(),
         }
     }
 }
@@ -157,6 +184,7 @@ pub struct AppState {
     pub snippets: Vec<SnippetEntry>,
     pub history: Vec<TranscriptionEntry>,
     pub recording_state: RecordingState,
+    pub hotkey_status: HotkeyStatus,
     /// Recognizer is in its own Arc so transcription can proceed without holding
     /// the main state lock. The sherpa C API is thread-safe (Send+Sync).
     pub recognizer: Option<Arc<SherpaRecognizer>>,
@@ -172,6 +200,7 @@ impl AppState {
             snippets,
             history,
             recording_state: RecordingState::Idle,
+            hotkey_status: HotkeyStatus::Idle,
             recognizer: None,
             llm_process: None,
             llm_port: None,

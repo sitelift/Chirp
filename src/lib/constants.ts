@@ -13,6 +13,9 @@ export const DEFAULT_SETTINGS = {
   overlayPosition: 'bottom' as 'bottom' | 'top',
   showPassiveOverlay: true,
   toneMode: 'message',
+  hotkeyMode: 'dedicated_key' as 'dedicated_key' | 'custom',
+  hotkeyKeycode: 0,
+  hotkeyKeyName: 'Not set',
 }
 
 export const TONE_MODES = [

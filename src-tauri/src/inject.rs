@@ -70,17 +70,23 @@ pub fn inject_text(text: &str) -> Result<(), String> {
         return Err("Failed to set clipboard — text did not persist after 5 attempts".into());
     }
 
-    // Simulate Ctrl+V
+    // Simulate Cmd+V (macOS) or Ctrl+V (other platforms)
+    let paste_modifier = if cfg!(target_os = "macos") {
+        Key::Meta
+    } else {
+        Key::Control
+    };
+
     let mut enigo =
         Enigo::new(&Settings::default()).map_err(|e| format!("Failed to init enigo: {e}"))?;
     enigo
-        .key(Key::Control, Direction::Press)
+        .key(paste_modifier, Direction::Press)
         .map_err(|e| format!("Key press failed: {e}"))?;
     enigo
         .key(Key::Unicode('v'), Direction::Click)
         .map_err(|e| format!("Key click failed: {e}"))?;
     enigo
-        .key(Key::Control, Direction::Release)
+        .key(paste_modifier, Direction::Release)
         .map_err(|e| format!("Key release failed: {e}"))?;
 
     // Restore clipboard in a background thread after a generous delay.

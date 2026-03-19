@@ -16,6 +16,7 @@ export function useRecording() {
   const setWordCount = useAppStore((s) => s.setWordCount)
   const tauri = useTauri()
   const busyRef = useRef(false)
+  const busyTimestampRef = useRef(0)
   const pendingStopRef = useRef(false)
 
   useEffect(() => {
@@ -25,13 +26,32 @@ export function useRecording() {
 
     const unlisteners: Array<() => void> = []
 
+    // Safety: if busyRef has been stuck for >5s, force-reset it
+    const checkBusyStale = () => {
+      if (busyRef.current && busyTimestampRef.current > 0) {
+        if (Date.now() - busyTimestampRef.current > 5000) {
+          console.warn('busyRef stuck for >5s, force-resetting')
+          busyRef.current = false
+          busyTimestampRef.current = 0
+        }
+      }
+    }
+
+    const setBusy = (busy: boolean) => {
+      busyRef.current = busy
+      busyTimestampRef.current = busy ? Date.now() : 0
+    }
+
     // --- Hold-to-record: press to start ---
     listen('hotkey-pressed', async () => {
+      checkBusyStale()
       if (busyRef.current) return
       const status = useAppStore.getState().status
-      if (status !== 'idle') return
+      // Allow restarting from error/done states (don't wait for auto-dismiss)
+      if (status !== 'idle' && status !== 'error' && status !== 'done') return
+      if (status === 'error' || status === 'done') setStatus('idle')
 
-      busyRef.current = true
+      setBusy(true)
       pendingStopRef.current = false
       try {
         setStatus('listening')
@@ -40,17 +60,17 @@ export function useRecording() {
         handleStartError(e)
         return
       } finally {
-        busyRef.current = false
+        setBusy(false)
       }
 
       // If user released the hotkey while startRecording was awaiting, stop now
       if (pendingStopRef.current) {
         pendingStopRef.current = false
-        busyRef.current = true
+        setBusy(true)
         try {
           await stopAndProcess()
         } finally {
-          busyRef.current = false
+          setBusy(false)
         }
       }
     }).then((fn) => unlisteners.push(fn))
@@ -65,22 +85,24 @@ export function useRecording() {
       const status = useAppStore.getState().status
       if (status !== 'listening') return
 
-      busyRef.current = true
+      setBusy(true)
       try {
         await stopAndProcess()
       } finally {
-        busyRef.current = false
+        setBusy(false)
       }
     }).then((fn) => unlisteners.push(fn))
 
-    // --- Tray menu toggle (fallback) ---
+    // --- Tray menu toggle ---
     listen('toggle-recording', async () => {
+      checkBusyStale()
       if (busyRef.current) return
       const status = useAppStore.getState().status
 
-      busyRef.current = true
+      setBusy(true)
       try {
-        if (status === 'idle') {
+        if (status === 'idle' || status === 'error' || status === 'done') {
+          if (status === 'error' || status === 'done') setStatus('idle')
           setStatus('listening')
           await tauri.startRecording()
         } else if (status === 'listening') {
@@ -89,7 +111,7 @@ export function useRecording() {
       } catch (e) {
         handleStartError(e)
       } finally {
-        busyRef.current = false
+        setBusy(false)
       }
     }).then((fn) => unlisteners.push(fn))
 

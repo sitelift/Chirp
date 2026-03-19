@@ -6,5 +6,7 @@
     <string>Chirp needs microphone access to transcribe your speech to text.</string>
     <key>NSAppleEventsUsageDescription</key>
     <string>Chirp needs automation access to paste transcribed text into your active application.</string>
+    <key>NSAccessibilityUsageDescription</key>
+    <string>Chirp needs accessibility access to listen for keyboard shortcuts and paste transcribed text.</string>
 </dict>
 </plist>

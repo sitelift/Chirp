@@ -23,6 +23,8 @@ export function Overlay() {
   const setStatus = useAppStore((s) => s.setStatus)
   const position = useAppStore((s) => s.overlayPosition)
   const showPassive = useAppStore((s) => s.showPassiveOverlay)
+  const hotkeyStatus = useAppStore((s) => s.hotkeyStatus)
+  const hotkeyMode = useAppStore((s) => s.hotkeyMode)
   const [dismissing, setDismissing] = useState(false)
 
   useAudio()
@@ -31,15 +33,9 @@ export function Overlay() {
   const isActive = status !== 'idle'
   const shouldShow = isActive || showPassive
 
-  // Position the window once — same size for passive and active
+  // Always reposition when position changes (even if hidden)
   useEffect(() => {
     const win = getCurrentWindow()
-
-    if (!shouldShow) {
-      win.hide()
-      return
-    }
-
     primaryMonitor().then(async (monitor) => {
       if (!monitor) return
       const sf = monitor.scaleFactor
@@ -53,9 +49,18 @@ export function Overlay() {
 
       await win.setSize(new LogicalSize(WIN_W, WIN_H))
       await win.setPosition(new LogicalPosition(x, y))
-      await win.show()
     })
-  }, [shouldShow, position])
+  }, [position])
+
+  // Show/hide separately
+  useEffect(() => {
+    const win = getCurrentWindow()
+    if (shouldShow) {
+      win.show()
+    } else {
+      win.hide()
+    }
+  }, [shouldShow])
 
   // Auto-dismiss after done/error state
   useEffect(() => {
@@ -84,7 +89,15 @@ export function Overlay() {
             : 'h-9 gap-2 border border-chirp-stone-200 bg-white px-2.5 shadow-sm'
         } ${dismissing ? 'opacity-0 scale-95' : 'opacity-100 scale-100'}`}
       >
-        <BirdMark size={isActive ? 24 : 18} className={isActive ? 'text-chirp-amber-500' : 'text-chirp-stone-400'} />
+        <BirdMark size={isActive ? 24 : 18} className={
+          isActive
+            ? 'text-chirp-amber-500'
+            : hotkeyMode === 'dedicated_key' && hotkeyStatus === 'failed'
+              ? 'text-red-400'
+              : hotkeyMode === 'dedicated_key' && hotkeyStatus === 'retrying'
+                ? 'text-chirp-amber-400 animate-pulse'
+                : 'text-chirp-stone-400'
+        } />
         {isActive && (
           <div className="animate-fade-in flex items-center">
             {status === 'listening' && <Listening />}

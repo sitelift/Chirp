@@ -68,9 +68,17 @@ export interface AppState {
   // Tone
   toneMode: string
 
+  // Hotkey mode
+  hotkeyMode: 'dedicated_key' | 'custom'
+  hotkeyKeycode: number
+  hotkeyKeyName: string
+
   // Overlay
   overlayPosition: 'bottom' | 'top'
   showPassiveOverlay: boolean
+
+  // Hotkey status
+  hotkeyStatus: 'idle' | 'retrying' | 'active' | 'failed'
 
   // Settings saved indicator
   settingsSaved: boolean
@@ -101,6 +109,7 @@ export interface AppState {
   setHistory: (history: TranscriptionEntry[]) => void
   removeHistoryEntry: (timestamp: string) => void
   setSettingsPage: (page: string) => void
+  setHotkeyStatus: (status: 'idle' | 'retrying' | 'active' | 'failed') => void
   setOnboardingComplete: (complete: boolean) => void
   setSettingsSaved: (saved: boolean) => void
 }
@@ -150,9 +159,17 @@ export const useAppStore = create<AppState>((set) => ({
   // Tone
   toneMode: DEFAULT_SETTINGS.toneMode,
 
+  // Hotkey mode
+  hotkeyMode: DEFAULT_SETTINGS.hotkeyMode,
+  hotkeyKeycode: DEFAULT_SETTINGS.hotkeyKeycode,
+  hotkeyKeyName: DEFAULT_SETTINGS.hotkeyKeyName,
+
   // Overlay
   overlayPosition: DEFAULT_SETTINGS.overlayPosition,
   showPassiveOverlay: DEFAULT_SETTINGS.showPassiveOverlay,
+
+  // Hotkey status
+  hotkeyStatus: 'idle',
 
   // Settings saved indicator
   settingsSaved: false,
@@ -191,6 +208,7 @@ export const useAppStore = create<AppState>((set) => ({
   removeHistoryEntry: (timestamp) =>
     set((state) => ({ history: state.history.filter((e) => e.timestamp !== timestamp) })),
   setSettingsPage: (settingsPage) => set({ settingsPage }),
+  setHotkeyStatus: (hotkeyStatus) => set({ hotkeyStatus }),
   setOnboardingComplete: (onboardingComplete) => set({ onboardingComplete }),
   setSettingsSaved: (settingsSaved) => set({ settingsSaved }),
 }))

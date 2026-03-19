@@ -41,5 +41,8 @@ err_dev.txt
 # Native shared libraries (downloaded at build time)
 src-tauri/sherpa-onnx-lib/macos/*.dylib
 
+# Release script secrets
+scripts/.env
+
 # Rust build
 target/

@@ -19,5 +19,10 @@ fn main() {
 
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
 
+    // Embed rpath so the binary can find dylibs inside the .app bundle at runtime
+    if cfg!(target_os = "macos") {
+        println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Resources/sherpa-onnx-lib/macos");
+    }
+
     tauri_build::build()
 }

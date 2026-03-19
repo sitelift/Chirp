@@ -144,6 +144,18 @@ export function useTauri() {
     await invoke('update_snippets', { entries })
   }
 
+  const captureHotkeyKey = async (): Promise<{ keycode: number; name: string }> => {
+    return await invoke<{ keycode: number; name: string }>('capture_hotkey_key')
+  }
+
+  const restartHotkeyListener = async (): Promise<void> => {
+    await invoke('restart_hotkey_listener')
+  }
+
+  const getHotkeyStatus = async (): Promise<string> => {
+    return await invoke<string>('get_hotkey_status')
+  }
+
   const testMicrophone = async (): Promise<number[]> => {
     return await invoke<number[]>('test_microphone')
   }
@@ -194,6 +206,9 @@ export function useTauri() {
     testLlmCleanup,
     getSnippets,
     updateSnippets,
+    captureHotkeyKey,
+    restartHotkeyListener,
+    getHotkeyStatus,
     testMicrophone,
     checkForUpdates,
   }

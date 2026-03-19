@@ -7,7 +7,7 @@ import { useTauri } from './useTauri'
 
 // Settings keys that should be synced to the backend
 const SYNCED_KEYS = [
-  'hotkey', 'launchAtLogin', 'showInMenuBar', 'playSoundOnComplete',
+  'hotkey', 'hotkeyMode', 'hotkeyKeycode', 'hotkeyKeyName', 'launchAtLogin', 'showInMenuBar', 'playSoundOnComplete',
   'autoDismissOverlay', 'smartFormatting',
   'inputDevice', 'noiseSuppression', 'model', 'onboardingComplete',
   'aiCleanup',
@@ -53,6 +53,13 @@ export function useSettingsSync() {
       console.debug('Failed to load snippets:', e)
     })
 
+    // Load initial hotkey status
+    tauri.getHotkeyStatus().then((status) => {
+      useAppStore.getState().setHotkeyStatus(status as 'idle' | 'retrying' | 'active' | 'failed')
+    }).catch((e) => {
+      console.debug('Failed to load hotkey status:', e)
+    })
+
     // Check model download status
     for (const model of ['parakeet-tdt-0.6b']) {
       tauri.getModelStatus(model).then((status) => {
@@ -75,6 +82,11 @@ export function useSettingsSync() {
   // so that React StrictMode's remount correctly recreates the subscription.
   useEffect(() => {
     const unlisteners: Array<() => void> = []
+
+    // Listen for hotkey status changes from the backend
+    listen<string>('hotkey-status', (event) => {
+      useAppStore.getState().setHotkeyStatus(event.payload as 'idle' | 'retrying' | 'active' | 'failed')
+    }).then((fn) => unlisteners.push(fn))
 
     // Listen for new transcription entries from the backend (cross-window)
     listen<TranscriptionEntry>('history-updated', (event) => {

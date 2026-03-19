@@ -16,7 +16,7 @@ cc = "1.2.57"
 tauri-build = { version = "2.5.6", features = [] }
 
 [dependencies]
-tauri = { version = "2.10.3", features = ["tray-icon", "image-png"] }
+tauri = { version = "2.10.3", features = ["tray-icon", "image-png", "macos-private-api"] }
 tauri-plugin-log = "2"
 tauri-plugin-global-shortcut = "2"
 tauri-plugin-autostart = "2"

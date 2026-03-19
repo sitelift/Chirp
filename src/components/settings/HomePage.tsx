@@ -192,9 +192,13 @@ export function HomePage() {
       {/* Hotkey reminder */}
       <div className="flex items-center gap-3 mt-6">
         <div className="flex items-center gap-1.5">
-          {hotkeyParts.map((part, i) => (
-            <KeyBadge key={i} keyLabel={part} />
-          ))}
+          {store.hotkeyMode === 'dedicated_key' ? (
+            <KeyBadge keyLabel={store.hotkeyKeycode > 0 ? store.hotkeyKeyName : 'Not set'} />
+          ) : (
+            hotkeyParts.map((part, i) => (
+              <KeyBadge key={i} keyLabel={part} />
+            ))
+          )}
         </div>
         <span className="font-body text-sm text-chirp-stone-500">
           Hold to dictate

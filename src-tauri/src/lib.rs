@@ -4,6 +4,7 @@ mod commands;
 mod dictionary;
 mod file_transcribe;
 mod history;
+mod hotkey;
 mod inject;
 mod llm;
 mod settings;
@@ -29,23 +30,44 @@ pub fn run() {
     let initial_snippets = settings::load_snippets();
     let initial_history = history::load_history();
     let hotkey_str = initial_settings.hotkey.clone();
+    let hotkey_mode = initial_settings.hotkey_mode.clone();
 
-    // Parse the hotkey for the global shortcut plugin
-    // The parser natively understands CmdOrCtrl, Ctrl, Shift, Alt, etc.
-    // Reject modifier-only shortcuts (e.g. "CmdOrCtrl+Shift") — they never fire.
-    let modifier_only = hotkey_str
-        .split('+')
-        .all(|p| matches!(p.trim(), "CmdOrCtrl" | "Ctrl" | "Shift" | "Alt" | "Meta" | "Super" | "Cmd"));
-    let shortcut: tauri_plugin_global_shortcut::Shortcut = if modifier_only {
-        log::warn!("Hotkey '{hotkey_str}' has no key, falling back to CmdOrCtrl+Shift+Space");
-        "CmdOrCtrl+Shift+Space".parse().unwrap()
+    log::info!("Hotkey mode: {hotkey_mode}");
+
+    // Build the global shortcut plugin — only registers a shortcut in "custom" mode
+    let shortcut_plugin = if hotkey_mode == "custom" {
+        let modifier_only = hotkey_str
+            .split('+')
+            .all(|p| matches!(p.trim(), "CmdOrCtrl" | "Ctrl" | "Shift" | "Alt" | "Meta" | "Super" | "Cmd"));
+        let shortcut: tauri_plugin_global_shortcut::Shortcut = if modifier_only {
+            log::warn!("Hotkey '{hotkey_str}' has no key, falling back to CmdOrCtrl+Shift+Space");
+            "CmdOrCtrl+Shift+Space".parse().unwrap()
+        } else {
+            hotkey_str
+                .parse()
+                .unwrap_or_else(|_| "CmdOrCtrl+Shift+Space".parse().unwrap())
+        };
+        log::info!("Registering global hotkey: {hotkey_str}");
+        tauri_plugin_global_shortcut::Builder::new()
+            .with_shortcut(shortcut)
+            .expect("Failed to configure shortcut")
+            .with_handler(|app, _shortcut, event| {
+                match event.state {
+                    tauri_plugin_global_shortcut::ShortcutState::Pressed => {
+                        log::info!("Hotkey pressed → start recording");
+                        let _ = app.emit("hotkey-pressed", ());
+                    }
+                    tauri_plugin_global_shortcut::ShortcutState::Released => {
+                        log::info!("Hotkey released → stop recording");
+                        let _ = app.emit("hotkey-released", ());
+                    }
+                }
+            })
+            .build()
     } else {
-        hotkey_str
-            .parse()
-            .unwrap_or_else(|_| "CmdOrCtrl+Shift+Space".parse().unwrap())
+        // Dedicated key mode — register plugin with no shortcuts (needed for API availability)
+        tauri_plugin_global_shortcut::Builder::new().build()
     };
-
-    log::info!("Registering global hotkey: {hotkey_str}");
 
     tauri::Builder::default()
         .plugin(
@@ -53,24 +75,7 @@ pub fn run() {
                 .level(log::LevelFilter::Info)
                 .build(),
         )
-        .plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_shortcut(shortcut)
-                .expect("Failed to configure shortcut")
-                .with_handler(|app, _shortcut, event| {
-                    match event.state {
-                        tauri_plugin_global_shortcut::ShortcutState::Pressed => {
-                            log::info!("Hotkey pressed → start recording");
-                            let _ = app.emit("hotkey-pressed", ());
-                        }
-                        tauri_plugin_global_shortcut::ShortcutState::Released => {
-                            log::info!("Hotkey released → stop recording");
-                            let _ = app.emit("hotkey-released", ());
-                        }
-                    }
-                })
-                .build(),
-        )
+        .plugin(shortcut_plugin)
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -109,6 +114,10 @@ pub fn run() {
             commands::update_snippets,
             commands::play_completion_sound,
             commands::transcribe_file,
+            commands::capture_hotkey_key,
+            commands::restart_hotkey_listener,
+            commands::get_hotkey_status,
+            commands::check_input_monitoring,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -183,6 +192,19 @@ pub fn run() {
                             }
                         }
                     });
+                }
+            }
+
+            // Start dedicated key listener if configured
+            {
+                let state = handle.state::<SharedState>();
+                let s = state.blocking_lock();
+                if s.settings.hotkey_mode == "dedicated_key" && s.settings.hotkey_keycode > 0 {
+                    let kc = s.settings.hotkey_keycode;
+                    let name = &s.settings.hotkey_key_name;
+                    log::info!("Starting key listener for '{name}' (keycode {kc})");
+                    let shared = handle.state::<SharedState>().inner().clone();
+                    hotkey::start_key_listener(handle.clone(), kc, shared);
                 }
             }
 

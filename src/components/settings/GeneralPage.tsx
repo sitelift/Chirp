@@ -37,7 +37,23 @@ export function GeneralPage() {
 
   const hotkeyParts = formatHotkey(store.hotkey)
 
-  const handleCapture = () => {
+  const handleCaptureKey = async () => {
+    setCapturing(true)
+    try {
+      const result = await tauri.captureHotkeyKey()
+      if (result.keycode >= 0) {
+        store.updateSettings({
+          hotkeyKeycode: result.keycode,
+          hotkeyKeyName: result.name,
+        })
+      }
+    } catch (e) {
+      console.debug('Key capture failed:', e)
+    }
+    setCapturing(false)
+  }
+
+  const handleCaptureShortcut = () => {
     setCapturing(true)
     const handler = (e: KeyboardEvent) => {
       e.preventDefault()
@@ -71,23 +87,92 @@ export function GeneralPage() {
 
       <SettingGroup label="Hotkey">
         <div>
-          <p className="font-body text-sm text-chirp-stone-700 mb-3">Dictation toggle</p>
-          {capturing ? (
-            <div className="flex h-12 items-center justify-center rounded-xl border-2 border-dashed border-chirp-amber-400 bg-chirp-stone-100">
-              <span className="font-body text-sm text-chirp-stone-500">
-                Press new shortcut...
-              </span>
+          <p className="font-body text-sm text-chirp-stone-700 mb-2">Hotkey mode</p>
+          <Select
+            options={[
+              { value: 'dedicated_key', label: 'Dedicated key (recommended)' },
+              { value: 'custom', label: 'Custom shortcut' },
+            ]}
+            value={store.hotkeyMode}
+            onChange={(v) => store.updateSettings({ hotkeyMode: v as 'dedicated_key' | 'custom' })}
+          />
+          {store.hotkeyMode === 'dedicated_key' ? (
+            <div className="mt-3 space-y-3">
+              {capturing ? (
+                <div className="flex h-12 items-center justify-center rounded-xl border-2 border-dashed border-chirp-amber-400 bg-chirp-stone-100">
+                  <span className="font-body text-sm text-chirp-stone-500">
+                    Press any key...
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <KeyBadge keyLabel={store.hotkeyKeycode > 0 ? store.hotkeyKeyName : 'Not set'} />
+                  <Button variant="secondary" onClick={handleCaptureKey}>
+                    {store.hotkeyKeycode > 0 ? 'Change' : 'Set key'}
+                  </Button>
+                </div>
+              )}
+              {store.hotkeyKeycode > 0 && (
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="font-body text-sm text-chirp-stone-500">Hold for push-to-talk</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <span className="font-body text-sm text-chirp-stone-500">Double-tap for hands-free</span>
+                  </div>
+                </div>
+              )}
+              {store.hotkeyKeycode > 0 && store.hotkeyStatus === 'active' && (
+                <div className="flex items-center gap-1.5">
+                  <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
+                  <span className="font-body text-[13px] text-chirp-stone-500">Hotkey active</span>
+                </div>
+              )}
+              {store.hotkeyStatus === 'retrying' && (
+                <div className="flex items-center gap-1.5">
+                  <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
+                  <span className="font-body text-[13px] text-chirp-stone-500">Setting up hotkey...</span>
+                </div>
+              )}
+              {store.hotkeyStatus === 'failed' && (
+                <div className="space-y-2">
+                  <div className="flex items-center gap-1.5">
+                    <div className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                    <span className="font-body text-[13px] text-red-500">Input monitoring permission needed</span>
+                  </div>
+                  <p className="font-body text-[13px] text-chirp-stone-400">
+                    Open System Settings → Privacy & Security → Input Monitoring, find Chirp, toggle off then on.
+                  </p>
+                  <Button variant="secondary" onClick={() => tauri.restartHotkeyListener()}>
+                    Retry
+                  </Button>
+                </div>
+              )}
             </div>
           ) : (
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-1.5">
-                {hotkeyParts.map((part, i) => (
-                  <KeyBadge key={i} keyLabel={part} />
-                ))}
-              </div>
-              <Button variant="secondary" onClick={handleCapture}>
-                Change
-              </Button>
+            <div className="mt-3">
+              <p className="font-body text-sm text-chirp-stone-700 mb-3">Dictation toggle</p>
+              {capturing ? (
+                <div className="flex h-12 items-center justify-center rounded-xl border-2 border-dashed border-chirp-amber-400 bg-chirp-stone-100">
+                  <span className="font-body text-sm text-chirp-stone-500">
+                    Press new shortcut...
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-1.5">
+                    {hotkeyParts.map((part, i) => (
+                      <KeyBadge key={i} keyLabel={part} />
+                    ))}
+                  </div>
+                  <Button variant="secondary" onClick={handleCaptureShortcut}>
+                    Change
+                  </Button>
+                </div>
+              )}
+              <p className="font-body text-[13px] text-chirp-stone-400 mt-2">
+                Hold to talk, release to transcribe.
+              </p>
             </div>
           )}
         </div>
