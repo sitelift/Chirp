@@ -39,8 +39,9 @@ training/venv/
 training/.venv/
 training/__pycache__/
 
-# GGUF model files
-*.gguf
+# GGUF model files (tracked via git-lfs, but ignore downloaded benchmark models)
+# The fine-tuned model is committed via LFS
+chirp-benchmark-models/
 
 # Benchmark downloaded models
 chirp-benchmark-models/
