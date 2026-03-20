@@ -40,6 +40,7 @@ bzip2 = "0.5"
 arboard = "3.6.1"
 chrono = { version = "0.4", features = ["serde"] }
 zip = "2"
+flate2 = "1"
 rodio = "0.19"
 symphonia = { version = "0.5", features = ["all"] }
 tauri-plugin-dialog = "2"

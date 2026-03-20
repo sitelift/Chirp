@@ -547,6 +547,7 @@ dependencies = [
  "cpal",
  "dirs 5.0.1",
  "enigo",
+ "flate2",
  "futures-util",
  "hound",
  "log",

@@ -119,10 +119,13 @@ def start_server(model_path: str, llama_server: str, port: int) -> subprocess.Po
         llama_server,
         "--model", model_path,
         "--port", str(port),
-        "--ctx-size", "2048",
-        "--n-predict", "1024",
+        "--ctx-size", "512",
+        "--n-predict", "512",
         "--threads", str(n_threads),
         "--gpu-layers", "99",
+        "--flash-attn",
+        "--batch-size", "512",
+        "--parallel", "1",
         "--log-disable",
     ]
 

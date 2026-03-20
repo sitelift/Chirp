@@ -1,7 +1,103 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tauri::{AppHandle, Emitter};
 
 use crate::settings;
+
+/// Check if a filename is a binary we want to extract
+fn is_wanted_binary(basename: &str) -> bool {
+    if cfg!(windows) {
+        (basename.ends_with(".exe") && basename.contains("llama-server"))
+            || basename.ends_with(".dll")
+    } else {
+        basename == "llama-server"
+            || basename.ends_with(".dylib")
+            || basename.ends_with(".so")
+    }
+}
+
+/// Extract llama-server binary from either a .zip or .tar.gz archive
+fn extract_binary_archive(archive_path: &Path, dest_dir: &Path, is_targz: bool) -> Result<(), String> {
+    let mut found_server = false;
+
+    if is_targz {
+        let file = std::fs::File::open(archive_path)
+            .map_err(|e| format!("Failed to open archive: {e}"))?;
+        let gz = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(gz);
+
+        for entry in archive.entries().map_err(|e| format!("Failed to read tar: {e}"))? {
+            let mut entry = entry.map_err(|e| format!("Failed to read tar entry: {e}"))?;
+            let basename = entry.path()
+                .map_err(|e| format!("Invalid tar path: {e}"))?
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("")
+                .to_string();
+
+            if basename.is_empty() || basename.contains("..") { continue; }
+
+            if is_wanted_binary(&basename) {
+                let dest_file = dest_dir.join(&basename);
+                let mut out = std::fs::File::create(&dest_file)
+                    .map_err(|e| format!("Failed to create {basename}: {e}"))?;
+                std::io::copy(&mut entry, &mut out)
+                    .map_err(|e| format!("Failed to extract {basename}: {e}"))?;
+                if basename.contains("llama-server") {
+                    found_server = true;
+                }
+            }
+        }
+    } else {
+        let file = std::fs::File::open(archive_path)
+            .map_err(|e| format!("Failed to open zip: {e}"))?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| format!("Failed to read zip: {e}"))?;
+
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i)
+                .map_err(|e| format!("Failed to read zip entry: {e}"))?;
+            let name = entry.name().to_string();
+            let basename = name.rsplit('/').next().unwrap_or(&name);
+
+            if basename.contains("..") || basename.contains('/') || basename.contains('\\')
+                || std::path::Path::new(basename).is_absolute()
+            {
+                log::warn!("Skipping suspicious filename in archive: {basename}");
+                continue;
+            }
+
+            if is_wanted_binary(basename) {
+                let dest_file = dest_dir.join(basename);
+                let mut out = std::fs::File::create(&dest_file)
+                    .map_err(|e| format!("Failed to create {basename}: {e}"))?;
+                std::io::copy(&mut entry, &mut out)
+                    .map_err(|e| format!("Failed to extract {basename}: {e}"))?;
+                if basename.contains("llama-server") {
+                    found_server = true;
+                }
+            }
+        }
+    }
+
+    if !found_server {
+        return Err("llama-server binary not found in archive".to_string());
+    }
+
+    // Set executable permission on Unix platforms
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let server_path = dest_dir.join("llama-server");
+        if server_path.exists() {
+            let _ = std::fs::set_permissions(
+                &server_path,
+                std::fs::Permissions::from_mode(0o755),
+            );
+        }
+    }
+
+    Ok(())
+}
 
 fn system_prompt_for_mode(mode: &str) -> &'static str {
     match mode {
@@ -17,23 +113,23 @@ const MODEL_FILENAME: &str = "chirp-cleanup-0.6b-q4_k_m.gguf";
 const MODEL_URL: &str = "https://huggingface.co/chirpapp/chirp-cleanup-0.6b-GGUF/resolve/main/chirp-cleanup-0.6b-q4_k_m.gguf";
 const MODEL_SIZE: u64 = 400_000_000;
 
-/// llama-server release info (Vulkan build for GPU acceleration)
-const LLAMA_CPP_VERSION: &str = "b5604";
+/// llama-server release info
+const LLAMA_CPP_VERSION: &str = "b8429";
 
 fn llama_server_url() -> String {
-    let platform_suffix = if cfg!(target_os = "windows") {
-        "bin-win-vulkan-x64"
+    let (platform_suffix, ext) = if cfg!(target_os = "windows") {
+        ("bin-win-vulkan-x64", "zip")
     } else if cfg!(target_os = "macos") {
         if cfg!(target_arch = "aarch64") {
-            "bin-macos-arm64"
+            ("bin-macos-arm64", "tar.gz")
         } else {
-            "bin-macos-x64"
+            ("bin-macos-x64", "tar.gz")
         }
     } else {
-        "bin-ubuntu-x64"
+        ("bin-ubuntu-x64", "tar.gz")
     };
     format!(
-        "https://github.com/ggerganov/llama.cpp/releases/download/{}/llama-{}-{}.zip",
+        "https://github.com/ggerganov/llama.cpp/releases/download/{}/llama-{}-{}.{ext}",
         LLAMA_CPP_VERSION, LLAMA_CPP_VERSION, platform_suffix
     )
 }
@@ -78,10 +174,12 @@ pub async fn download_binary(app_handle: &AppHandle) -> Result<(), String> {
     }
 
     let url = llama_server_url();
-    let zip_path = dir.join("llama-server.zip");
-    let tmp_path = dir.join("llama-server.zip.tmp");
+    let is_targz = url.ends_with(".tar.gz");
+    let archive_ext = if is_targz { "tar.gz" } else { "zip" };
+    let archive_path = dir.join(format!("llama-server.{archive_ext}"));
+    let tmp_path = dir.join(format!("llama-server.{archive_ext}.tmp"));
 
-    // Download the zip
+    // Download the archive
     let client = reqwest::Client::new();
     let response = client
         .get(&url)
@@ -114,82 +212,23 @@ pub async fn download_binary(app_handle: &AppHandle) -> Result<(), String> {
     }
     drop(file);
 
-    tokio::fs::rename(&tmp_path, &zip_path)
+    tokio::fs::rename(&tmp_path, &archive_path)
         .await
         .map_err(|e| format!("Failed to finalize download: {e}"))?;
 
     let _ = app_handle.emit("llm-download-progress", 95u32);
 
-    // Extract llama-server.exe and all required DLLs from the zip
-    let zip_clone = zip_path.clone();
+    // Extract llama-server binary (and DLLs on Windows) from the archive
+    let archive_clone = archive_path.clone();
     let dir_clone = dir.clone();
     tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&zip_clone)
-            .map_err(|e| format!("Failed to open zip: {e}"))?;
-        let mut archive = zip::ZipArchive::new(file)
-            .map_err(|e| format!("Failed to read zip: {e}"))?;
-
-        let mut found_server = false;
-        for i in 0..archive.len() {
-            let mut entry = archive.by_index(i)
-                .map_err(|e| format!("Failed to read zip entry: {e}"))?;
-            let name = entry.name().to_string();
-            let basename = name.rsplit('/').next().unwrap_or(&name);
-
-            // Validate filename to prevent path traversal
-            if basename.contains("..") || basename.contains('/') || basename.contains('\\')
-                || std::path::Path::new(basename).is_absolute()
-            {
-                log::warn!("Skipping suspicious filename in archive: {basename}");
-                continue;
-            }
-
-            // Extract llama-server.exe and all .dll files (Windows)
-            // or llama-server and .dylib/.so files (macOS/Linux)
-            let dominated_by_platform = if cfg!(windows) {
-                (basename.ends_with(".exe") && basename.contains("llama-server"))
-                    || basename.ends_with(".dll")
-            } else {
-                basename == "llama-server"
-                    || basename.ends_with(".dylib")
-                    || basename.ends_with(".so")
-            };
-
-            if dominated_by_platform {
-                let dest_file = dir_clone.join(basename);
-                let mut out = std::fs::File::create(&dest_file)
-                    .map_err(|e| format!("Failed to create {basename}: {e}"))?;
-                std::io::copy(&mut entry, &mut out)
-                    .map_err(|e| format!("Failed to extract {basename}: {e}"))?;
-                if basename.contains("llama-server") {
-                    found_server = true;
-                }
-            }
-        }
-        if !found_server {
-            return Err("llama-server binary not found in archive".to_string());
-        }
-
-        // Set executable permission on Unix platforms
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let server_path = dir_clone.join("llama-server");
-            if server_path.exists() {
-                let _ = std::fs::set_permissions(
-                    &server_path,
-                    std::fs::Permissions::from_mode(0o755),
-                );
-            }
-        }
-
-        Ok(())
+        extract_binary_archive(&archive_clone, &dir_clone, is_targz)
     })
     .await
     .map_err(|e| format!("Extract task failed: {e}"))??;
 
-    // Clean up zip
-    let _ = tokio::fs::remove_file(&zip_path).await;
+    // Clean up archive
+    let _ = tokio::fs::remove_file(&archive_path).await;
 
     let _ = app_handle.emit("llm-download-progress", 100u32);
     Ok(())
@@ -272,13 +311,18 @@ pub async fn start_server(port: u16) -> Result<tokio::process::Child, String> {
         .arg("--port")
         .arg(port.to_string())
         .arg("--ctx-size")
-        .arg("2048")
+        .arg("512")
         .arg("--n-predict")
-        .arg("1024")
+        .arg("512")
         .arg("--threads")
         .arg(n_threads.to_string())
         .arg("--gpu-layers")
         .arg("99")
+        .arg("--flash-attn")
+        .arg("--batch-size")
+        .arg("512")
+        .arg("--parallel")
+        .arg("1")
         .arg("--log-disable")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
