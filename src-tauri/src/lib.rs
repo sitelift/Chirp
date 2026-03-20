@@ -12,7 +12,7 @@ mod snippets;
 mod state;
 mod transcribe;
 
-use commands::{StreamErrorState, StreamHandle};
+use commands::{RecordingStartTime, ResamplerFlushState, StreamActiveState, StreamErrorState, StreamHandle};
 use state::{AppState, AudioBuffer, SharedState};
 use std::sync::Arc;
 use tauri::{
@@ -91,6 +91,9 @@ pub fn run() {
         .manage::<AudioBuffer>(Arc::new(std::sync::Mutex::new(Vec::new())))
         .manage(StreamHandle(std::sync::Mutex::new(None)))
         .manage(StreamErrorState(std::sync::Mutex::new(None)))
+        .manage(ResamplerFlushState(std::sync::Mutex::new(None)))
+        .manage(RecordingStartTime(std::sync::Mutex::new(None)))
+        .manage(StreamActiveState(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::update_settings,

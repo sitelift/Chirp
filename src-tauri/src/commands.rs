@@ -28,6 +28,15 @@ unsafe impl Sync for StreamWrapper {}
 /// Holds the stream error flag set by cpal when the audio device reports an error.
 pub struct StreamErrorState(pub std::sync::Mutex<Option<audio::StreamErrorFlag>>);
 
+/// Holds resampler state so we can flush remaining samples when recording stops.
+pub struct ResamplerFlushState(pub std::sync::Mutex<Option<audio::ResamplerState>>);
+
+/// Tracks when the current recording started (wall-clock) for sample rate sanity checks.
+pub struct RecordingStartTime(pub std::sync::Mutex<Option<Instant>>);
+
+/// Holds the active flag for the current audio stream so we can deactivate zombie callbacks.
+pub struct StreamActiveState(pub std::sync::Mutex<Option<audio::StreamActiveFlag>>);
+
 
 #[tauri::command]
 pub async fn get_settings(state: State<'_, SharedState>) -> Result<Settings, String> {
@@ -178,6 +187,9 @@ pub async fn start_recording(
     buffer: State<'_, AudioBuffer>,
     stream_handle: State<'_, StreamHandle>,
     stream_error_state: State<'_, StreamErrorState>,
+    resampler_flush: State<'_, ResamplerFlushState>,
+    recording_start: State<'_, RecordingStartTime>,
+    stream_active_state: State<'_, StreamActiveState>,
 ) -> Result<(), String> {
     let mut s = state.lock().await;
 
@@ -190,8 +202,20 @@ pub async fn start_recording(
         return Err("model_not_loaded".into());
     }
 
+    // Deactivate any zombie callbacks from a previous stream before clearing the buffer.
+    // On macOS, cpal/CoreAudio callbacks can outlive the Stream drop.
+    {
+        let prev_active = stream_active_state.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref flag) = *prev_active {
+            flag.store(false, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
     // Clear audio buffer
     buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
+
+    // Record wall-clock start time for sample rate sanity check
+    *recording_start.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
 
     let device_id = s.settings.input_device.clone();
     s.recording_state = RecordingState::Recording;
@@ -204,9 +228,11 @@ pub async fn start_recording(
         buffer.inner().clone(),
         app_handle.clone(),
     ) {
-        Ok((stream, error_flag)) => {
+        Ok((stream, error_flag, active_flag, resampler_state)) => {
             *stream_handle.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(StreamWrapper(stream));
             *stream_error_state.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(error_flag);
+            *stream_active_state.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(active_flag);
+            *resampler_flush.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(resampler_state);
             None
         }
         Err(e) => {
@@ -236,13 +262,40 @@ pub async fn stop_recording(
     buffer: State<'_, AudioBuffer>,
     stream_handle: State<'_, StreamHandle>,
     stream_error_state: State<'_, StreamErrorState>,
+    resampler_flush: State<'_, ResamplerFlushState>,
+    recording_start: State<'_, RecordingStartTime>,
+    stream_active_state: State<'_, StreamActiveState>,
 ) -> Result<TranscriptionResult, String> {
     let start_time = Instant::now();
+
+    // Grab wall-clock recording duration for sample rate sanity check
+    let wall_clock_secs = recording_start.0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .take()
+        .map(|t| t.elapsed().as_secs_f32());
+
+    // Deactivate callbacks BEFORE dropping the stream — this ensures zombie
+    // callbacks from macOS CoreAudio cannot write to the buffer anymore.
+    {
+        let active = stream_active_state.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref flag) = *active {
+            flag.store(false, Ordering::SeqCst);
+        }
+    }
 
     // Stop the audio stream
     {
         let mut handle = stream_handle.0.lock().unwrap_or_else(|e| e.into_inner());
         *handle = None; // Drop stream → stops capture
+    }
+
+    // Flush any remaining resampler samples into the audio buffer
+    {
+        let flush_state = resampler_flush.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref rs) = *flush_state {
+            rs.flush(buffer.inner());
+        }
     }
 
     // Check if the audio stream reported an error (e.g. device disconnected)
@@ -266,16 +319,12 @@ pub async fn stop_recording(
 
     let _ = app_handle.emit("recording-state", "processing");
 
-    // Get the audio data, prepending 150ms of silence so the resampler's
-    // internal delay and model warm-up don't eat the first word.
-    // Clear the buffer afterward to prevent stale data on next recording.
+    // Get the audio data and clear the buffer for next recording.
     let audio_data = {
         let mut buf = buffer.lock().unwrap_or_else(|e| e.into_inner());
-        let pad_samples = 16000 * 150 / 1000; // 150ms at 16kHz
-        let mut padded = vec![0.0f32; pad_samples];
-        padded.extend_from_slice(&buf);
+        let data = buf.clone();
         buf.clear();
-        padded
+        data
     };
 
     let sample_count = audio_data.len();
@@ -283,6 +332,15 @@ pub async fn stop_recording(
     let speech_duration_ms = (duration_secs * 1000.0) as u64;
 
     log::info!("Audio buffer: {sample_count} samples ({duration_secs:.1}s)");
+
+    // Compare wall-clock recording time to buffer duration to detect sample rate mismatches
+    if let Some(wall_secs) = wall_clock_secs {
+        let ratio = duration_secs / wall_secs;
+        log::info!("Wall-clock: {wall_secs:.1}s, buffer: {duration_secs:.1}s, ratio: {ratio:.2}x (should be ~1.0)");
+        if ratio > 1.5 || ratio < 0.5 {
+            log::error!("SAMPLE RATE MISMATCH: buffer has {ratio:.1}x more audio than recording time! Device may report wrong sample rate. Effective rate: {:.0}Hz", sample_count as f32 / wall_secs);
+        }
+    }
 
     // Log audio level to diagnose silent buffer issues
     let rms = (audio_data.iter().map(|s| s * s).sum::<f32>() / audio_data.len() as f32).sqrt();
@@ -333,11 +391,19 @@ pub async fn stop_recording(
     let result = tokio::task::spawn_blocking(move || {
         use crate::file_transcribe;
 
-        let chunks = file_transcribe::chunk_audio(&audio_data, 16000, 15.0, 0.3);
+        let chunks = file_transcribe::chunk_audio(&audio_data, 16000, 15.0, 1.0);
         log::info!("Starting Parakeet TDT transcription ({} chunk(s))...", chunks.len());
 
         let mut transcriptions = Vec::new();
         for (i, chunk) in chunks.iter().enumerate() {
+            // Per-chunk audio diagnostics
+            let chunk_rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
+            let chunk_peak = chunk.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+            let chunk_nonzero = chunk.iter().filter(|&&s| s.abs() > 0.001).count();
+            log::info!("Chunk {i}: {} samples ({:.1}s), rms={chunk_rms:.6}, peak={chunk_peak:.4}, nonzero={chunk_nonzero}/{} ({:.1}%)",
+                chunk.len(), chunk.len() as f32 / 16000.0,
+                chunk.len(), chunk_nonzero as f64 / chunk.len() as f64 * 100.0);
+
             let chunk_raw = transcribe::transcribe(&recognizer, chunk)
                 .map_err(|e| {
                     log::error!("Transcription error on chunk {i}: {e}");
@@ -449,6 +515,13 @@ pub async fn stop_recording(
         let _ = app_handle.emit("history-updated", entry);
     }
 
+    log::info!(
+        "Transcription complete: {} chunk(s), {:.1}s audio, {}ms total",
+        (sample_count as f32 / 16000.0 / 15.0).ceil() as u32,
+        duration_secs,
+        duration_ms
+    );
+
     Ok(TranscriptionResult {
         text: result,
         word_count,
@@ -536,7 +609,7 @@ pub async fn test_microphone(
     buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
 
     // Start capture
-    let (stream, _error_flag) = audio::start_capture(&device_id, buffer.inner().clone(), app_handle)?;
+    let (stream, _error_flag, _active_flag, _resampler_state) = audio::start_capture(&device_id, buffer.inner().clone(), app_handle)?;
     *stream_handle.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(StreamWrapper(stream));
 
     // Record for 3 seconds
@@ -719,6 +792,12 @@ pub async fn transcribe_file(
 
     let _ = app_handle.emit("file-transcribe-progress", serde_json::json!({"phase": "done", "progress": 100}));
 
+    log::info!(
+        "File transcription complete: {} chunk(s), {:.1}s audio",
+        total_chunks,
+        duration_secs
+    );
+
     Ok(FileTranscriptionResult {
         text,
         duration_secs,
@@ -786,3 +865,4 @@ pub async fn capture_hotkey_key() -> Result<CapturedKey, String> {
         .map_err(|e| format!("capture task failed: {e}"))?;
     Ok(CapturedKey { keycode, name })
 }
+

@@ -7,6 +7,40 @@ use tauri::{AppHandle, Emitter};
 
 use crate::state::{AmplitudeData, AudioBuffer, AudioDevice};
 
+/// Holds resampler state so callers can flush remaining samples on stop.
+pub struct ResamplerState {
+    pub resampler: Option<Arc<std::sync::Mutex<FftFixedIn<f32>>>>,
+    pub buffer: Arc<std::sync::Mutex<Vec<f32>>>,
+    pub chunk_size: usize,
+}
+
+impl ResamplerState {
+    /// Flush any leftover samples in the resampler buffer by zero-padding to a full chunk.
+    pub fn flush(&self, output: &AudioBuffer) {
+        let Some(resampler) = &self.resampler else { return };
+        let mut rbuf = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
+        let remaining = rbuf.len();
+        if remaining == 0 {
+            return;
+        }
+        log::info!("Flushing {remaining} resampler samples (chunk_size={})", self.chunk_size);
+        // Zero-pad to fill the chunk
+        rbuf.resize(self.chunk_size, 0.0);
+        let chunk: Vec<f32> = rbuf.drain(..).collect();
+        if let Ok(mut rs) = resampler.lock() {
+            if let Ok(resampled) = rs.process(&[chunk], None) {
+                if let Some(out) = resampled.first() {
+                    // Only take the proportional amount of output (not the zero-padded portion)
+                    let useful_samples = (remaining as f64 / self.chunk_size as f64 * out.len() as f64).round() as usize;
+                    let useful = &out[..useful_samples.min(out.len())];
+                    output.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(useful);
+                    log::info!("Flushed resampler: {remaining} input → {useful_len} output samples", useful_len = useful.len());
+                }
+            }
+        }
+    }
+}
+
 const TARGET_SAMPLE_RATE: u32 = 16_000;
 const BAR_COUNT: usize = 48;
 
@@ -54,12 +88,16 @@ fn resolve_device(device_id: &str) -> Result<cpal::Device, String> {
 /// Flag set by the audio error callback when a stream error occurs (e.g. device disconnected).
 pub type StreamErrorFlag = Arc<AtomicBool>;
 
-/// Start audio capture. Returns the stream handle (must be kept alive), a stream error flag, and populates the buffer.
+/// Flag that callbacks check before writing to the buffer. Set to false to
+/// silence zombie callbacks from streams that macOS hasn't fully stopped yet.
+pub type StreamActiveFlag = Arc<AtomicBool>;
+
+/// Start audio capture. Returns the stream handle, error flag, active flag, resampler state, and populates the buffer.
 pub fn start_capture(
     device_id: &str,
     buffer: AudioBuffer,
     app_handle: AppHandle,
-) -> Result<(Stream, StreamErrorFlag), String> {
+) -> Result<(Stream, StreamErrorFlag, StreamActiveFlag, ResamplerState), String> {
     let device = resolve_device(device_id)?;
     let config = device
         .default_input_config()
@@ -70,10 +108,9 @@ pub fn start_capture(
     let sample_format = config.sample_format();
 
     let device_name = device.name().unwrap_or_else(|_| "unknown".into());
-    log::info!("Audio capture: device='{}', rate={}Hz, channels={}, format={:?}",
-        device_name, source_rate, channels, sample_format);
-
     let needs_resample = source_rate != TARGET_SAMPLE_RATE;
+    log::info!("Audio capture: device='{}', rate={}Hz, channels={}, format={:?}, resample={}",
+        device_name, source_rate, channels, sample_format, needs_resample);
 
     // Rubato resampler (if needed)
     let resampler = if needs_resample {
@@ -104,6 +141,7 @@ pub fn start_capture(
     let resampler_clone = resampler.clone();
     let resample_buf_clone = resample_buf.clone();
 
+    let stream_active: StreamActiveFlag = Arc::new(AtomicBool::new(true));
     let stream_error = Arc::new(AtomicBool::new(false));
     let stream_error_clone = stream_error.clone();
     let err_fn = move |err: cpal::StreamError| {
@@ -113,10 +151,17 @@ pub fn start_capture(
 
     let stream_config: cpal::StreamConfig = config.clone().into();
 
+    // Each callback closure captures its own active flag clone.
+    // When stop_recording sets it to false, zombie callbacks become no-ops.
+    let active_f32 = stream_active.clone();
+    let active_i16 = stream_active.clone();
+    let active_u16 = stream_active.clone();
+
     let stream = match sample_format {
         SampleFormat::F32 => device.build_input_stream(
             &stream_config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                if !active_f32.load(Ordering::Relaxed) { return; }
                 process_audio(
                     data,
                     channels,
@@ -135,6 +180,7 @@ pub fn start_capture(
         SampleFormat::I16 => device.build_input_stream(
             &stream_config,
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                if !active_i16.load(Ordering::Relaxed) { return; }
                 let float_data: Vec<f32> = data
                     .iter()
                     .map(|&s| s as f32 / i16::MAX as f32)
@@ -157,6 +203,7 @@ pub fn start_capture(
         SampleFormat::U16 => device.build_input_stream(
             &stream_config,
             move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                if !active_u16.load(Ordering::Relaxed) { return; }
                 let float_data: Vec<f32> = data
                     .iter()
                     .map(|&s| (s as f32 / u16::MAX as f32) * 2.0 - 1.0)
@@ -181,7 +228,14 @@ pub fn start_capture(
     .map_err(|e| format!("Failed to build stream: {e}"))?;
 
     stream.play().map_err(|e| format!("Failed to start stream: {e}"))?;
-    Ok((stream, stream_error))
+
+    let resampler_state = ResamplerState {
+        resampler,
+        buffer: resample_buf,
+        chunk_size,
+    };
+
+    Ok((stream, stream_error, stream_active, resampler_state))
 }
 
 /// Process incoming audio: downmix to mono, resample if needed, buffer, emit amplitude
