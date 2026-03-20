@@ -160,11 +160,48 @@ pub fn chunk_audio(samples: &[f32], sample_rate: u32, chunk_secs: f32, overlap_s
     chunks
 }
 
-/// Merge transcriptions from overlapping chunks
+/// Merge transcriptions from overlapping chunks, deduplicating words at boundaries.
+/// Finds the longest suffix of chunk N that matches a prefix of chunk N+1 and removes it.
 pub fn merge_transcriptions(segments: Vec<String>) -> String {
-    segments
-        .into_iter()
-        .filter(|s| !s.trim().is_empty())
-        .collect::<Vec<_>>()
-        .join(" ")
+    let segments: Vec<&str> = segments.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return String::new();
+    }
+
+    let mut merged = segments[0].to_string();
+
+    for next in &segments[1..] {
+        let prev_words: Vec<&str> = merged.split_whitespace().collect();
+        let next_words: Vec<&str> = next.split_whitespace().collect();
+
+        // Look for the longest suffix of prev that matches a prefix of next.
+        // Only check up to 8 words (overlap region is small).
+        let max_check = prev_words.len().min(next_words.len()).min(8);
+        let mut best_overlap = 0;
+
+        for len in 1..=max_check {
+            let suffix = &prev_words[prev_words.len() - len..];
+            let prefix = &next_words[..len];
+            if suffix.iter().zip(prefix.iter()).all(|(a, b)| {
+                a.to_lowercase().trim_matches(|c: char| c.is_ascii_punctuation())
+                    == b.to_lowercase().trim_matches(|c: char| c.is_ascii_punctuation())
+            }) {
+                best_overlap = len;
+            }
+        }
+
+        if best_overlap > 0 {
+            // Skip the overlapping prefix from the next segment
+            let remainder = next_words[best_overlap..].join(" ");
+            if !remainder.is_empty() {
+                merged.push(' ');
+                merged.push_str(&remainder);
+            }
+        } else {
+            merged.push(' ');
+            merged.push_str(next);
+        }
+    }
+
+    merged
 }

@@ -1,6 +1,7 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream};
 use rubato::{FftFixedIn, Resampler};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
@@ -50,12 +51,15 @@ fn resolve_device(device_id: &str) -> Result<cpal::Device, String> {
         .ok_or_else(|| format!("Device not found: {device_id}"))
 }
 
-/// Start audio capture. Returns the stream handle (must be kept alive) and populates the buffer.
+/// Flag set by the audio error callback when a stream error occurs (e.g. device disconnected).
+pub type StreamErrorFlag = Arc<AtomicBool>;
+
+/// Start audio capture. Returns the stream handle (must be kept alive), a stream error flag, and populates the buffer.
 pub fn start_capture(
     device_id: &str,
     buffer: AudioBuffer,
     app_handle: AppHandle,
-) -> Result<Stream, String> {
+) -> Result<(Stream, StreamErrorFlag), String> {
     let device = resolve_device(device_id)?;
     let config = device
         .default_input_config()
@@ -64,6 +68,10 @@ pub fn start_capture(
     let source_rate = config.sample_rate().0;
     let channels = config.channels() as usize;
     let sample_format = config.sample_format();
+
+    let device_name = device.name().unwrap_or_else(|_| "unknown".into());
+    log::info!("Audio capture: device='{}', rate={}Hz, channels={}, format={:?}",
+        device_name, source_rate, channels, sample_format);
 
     let needs_resample = source_rate != TARGET_SAMPLE_RATE;
 
@@ -96,8 +104,11 @@ pub fn start_capture(
     let resampler_clone = resampler.clone();
     let resample_buf_clone = resample_buf.clone();
 
-    let err_fn = |err: cpal::StreamError| {
+    let stream_error = Arc::new(AtomicBool::new(false));
+    let stream_error_clone = stream_error.clone();
+    let err_fn = move |err: cpal::StreamError| {
         log::error!("Audio stream error: {err}");
+        stream_error_clone.store(true, Ordering::SeqCst);
     };
 
     let stream_config: cpal::StreamConfig = config.clone().into();
@@ -170,7 +181,7 @@ pub fn start_capture(
     .map_err(|e| format!("Failed to build stream: {e}"))?;
 
     stream.play().map_err(|e| format!("Failed to start stream: {e}"))?;
-    Ok(stream)
+    Ok((stream, stream_error))
 }
 
 /// Process incoming audio: downmix to mono, resample if needed, buffer, emit amplitude

@@ -10,6 +10,7 @@ use crate::snippets;
 use crate::state::*;
 use crate::transcribe;
 use std::io::Cursor;
+use std::sync::atomic::Ordering;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
@@ -23,6 +24,9 @@ pub struct StreamHandle(pub std::sync::Mutex<Option<StreamWrapper>>);
 pub struct StreamWrapper(cpal::Stream);
 unsafe impl Send for StreamWrapper {}
 unsafe impl Sync for StreamWrapper {}
+
+/// Holds the stream error flag set by cpal when the audio device reports an error.
+pub struct StreamErrorState(pub std::sync::Mutex<Option<audio::StreamErrorFlag>>);
 
 
 #[tauri::command]
@@ -173,6 +177,7 @@ pub async fn start_recording(
     state: State<'_, SharedState>,
     buffer: State<'_, AudioBuffer>,
     stream_handle: State<'_, StreamHandle>,
+    stream_error_state: State<'_, StreamErrorState>,
 ) -> Result<(), String> {
     let mut s = state.lock().await;
 
@@ -199,8 +204,9 @@ pub async fn start_recording(
         buffer.inner().clone(),
         app_handle.clone(),
     ) {
-        Ok(stream) => {
+        Ok((stream, error_flag)) => {
             *stream_handle.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(StreamWrapper(stream));
+            *stream_error_state.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(error_flag);
             None
         }
         Err(e) => {
@@ -229,6 +235,7 @@ pub async fn stop_recording(
     state: State<'_, SharedState>,
     buffer: State<'_, AudioBuffer>,
     stream_handle: State<'_, StreamHandle>,
+    stream_error_state: State<'_, StreamErrorState>,
 ) -> Result<TranscriptionResult, String> {
     let start_time = Instant::now();
 
@@ -238,7 +245,17 @@ pub async fn stop_recording(
         *handle = None; // Drop stream → stops capture
     }
 
-    // WASAPI audio callbacks run on a separate thread; give in-flight callbacks
+    // Check if the audio stream reported an error (e.g. device disconnected)
+    let had_stream_error = stream_error_state.0
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .as_ref()
+        .map_or(false, |flag| flag.load(Ordering::SeqCst));
+    if had_stream_error {
+        log::warn!("Audio stream reported an error during recording — device may have disconnected");
+    }
+
+    // Audio callbacks run on a separate thread; give in-flight callbacks
     // time to finish before we read the buffer.
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
@@ -266,6 +283,21 @@ pub async fn stop_recording(
     let speech_duration_ms = (duration_secs * 1000.0) as u64;
 
     log::info!("Audio buffer: {sample_count} samples ({duration_secs:.1}s)");
+
+    // Log audio level to diagnose silent buffer issues
+    let rms = (audio_data.iter().map(|s| s * s).sum::<f32>() / audio_data.len() as f32).sqrt();
+    let peak = audio_data.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
+    let nonzero = audio_data.iter().filter(|&&s| s.abs() > 0.001).count();
+    log::info!("Audio level: rms={rms:.6}, peak={peak:.4}, nonzero={nonzero}/{sample_count} ({:.1}%)",
+        nonzero as f64 / sample_count as f64 * 100.0);
+
+    // If the buffer is near-silent and the stream had an error, the mic likely disconnected
+    if rms < 0.0001 && had_stream_error {
+        log::error!("Silent buffer with stream error — audio device likely disconnected during recording");
+        let mut s = state.lock().await;
+        s.recording_state = RecordingState::Idle;
+        return Err("mic_disconnected".into());
+    }
 
     if audio_data.is_empty() {
         log::error!("Audio buffer is empty!");
@@ -296,16 +328,26 @@ pub async fn stop_recording(
     };
 
     // Transcribe using the sherpa-onnx recognizer.
-    // The recognizer Arc is cloned above so the state lock is NOT held during inference.
+    // Chunk long audio into 15s segments (1s overlap) so the 0.6B model
+    // stays in its comfort zone — longer buffers produce gibberish.
     let result = tokio::task::spawn_blocking(move || {
-        log::info!("Starting Parakeet TDT transcription...");
-        let raw = transcribe::transcribe(&recognizer, &audio_data)
-            .map_err(|e| {
-                log::error!("Transcription error: {e}");
-                "transcription_failed".to_string()
-            })?;
+        use crate::file_transcribe;
 
-        log::debug!("Transcription raw output: '{raw}'");
+        let chunks = file_transcribe::chunk_audio(&audio_data, 16000, 15.0, 0.3);
+        log::info!("Starting Parakeet TDT transcription ({} chunk(s))...", chunks.len());
+
+        let mut transcriptions = Vec::new();
+        for (i, chunk) in chunks.iter().enumerate() {
+            let chunk_raw = transcribe::transcribe(&recognizer, chunk)
+                .map_err(|e| {
+                    log::error!("Transcription error on chunk {i}: {e}");
+                    "transcription_failed".to_string()
+                })?;
+            log::info!("Parakeet chunk {i}: '{chunk_raw}'");
+            transcriptions.push(chunk_raw);
+        }
+
+        let raw = file_transcribe::merge_transcriptions(transcriptions);
 
         if raw.is_empty() {
             log::warn!("Transcription returned empty text");
@@ -324,6 +366,7 @@ pub async fn stop_recording(
         let after_dict = dictionary::apply_dictionary(&formatted, &dict);
         let after_snips = snippets::apply_snippets(&after_dict, &snips);
 
+        log::info!("After regex+dict+snips: '{after_snips}'");
         Ok(after_snips)
     })
     .await
@@ -347,7 +390,7 @@ pub async fn stop_recording(
         log::info!("Running AI cleanup on text...");
         match llm::cleanup_text(port, &formatted, &tone_mode).await {
             Ok(cleaned) => {
-                log::debug!("AI cleanup result: '{cleaned}'");
+                log::info!("LLM cleanup: '{cleaned}'");
                 was_cleaned_up = true;
                 cleaned
             }
@@ -493,7 +536,7 @@ pub async fn test_microphone(
     buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
 
     // Start capture
-    let stream = audio::start_capture(&device_id, buffer.inner().clone(), app_handle)?;
+    let (stream, _error_flag) = audio::start_capture(&device_id, buffer.inner().clone(), app_handle)?;
     *stream_handle.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(StreamWrapper(stream));
 
     // Record for 3 seconds
