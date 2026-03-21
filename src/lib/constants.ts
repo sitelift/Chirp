@@ -16,6 +16,7 @@ export const DEFAULT_SETTINGS = {
   hotkeyMode: 'dedicated_key' as 'dedicated_key' | 'custom',
   hotkeyKeycode: 0,
   hotkeyKeyName: 'Not set',
+  historyRetentionDays: 0,
 }
 
 export const TONE_MODES = [
