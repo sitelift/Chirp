@@ -38,31 +38,24 @@ export function useSettingsSync() {
         updateSettings(settings as Partial<ReturnType<typeof useAppStore.getState>>)
       }
       useAppStore.getState().setSettingsLoaded()
-    }).catch((e) => {
-      console.debug('Failed to load settings:', e)
+    }).catch(() => {
       useAppStore.getState().setSettingsLoaded()
     })
 
     // Load transcription history
     tauri.getHistory().then((entries) => {
       useAppStore.getState().setHistory(entries)
-    }).catch((e) => {
-      console.debug('Failed to load history:', e)
-    })
+    }).catch(() => {})
 
     // Load snippets
     tauri.getSnippets().then((entries) => {
       useAppStore.getState().setSnippets(entries)
-    }).catch((e) => {
-      console.debug('Failed to load snippets:', e)
-    })
+    }).catch(() => {})
 
     // Load initial hotkey status
     tauri.getHotkeyStatus().then((status) => {
       useAppStore.getState().setHotkeyStatus(status as 'idle' | 'retrying' | 'active' | 'failed')
-    }).catch((e) => {
-      console.debug('Failed to load hotkey status:', e)
-    })
+    }).catch(() => {})
 
     // Check model download status
     for (const model of ['parakeet-tdt-0.6b']) {
@@ -75,9 +68,7 @@ export function useSettingsSync() {
             },
           })
         }
-      }).catch((e) => {
-        console.debug('Failed to check model status:', e)
-      })
+      }).catch(() => {})
     }
   }, [])
 
@@ -122,27 +113,21 @@ export function useSettingsSync() {
       if (Object.keys(changed).length > 0) {
         invoke('update_settings', { partial: changed }).then(() => {
           useAppStore.getState().setSettingsSaved(true)
-        }).catch((e) => {
-          console.debug('Failed to sync settings:', e)
-        })
+        }).catch(() => {})
       }
 
       // Sync dictionary changes
       if (state.dictionary !== prevState.dictionary) {
         invoke('update_dictionary', { entries: state.dictionary }).then(() => {
           useAppStore.getState().setSettingsSaved(true)
-        }).catch((e) => {
-          console.debug('Failed to sync dictionary:', e)
-        })
+        }).catch(() => {})
       }
 
       // Sync snippet changes
       if (state.snippets !== prevState.snippets) {
         invoke('update_snippets', { entries: state.snippets }).then(() => {
           useAppStore.getState().setSettingsSaved(true)
-        }).catch((e) => {
-          console.debug('Failed to sync snippets:', e)
-        })
+        }).catch(() => {})
       }
     })
 

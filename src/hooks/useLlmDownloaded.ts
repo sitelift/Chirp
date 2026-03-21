@@ -8,7 +8,7 @@ export function useLlmDownloaded() {
   useEffect(() => {
     tauri.getLlmStatus().then((status) => {
       setLlmDownloaded(status.binaryDownloaded && status.modelDownloaded)
-    }).catch((e) => console.debug('Failed to check LLM status:', e))
+    }).catch(() => {})
   }, [])
 
   return [llmDownloaded, setLlmDownloaded] as const

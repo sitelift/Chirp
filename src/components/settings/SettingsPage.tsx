@@ -98,8 +98,7 @@ export function SettingsPage() {
           hotkeyKeyName: result.name,
         })
       }
-    } catch (e) {
-      console.debug('Key capture failed:', e)
+    } catch {
     }
     setCapturing(false)
   }
@@ -111,13 +110,13 @@ export function SettingsPage() {
       try {
         await tauri.startLlm()
         store.setLlmReady(true)
-      } catch (e) { console.debug('Failed to start LLM:', e) }
+      } catch {}
       setCleanupStarting(false)
     } else if (!enabled && store.llmReady) {
       try {
         await tauri.stopLlm()
         store.setLlmReady(false)
-      } catch (e) { console.debug('Failed to stop LLM:', e) }
+      } catch {}
     }
   }
 
@@ -192,7 +191,7 @@ export function SettingsPage() {
         try {
           await tauri.startLlm()
           store.setLlmReady(true)
-        } catch (e) { console.debug('Failed to auto-start LLM:', e) }
+        } catch {}
       }
     } catch {
       setLlmDownloadError('Download failed. Check your internet connection and try again.')

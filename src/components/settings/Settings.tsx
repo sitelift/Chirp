@@ -58,7 +58,7 @@ export function Settings() {
   const PageComponent = PAGES[settingsPage] ?? HomePage
 
   return (
-    <div className="flex flex-col h-screen no-select">
+    <div className="flex flex-col h-screen overflow-hidden no-select">
       {/* Custom titlebar */}
       <div data-tauri-drag-region className="flex items-center justify-end h-8 shrink-0 bg-sidebar">
         <button

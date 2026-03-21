@@ -30,7 +30,7 @@ export function useRecording() {
     const checkBusyStale = () => {
       if (busyRef.current && busyTimestampRef.current > 0) {
         if (Date.now() - busyTimestampRef.current > 5000) {
-          console.warn('busyRef stuck for >5s, force-resetting')
+
           busyRef.current = false
           busyTimestampRef.current = 0
         }

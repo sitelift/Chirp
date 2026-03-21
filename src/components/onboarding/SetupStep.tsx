@@ -1,6 +1,7 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState } from 'react'
 import { useAppStore } from '../../stores/appStore'
-import { formatHotkey } from '../../lib/utils'
+import { useTauri } from '../../hooks/useTauri'
+import { KeyBadge } from '../shared/KeyBadge'
 import { Button } from '../shared/Button'
 
 interface SetupStepProps {
@@ -8,42 +9,29 @@ interface SetupStepProps {
 }
 
 export function SetupStep({ onNext }: SetupStepProps) {
-  const hotkey = useAppStore((s) => s.hotkey)
-  const updateSettings = useAppStore((s) => s.updateSettings)
-
+  const store = useAppStore()
+  const tauri = useTauri()
   const [capturing, setCapturing] = useState(false)
-  const hotkeyParts = formatHotkey(hotkey)
 
-  const canContinue = hotkey && hotkey.includes('+')
+  const canContinue = store.hotkeyKeycode > 0
 
-  // Hotkey capture
-  const handleKeyDown = useCallback(
-    (e: KeyboardEvent) => {
-      if (!capturing) return
-      e.preventDefault()
-      if (e.key === 'Escape') {
-        setCapturing(false)
-        return
+  const handleCaptureKey = async () => {
+    setCapturing(true)
+    try {
+      const result = await tauri.captureHotkeyKey()
+      if (result.keycode >= 0) {
+        store.updateSettings({
+          hotkeyMode: 'dedicated_key',
+          hotkeyKeycode: result.keycode,
+          hotkeyKeyName: result.name,
+        })
       }
-      const parts: string[] = []
-      if (e.ctrlKey || e.metaKey) parts.push('CmdOrCtrl')
-      if (e.shiftKey) parts.push('Shift')
-      if (e.altKey) parts.push('Alt')
-      if (!['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
-        parts.push(e.key.toUpperCase())
-      }
-      if (parts.length > 1) {
-        updateSettings({ hotkey: parts.join('+') })
-        setCapturing(false)
-      }
-    },
-    [capturing, updateSettings]
-  )
-
-  useEffect(() => {
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [handleKeyDown])
+    } catch {
+      // capture cancelled or failed
+    } finally {
+      setCapturing(false)
+    }
+  }
 
   return (
     <div className="flex flex-col animate-fade-in">
@@ -51,36 +39,34 @@ export function SetupStep({ onNext }: SetupStepProps) {
         Set your hotkey
       </h1>
       <p className="mt-1 font-body text-sm text-chirp-stone-500">
-        This shortcut starts and stops dictation.
+        Pick a key to hold while you speak. Release to transcribe.
       </p>
 
       {/* Hotkey capture area */}
       <button
-        onClick={() => setCapturing(true)}
+        onClick={handleCaptureKey}
+        disabled={capturing}
         className={`mt-5 flex h-20 w-full flex-col items-center justify-center rounded-xl transition-all duration-150 ${
           capturing
             ? 'border-2 border-solid border-chirp-yellow bg-chirp-amber-50/50 shadow-[0_0_0_4px_rgba(240,183,35,0.15)]'
             : 'border-2 border-dashed border-chirp-stone-300 bg-chirp-stone-50'
         }`}
       >
-        <div className="flex items-center gap-2">
-          {hotkeyParts.map((part, i) => (
-            <span
-              key={i}
-              className="inline-flex items-center justify-center rounded-lg border border-chirp-stone-300 bg-white px-3 py-1.5 font-mono text-base font-medium text-chirp-stone-700 shadow-subtle"
-            >
-              {part}
+        {capturing ? (
+          <span className="font-body text-sm text-chirp-stone-500">
+            Press any key...
+          </span>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <KeyBadge keyLabel={canContinue ? store.hotkeyKeyName : 'Not set'} />
+            </div>
+            <span className="mt-2 font-body text-xs text-chirp-stone-400">
+              {canContinue ? 'Click to change' : 'Click to set hotkey'}
             </span>
-          ))}
-        </div>
-        <span className="mt-2 font-body text-xs text-chirp-stone-400">
-          {capturing ? 'Press your shortcut...' : 'Click to change'}
-        </span>
+          </>
+        )}
       </button>
-
-      <p className="mt-2 font-body text-xs text-chirp-stone-400">
-        Tip: Use a shortcut with 2+ modifier keys
-      </p>
 
       <div className="mt-6">
         <Button
