@@ -1,4 +1,5 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { ChevronDown } from 'lucide-react'
 
 interface SelectOption {
@@ -15,23 +16,47 @@ interface SelectProps {
 
 export function Select({ options, value, onChange, placeholder }: SelectProps) {
   const [open, setOpen] = useState(false)
-  const ref = useRef<HTMLDivElement>(null)
+  const buttonRef = useRef<HTMLButtonElement>(null)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+  const [pos, setPos] = useState({ top: 0, left: 0, width: 0 })
+
+  const updatePosition = useCallback(() => {
+    if (!buttonRef.current) return
+    const rect = buttonRef.current.getBoundingClientRect()
+    setPos({
+      top: rect.bottom + 4,
+      left: rect.left,
+      width: rect.width,
+    })
+  }, [])
 
   useEffect(() => {
+    if (!open) return
+    updatePosition()
+
     const handleClick = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) {
-        setOpen(false)
-      }
+      if (
+        buttonRef.current?.contains(e.target as Node) ||
+        dropdownRef.current?.contains(e.target as Node)
+      ) return
+      setOpen(false)
     }
+    const handleScroll = () => updatePosition()
+
     document.addEventListener('mousedown', handleClick)
-    return () => document.removeEventListener('mousedown', handleClick)
-  }, [])
+    document.addEventListener('scroll', handleScroll, true)
+    return () => {
+      document.removeEventListener('mousedown', handleClick)
+      document.removeEventListener('scroll', handleScroll, true)
+    }
+  }, [open, updatePosition])
 
   const selected = options.find((o) => o.value === value)
 
   return (
-    <div ref={ref} className="relative">
+    <>
       <button
+        ref={buttonRef}
         onClick={() => setOpen(!open)}
         className="flex h-10 w-full items-center justify-between rounded-lg border border-card-border bg-white px-3 font-body text-sm text-chirp-stone-700 transition-colors duration-150 ease-out hover:border-chirp-stone-300 focus:border-chirp-yellow focus:border-2 focus:outline-none"
       >
@@ -41,8 +66,17 @@ export function Select({ options, value, onChange, placeholder }: SelectProps) {
         <ChevronDown size={16} className="text-chirp-stone-500 ml-2" />
       </button>
 
-      {open && (
-        <div className="absolute z-50 mt-1 w-full rounded-xl bg-white p-1 shadow-elevated border border-card-border">
+      {open && createPortal(
+        <div
+          ref={dropdownRef}
+          className="fixed rounded-xl bg-white p-1 shadow-elevated border border-card-border"
+          style={{
+            top: pos.top,
+            left: pos.left,
+            width: pos.width,
+            zIndex: 9999,
+          }}
+        >
           {options.map((option) => (
             <button
               key={option.value}
@@ -59,8 +93,9 @@ export function Select({ options, value, onChange, placeholder }: SelectProps) {
               {option.label}
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   )
 }
