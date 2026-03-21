@@ -10,7 +10,7 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary:
-    'bg-chirp-amber-400 text-chirp-stone-900 font-display font-bold text-sm hover:bg-chirp-amber-300 active:bg-chirp-amber-500 disabled:bg-chirp-amber-200 disabled:text-stone-400 disabled:cursor-not-allowed',
+    'bg-[#1a1a1a] text-white font-display font-bold text-sm hover:bg-[#333] active:bg-[#000] disabled:bg-[#ccc] disabled:text-[#888] disabled:cursor-not-allowed',
   secondary:
     'bg-chirp-white border border-chirp-stone-200 text-chirp-stone-700 font-body font-medium text-sm hover:bg-chirp-stone-100 active:bg-chirp-stone-200',
   ghost:

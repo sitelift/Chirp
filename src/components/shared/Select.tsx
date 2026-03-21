@@ -33,7 +33,7 @@ export function Select({ options, value, onChange, placeholder }: SelectProps) {
     <div ref={ref} className="relative">
       <button
         onClick={() => setOpen(!open)}
-        className="flex h-10 w-full items-center justify-between rounded-lg border border-chirp-stone-200 bg-white px-3 font-body text-sm text-chirp-stone-700 transition-colors duration-150 ease-out hover:border-chirp-stone-300 focus:border-chirp-amber-400 focus:border-2 focus:outline-none"
+        className="flex h-10 w-full items-center justify-between rounded-lg border border-card-border bg-white px-3 font-body text-sm text-chirp-stone-700 transition-colors duration-150 ease-out hover:border-chirp-stone-300 focus:border-chirp-yellow focus:border-2 focus:outline-none"
       >
         <span className={selected ? '' : 'text-chirp-stone-500 italic'}>
           {selected?.label ?? placeholder ?? 'Select...'}
@@ -42,7 +42,7 @@ export function Select({ options, value, onChange, placeholder }: SelectProps) {
       </button>
 
       {open && (
-        <div className="absolute z-50 mt-1 w-full rounded-xl bg-white p-1 shadow-elevated border border-chirp-stone-200">
+        <div className="absolute z-50 mt-1 w-full rounded-xl bg-white p-1 shadow-elevated border border-card-border">
           {options.map((option) => (
             <button
               key={option.value}

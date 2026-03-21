@@ -14,9 +14,9 @@ export function Checkbox({ checked, onChange, label, description }: CheckboxProp
         role="checkbox"
         aria-checked={checked}
         onClick={() => onChange(!checked)}
-        className={`mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border transition-all duration-150 ease-out focus:ring-2 focus:ring-chirp-amber-400 focus:ring-offset-2 ${
+        className={`mt-0.5 flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-md border transition-all duration-150 ease-out focus:ring-2 focus:ring-[#1a1a1a] focus:ring-offset-2 ${
           checked
-            ? 'bg-chirp-amber-400 border-chirp-amber-400'
+            ? 'bg-[#1a1a1a] border-[#1a1a1a]'
             : 'bg-white border-chirp-stone-300 group-hover:border-chirp-stone-200'
         }`}
       >
