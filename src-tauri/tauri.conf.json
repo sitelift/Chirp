@@ -14,8 +14,8 @@
       {
         "label": "overlay",
         "title": "Chirp",
-        "width": 400,
-        "height": 200,
+        "width": 300,
+        "height": 64,
         "resizable": false,
         "decorations": false,
         "transparent": true,

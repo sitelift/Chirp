@@ -17,6 +17,7 @@
     "core:window:allow-set-position",
     "core:window:allow-current-monitor",
     "core:window:allow-primary-monitor",
+    "core:window:allow-set-ignore-cursor-events",
     "core:event:default",
     "core:event:allow-emit",
     "core:event:allow-listen",

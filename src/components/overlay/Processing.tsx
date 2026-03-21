@@ -1,7 +1,5 @@
 export function Processing() {
   return (
-    <span className="font-mono text-[12px] font-medium text-chirp-stone-600 flex items-center gap-2">
-      <span className="animate-spin text-chirp-stone-400">✧</span> Processing
-    </span>
+    <div className="h-3.5 w-3.5 rounded-full border-[1.5px] border-chirp-amber-200/40 border-t-chirp-amber-500 animate-spin" />
   )
 }
