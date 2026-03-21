@@ -1,8 +1,8 @@
 import { useState, useMemo } from 'react'
-import { Search, Download, Trash2, Copy, BookOpen, Zap } from 'lucide-react'
+import { Search, Download, Trash2, Copy, BookOpen, Zap, ChevronDown, Clock, Mic, Type, Hash, Sparkles } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
-import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
+import { useCleanupToggle } from '../../hooks/useCleanupToggle'
 import { useCountUp } from '../../hooks/useCountUp'
 import { TONE_MODES } from '../../lib/constants'
 import {
@@ -26,10 +26,10 @@ function getGreeting(): string {
 export function HomePage() {
   const store = useAppStore()
   const tauri = useTauri()
-  const [llmDownloaded] = useLlmDownloaded()
+  const { handleCleanupToggle, cleanupStarting, llmDownloaded } = useCleanupToggle()
   const [copiedTimestamp, setCopiedTimestamp] = useState<string | null>(null)
+  const [expandedTimestamp, setExpandedTimestamp] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [cleanupStarting, setCleanupStarting] = useState(false)
   const [quickAddTab, setQuickAddTab] = useState<'dictionary' | 'snippets'>('dictionary')
   const [qaFrom, setQaFrom] = useState('')
   const [qaTo, setQaTo] = useState('')
@@ -92,27 +92,6 @@ export function HomePage() {
     day: 'numeric',
   })
 
-  const handleCleanupToggle = async (enabled: boolean) => {
-    store.updateSettings({ aiCleanup: enabled })
-    if (enabled && llmDownloaded && !store.llmReady) {
-      setCleanupStarting(true)
-      try {
-        await tauri.startLlm()
-        store.setLlmReady(true)
-      } catch (e) {
-        console.error('Failed to start LLM:', e)
-      }
-      setCleanupStarting(false)
-    } else if (!enabled && store.llmReady) {
-      try {
-        await tauri.stopLlm()
-        store.setLlmReady(false)
-      } catch (e) {
-        console.error('Failed to stop LLM:', e)
-      }
-    }
-  }
-
   const handleQuickAddDict = () => {
     const from = qaFrom.trim()
     const to = qaTo.trim()
@@ -136,14 +115,18 @@ export function HomePage() {
   }
 
   const handleCopy = async (text: string, timestamp: string) => {
-    await navigator.clipboard.writeText(text)
-    setCopiedTimestamp(timestamp)
-    setTimeout(() => setCopiedTimestamp(null), 1500)
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedTimestamp(timestamp)
+      setTimeout(() => setCopiedTimestamp(null), 1500)
+    } catch { /* clipboard access denied — window may not be focused */ }
   }
 
   const handleDelete = async (timestamp: string) => {
-    await tauri.deleteHistoryEntry(timestamp)
-    store.removeHistoryEntry(timestamp)
+    try {
+      await tauri.deleteHistoryEntry(timestamp)
+      store.removeHistoryEntry(timestamp)
+    } catch { /* backend delete failed — entry stays in UI */ }
   }
 
   const handleExport = () => {
@@ -163,6 +146,7 @@ export function HomePage() {
   }
 
   const handleClearHistory = async () => {
+    if (!window.confirm('Delete all transcription history? This cannot be undone.')) return
     await tauri.clearHistory()
     store.setHistory([])
   }
@@ -473,66 +457,166 @@ export function HomePage() {
                         ? Math.round(entry.wordCount / (entry.speechDurationMs / 60000))
                         : null
                       const isCopied = copiedTimestamp === entry.timestamp
+                      const isExpanded = expandedTimestamp === entry.timestamp
+                      const cleanupTimeMs = entry.durationMs - entry.speechDurationMs
 
                       return (
                         <div
                           key={entry.timestamp}
-                          className="p-[14px_16px] bg-white rounded-card border border-card-border flex items-start gap-3 hover-lift cursor-default group"
+                          onClick={() => setExpandedTimestamp(isExpanded ? null : entry.timestamp)}
+                          className={`p-[14px_16px] bg-white rounded-card border border-card-border flex items-start gap-3 cursor-pointer group transition-all duration-200 ${isExpanded ? 'shadow-[0_2px_12px_rgba(0,0,0,0.06)]' : 'hover-lift'}`}
                         >
                           {/* Left indicator bar */}
-                          <div className={`w-1 min-h-[36px] rounded-sm flex-shrink-0 mt-0.5 ${
+                          <div className={`w-1 min-h-[36px] self-stretch rounded-sm flex-shrink-0 mt-0.5 ${
                             entry.wasCleanedUp ? 'bg-gradient-to-b from-chirp-yellow to-[#F7D86C]' : 'bg-[#e5e5e5]'
                           }`} />
 
                           {/* Content */}
                           <div className="flex-1 min-w-0">
-                            <div className="text-[13px] text-[#333] leading-relaxed line-clamp-3">{entry.text}</div>
-                            <div className="flex gap-2 mt-[6px] items-center flex-wrap">
-                              <span className="text-[11px] text-[#bbb]">{entry.wordCount} words</span>
-                              <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
-                              <span className="text-[11px] text-[#bbb]">{(entry.speechDurationMs / 1000).toFixed(0)}s</span>
-                              {wpm && <>
+                            <div className={`text-[13px] text-[#333] leading-relaxed ${isExpanded ? '' : 'line-clamp-3'}`}>{entry.text}</div>
+
+                            {/* Collapsed metadata */}
+                            {!isExpanded && (
+                              <div className="flex gap-2 mt-[6px] items-center flex-wrap">
+                                <span className="text-[11px] text-[#bbb]">{entry.wordCount} words</span>
                                 <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
-                                <span className="text-[10px] text-[#888] font-medium bg-[#F5F4F0] px-2 py-[1px] rounded">{wpm} WPM</span>
-                              </>}
-                              {entry.wasCleanedUp && <>
-                                <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
-                                <span className="text-[10px] text-[#D4A020] font-semibold bg-gradient-to-r from-[#FFF9E5] to-[#FEF3C7] px-2 py-[1px] rounded">Polished</span>
-                              </>}
+                                <span className="text-[11px] text-[#bbb]">{(entry.speechDurationMs / 1000).toFixed(0)}s</span>
+                                {wpm && <>
+                                  <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
+                                  <span className="text-[10px] text-[#888] font-medium bg-[#F5F4F0] px-2 py-[1px] rounded">{wpm} WPM</span>
+                                </>}
+                                {entry.wasCleanedUp && <>
+                                  <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
+                                  <span className="text-[10px] text-[#D4A020] font-semibold bg-gradient-to-r from-[#FFF9E5] to-[#FEF3C7] px-2 py-[1px] rounded">Polished</span>
+                                </>}
+                              </div>
+                            )}
+
+                            {/* Expanded stats */}
+                            {isExpanded && (
+                              <div className="mt-3 animate-fade-in">
+                                <div className="grid grid-cols-3 gap-3 p-3 bg-[#FAFAF8] rounded-[10px] border border-card-border">
+                                  <div className="flex items-center gap-2">
+                                    <Mic size={12} className="text-[#ccc]" />
+                                    <div>
+                                      <div className="text-[10px] text-[#999] uppercase tracking-wide">Speech</div>
+                                      <div className="text-[13px] text-[#555] font-medium">{(entry.speechDurationMs / 1000).toFixed(1)}s</div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Clock size={12} className="text-[#ccc]" />
+                                    <div>
+                                      <div className="text-[10px] text-[#999] uppercase tracking-wide">Processing</div>
+                                      <div className="text-[13px] text-[#555] font-medium">{(entry.durationMs / 1000).toFixed(1)}s</div>
+                                    </div>
+                                  </div>
+                                  {wpm && (
+                                    <div className="flex items-center gap-2">
+                                      <Type size={12} className="text-[#ccc]" />
+                                      <div>
+                                        <div className="text-[10px] text-[#999] uppercase tracking-wide">Speed</div>
+                                        <div className="text-[13px] text-[#555] font-medium">{wpm} WPM</div>
+                                      </div>
+                                    </div>
+                                  )}
+                                  <div className="flex items-center gap-2">
+                                    <Hash size={12} className="text-[#ccc]" />
+                                    <div>
+                                      <div className="text-[10px] text-[#999] uppercase tracking-wide">Words</div>
+                                      <div className="text-[13px] text-[#555] font-medium">{entry.wordCount}</div>
+                                    </div>
+                                  </div>
+                                  <div className="flex items-center gap-2">
+                                    <Type size={12} className="text-[#ccc]" />
+                                    <div>
+                                      <div className="text-[10px] text-[#999] uppercase tracking-wide">Characters</div>
+                                      <div className="text-[13px] text-[#555] font-medium">{entry.text.length.toLocaleString()}</div>
+                                    </div>
+                                  </div>
+                                  {entry.wasCleanedUp && (
+                                    <div className="flex items-center gap-2">
+                                      <Sparkles size={12} className="text-[#D4A020]" />
+                                      <div>
+                                        <div className="text-[10px] text-[#999] uppercase tracking-wide">Cleanup</div>
+                                        <div className="text-[13px] text-[#555] font-medium">{(cleanupTimeMs / 1000).toFixed(1)}s</div>
+                                      </div>
+                                    </div>
+                                  )}
+                                </div>
+
+                                {/* Expanded actions + full timestamp */}
+                                <div className="flex items-center justify-between mt-3">
+                                  <span className="text-[11px] text-[#999]">
+                                    {new Date(entry.timestamp).toLocaleString(undefined, {
+                                      weekday: 'short', month: 'short', day: 'numeric',
+                                      year: 'numeric', hour: 'numeric', minute: '2-digit'
+                                    })}
+                                  </span>
+                                  <div className="flex gap-1">
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleCopy(entry.text, entry.timestamp)
+                                      }}
+                                      className="h-[28px] px-2.5 rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center gap-1.5 text-[#aaa] hover:bg-[#eee] hover:text-[#555] transition-all text-[11px]"
+                                    >
+                                      {isCopied ? (
+                                        <span className="text-chirp-success font-semibold">Copied</span>
+                                      ) : (
+                                        <><Copy size={12} /> Copy</>
+                                      )}
+                                    </button>
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation()
+                                        handleDelete(entry.timestamp)
+                                      }}
+                                      className="h-[28px] px-2.5 rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center gap-1.5 text-[#aaa] hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all text-[11px]"
+                                    >
+                                      <Trash2 size={12} /> Delete
+                                    </button>
+                                  </div>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Hover actions (collapsed only) */}
+                          {!isExpanded && (
+                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleCopy(entry.text, entry.timestamp)
+                                }}
+                                className="w-[30px] h-[30px] rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center justify-center text-[#aaa] hover:bg-[#eee] hover:text-[#555] transition-all"
+                                title="Copy"
+                              >
+                                {isCopied ? (
+                                  <span className="text-[10px] text-chirp-success font-semibold">OK</span>
+                                ) : (
+                                  <Copy size={13} />
+                                )}
+                              </button>
+                              <button
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  handleDelete(entry.timestamp)
+                                }}
+                                className="w-[30px] h-[30px] rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center justify-center text-[#aaa] hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all"
+                                title="Delete"
+                              >
+                                <Trash2 size={13} />
+                              </button>
                             </div>
-                          </div>
+                          )}
 
-                          {/* Hover actions */}
-                          <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity flex-shrink-0">
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleCopy(entry.text, entry.timestamp)
-                              }}
-                              className="w-[30px] h-[30px] rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center justify-center text-[#aaa] hover:bg-[#eee] hover:text-[#555] transition-all"
-                              title="Copy"
-                            >
-                              {isCopied ? (
-                                <span className="text-[10px] text-chirp-success font-semibold">OK</span>
-                              ) : (
-                                <Copy size={13} />
-                              )}
-                            </button>
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation()
-                                handleDelete(entry.timestamp)
-                              }}
-                              className="w-[30px] h-[30px] rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center justify-center text-[#aaa] hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all"
-                              title="Delete"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </div>
-
-                          {/* Time */}
-                          <div className="text-[11px] text-[#ccc] whitespace-nowrap flex-shrink-0">
-                            {formatRelativeTime(entry.timestamp)}
+                          {/* Chevron + Time */}
+                          <div className="flex flex-col items-end gap-1 flex-shrink-0">
+                            <div className="text-[11px] text-[#ccc] whitespace-nowrap">
+                              {formatRelativeTime(entry.timestamp)}
+                            </div>
+                            <ChevronDown size={14} className={`text-[#ccc] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
                           </div>
                         </div>
                       )

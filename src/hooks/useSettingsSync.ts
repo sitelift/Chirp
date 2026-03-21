@@ -25,8 +25,9 @@ export function useSettingsSync() {
   const tauri = useTauri()
   const updateSettings = useAppStore((s) => s.updateSettings)
   const loaded = useRef(false)
-  // Guard to prevent re-syncing changes that came from this window
-  const suppressSync = useRef(false)
+  // Guard to prevent re-syncing changes that came from this window.
+  // Uses a counter instead of boolean to handle rapid successive events.
+  const suppressCount = useRef(0)
 
   useEffect(() => {
     if (loaded.current) return
@@ -107,17 +108,17 @@ export function useSettingsSync() {
       const partial = event.payload
       if (partial && typeof partial === 'object' && Object.keys(partial).length > 0) {
         // Apply changes to this window's store without re-syncing back to Rust
-        suppressSync.current = true
+        suppressCount.current++
         useAppStore.getState().updateSettings(partial as Partial<ReturnType<typeof useAppStore.getState>>)
-        // Reset suppress flag after a tick to allow future local changes to sync
-        setTimeout(() => { suppressSync.current = false }, 0)
+        // Decrement after a tick to allow future local changes to sync
+        setTimeout(() => { suppressCount.current-- }, 0)
       }
     }).then((fn) => unlisteners.push(fn))
 
     // Subscribe to store changes and sync settings + dictionary to backend
     const unsub = useAppStore.subscribe((state, prevState) => {
       if (!state.settingsLoaded) return
-      if (suppressSync.current) return
+      if (suppressCount.current > 0) return
 
       const changed: Record<string, unknown> = {}
       for (const key of SYNCED_KEYS) {

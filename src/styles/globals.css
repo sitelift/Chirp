@@ -9,6 +9,12 @@
 }
 
 @layer base {
+  html, body, #root {
+    overflow: hidden;
+    height: 100%;
+    width: 100%;
+  }
+
   body {
     @apply font-body text-chirp-stone-700 bg-transparent;
     margin: 0;

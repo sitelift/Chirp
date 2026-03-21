@@ -203,7 +203,15 @@ pub async fn download_model(model: &str, app_handle: AppHandle) -> Result<(), St
     .map_err(|e| format!("Extract task failed: {e}"))??;
 
     // Clean up the archive file
-    let _ = tokio::fs::remove_file(&archive_path).await;
+    if let Err(e) = tokio::fs::remove_file(&archive_path).await {
+        log::warn!("Failed to clean up model archive: {e}");
+    }
+
+    // Verify critical model files were extracted
+    let extracted_dir = model_dir(model);
+    if !extracted_dir.join("tokens.txt").exists() {
+        return Err("Model extraction incomplete: tokens.txt missing".to_string());
+    }
 
     let _ = app_handle.emit("model-download-progress", 100u32);
     Ok(())

@@ -15,7 +15,7 @@ struct CleanupRegexes {
     no_space_after: Regex,
     email: Regex,
     numeric_contexts: Vec<Regex>,
-    number_words: Vec<(Regex, &'static str)>,
+    number_words: Vec<&'static str>,
     percentage: Regex,
     hundred_pct: Regex,
 }
@@ -110,12 +110,7 @@ fn regexes() -> &'static CleanupRegexes {
             no_space_after: Regex::new(r"([.,!?;:])([A-Za-z])").unwrap(),
             email: Regex::new(r"(?i)\b(\w+)\s+at\s+(\w+)\s+dot\s+(com|org|net|io|dev|co)\b").unwrap(),
             numeric_contexts: compiled_contexts,
-            number_words: compiled_numbers.iter().map(|d| {
-                // These are just digit placeholders; we store them as (Regex, &str)
-                // but for the combined patterns we already have the regex in numeric_contexts
-                // Use a dummy regex that never matches - the actual matching is done via numeric_contexts
-                (Regex::new("^$").unwrap(), *d)
-            }).collect(),
+            number_words: compiled_numbers,
             percentage: Regex::new(r"(?i)\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\s+percent\b").unwrap(),
             hundred_pct: Regex::new(r"(?i)\b(one )?hundred percent\b").unwrap(),
         }
@@ -216,7 +211,7 @@ fn format_spoken_numbers(text: &str) -> String {
 
     // Apply pre-compiled combined context+number patterns
     for (i, ctx_re) in re.numeric_contexts.iter().enumerate() {
-        let digit = re.number_words[i].1;
+        let digit = re.number_words[i];
         result = ctx_re
             .replace_all(&result, |caps: &regex::Captures| {
                 format!("{}{}", &caps[1], digit)

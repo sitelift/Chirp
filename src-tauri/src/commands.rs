@@ -23,6 +23,9 @@ pub struct StreamHandle(pub std::sync::Mutex<Option<StreamWrapper>>);
 
 #[allow(dead_code)]
 pub struct StreamWrapper(cpal::Stream);
+// SAFETY: StreamWrapper is only accessed via Mutex in command handlers
+// dispatched on Tauri's async runtime. The stream itself is never sent
+// across threads — only the Mutex guard crosses await points.
 unsafe impl Send for StreamWrapper {}
 unsafe impl Sync for StreamWrapper {}
 
@@ -246,6 +249,25 @@ pub async fn start_recording(
         return Err(err);
     }
 
+    // Bump recording generation and spawn a 10-minute safety timeout.
+    // If the user forgets to release the hotkey, this prevents unbounded RAM usage.
+    let generation = {
+        let mut s = state.lock().await;
+        s.recording_generation += 1;
+        s.recording_generation
+    };
+    let state_for_timeout = state.inner().clone();
+    let app_for_timeout = app_handle.clone();
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(std::time::Duration::from_secs(600)).await;
+        let s = state_for_timeout.lock().await;
+        if s.recording_state == RecordingState::Recording && s.recording_generation == generation {
+            drop(s);
+            log::warn!("Recording auto-stopped after 10 minutes");
+            let _ = app_for_timeout.emit("hotkey-released", ());
+        }
+    });
+
     Ok(())
 }
 
@@ -327,6 +349,14 @@ pub async fn stop_recording(
 
     log::info!("Audio buffer: {sample_count} samples ({duration_secs:.1}s)");
 
+    // C3 fix: check empty BEFORE any division by len to avoid divide-by-zero
+    if audio_data.is_empty() {
+        log::error!("Audio buffer is empty!");
+        let mut s = state.lock().await;
+        s.recording_state = RecordingState::Idle;
+        return Err("transcription_failed".into());
+    }
+
     // Compare wall-clock recording time to buffer duration to detect sample rate mismatches
     if let Some(wall_secs) = wall_clock_secs {
         let ratio = duration_secs / wall_secs;
@@ -349,13 +379,6 @@ pub async fn stop_recording(
         let mut s = state.lock().await;
         s.recording_state = RecordingState::Idle;
         return Err("mic_disconnected".into());
-    }
-
-    if audio_data.is_empty() {
-        log::error!("Audio buffer is empty!");
-        let mut s = state.lock().await;
-        s.recording_state = RecordingState::Idle;
-        return Err("transcription_failed".into());
     }
 
     if sample_count < 16000 {
@@ -496,6 +519,11 @@ pub async fn stop_recording(
         speech_duration_ms,
         was_cleaned_up,
     });
+    // Cap in-memory history to 1000 entries (matches save_history cap)
+    if s.history.len() > 1000 {
+        let excess = s.history.len() - 1000;
+        s.history.drain(..excess);
+    }
     let _ = history::save_history(&s.history);
     let new_entry = s.history.last().cloned();
     s.recording_state = RecordingState::Idle;
@@ -525,7 +553,16 @@ pub async fn cancel_recording(
     state: State<'_, SharedState>,
     buffer: State<'_, AudioBuffer>,
     stream_handle: State<'_, StreamHandle>,
+    stream_active_state: State<'_, StreamActiveState>,
 ) -> Result<(), String> {
+    // Deactivate zombie callbacks before dropping the stream
+    {
+        let active = stream_active_state.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(ref flag) = *active {
+            flag.store(false, Ordering::SeqCst);
+        }
+    }
+
     // Stop stream
     {
         let mut handle = stream_handle.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -613,11 +650,14 @@ pub async fn test_microphone(
     buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
 
     // Start capture
-    let (stream, _error_flag, _active_flag, _resampler_state) = audio::start_capture(&device_id, buffer.inner().clone(), app_handle)?;
+    let (stream, _error_flag, active_flag, _resampler_state) = audio::start_capture(&device_id, buffer.inner().clone(), app_handle)?;
     *stream_handle.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(StreamWrapper(stream));
 
     // Record for 3 seconds
     tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+
+    // Deactivate zombie callbacks before dropping the stream
+    active_flag.store(false, Ordering::SeqCst);
 
     // Stop capture
     *stream_handle.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
@@ -681,6 +721,9 @@ pub async fn start_llm(
     let child = llm::start_server(port).await?;
 
     let mut s = state.lock().await;
+    if let Some(pid) = child.id() {
+        llm::save_server_pid(pid);
+    }
     s.llm_process = Some(child);
     s.llm_port = Some(port);
 
@@ -697,6 +740,7 @@ pub async fn stop_llm(
     }
     s.llm_process = None;
     s.llm_port = None;
+    llm::clear_server_pid();
     Ok(())
 }
 

@@ -71,6 +71,8 @@ export function SmartCleanup({ onNext }: SmartCleanupProps) {
         store.setLlmReady(true)
         setState('complete')
       } catch {
+        // Kill any partially-started server to prevent orphan processes
+        try { await tauri.stopLlm() } catch { /* ignore */ }
         setError('Smart Cleanup failed to start. You can retry or skip and enable it later in Settings.')
         setState('error')
       }

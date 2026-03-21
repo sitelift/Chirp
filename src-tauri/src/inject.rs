@@ -91,18 +91,17 @@ pub fn inject_text(text: &str) -> Result<(), String> {
 
     // Restore clipboard in a background thread after a generous delay.
     // The target app needs time to process the Ctrl+V and read the clipboard.
-    // A 300ms synchronous delay was racing the paste — sometimes the restore
-    // happened before the target app read the clipboard, causing it to paste
-    // the OLD (restored) text instead of the new transcription.
+    // 2s was racing some slow apps (e.g. Electron apps under load) — bumped
+    // to 3s. Trade-off: user copies within 3s get overwritten.
     if let Some(original) = saved {
         thread::spawn(move || {
-            thread::sleep(Duration::from_secs(2));
+            thread::sleep(Duration::from_secs(3));
             match Clipboard::new() {
                 Ok(mut cb) => {
                     if let Err(e) = cb.set_text(original) {
                         log::warn!("Failed to restore clipboard: {e}");
                     } else {
-                        log::debug!("Clipboard restored after 2s delay");
+                        log::debug!("Clipboard restored after 3s delay");
                     }
                 }
                 Err(e) => log::warn!("Failed to open clipboard for restore: {e}"),

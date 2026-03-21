@@ -1,5 +1,6 @@
 import { useState, useCallback, useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
+import { getVersion } from '@tauri-apps/api/app'
 import { useTauri } from '../../hooks/useTauri'
 import { useAppStore } from '../../stores/appStore'
 import { BirdMark } from './BirdMark'
@@ -16,6 +17,9 @@ export function AboutModal() {
   const [updateVersion, setUpdateVersion] = useState<string | null>(null)
   const [downloadProgress, setDownloadProgress] = useState<string | null>(null)
   const [doRelaunch, setDoRelaunch] = useState<(() => Promise<void>) | null>(null)
+  const [appVersion, setAppVersion] = useState('...')
+
+  useEffect(() => { getVersion().then(setAppVersion) }, [])
 
   const handleCheckUpdates = useCallback(async () => {
     setUpdateStatus('checking')
@@ -87,7 +91,7 @@ export function AboutModal() {
             chirp
           </h2>
 
-          <span className="mt-1 font-mono text-[13px] text-[#888]">v1.0.0</span>
+          <span className="mt-1 font-mono text-[13px] text-[#888]">v{appVersion}</span>
 
           <p className="mt-3 font-body text-sm text-[#888] italic text-center">
             Free, local voice-to-text{'\n'}for everyone.

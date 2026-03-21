@@ -2,6 +2,7 @@
  * Typed wrappers for Tauri commands.
  * Calls the real Rust backend via invoke().
  */
+import { useMemo } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { check } from '@tauri-apps/plugin-updater'
@@ -33,6 +34,10 @@ export interface LlmStatus {
 }
 
 export function useTauri() {
+  return useMemo(() => createTauriApi(), [])
+}
+
+function createTauriApi() {
   const startRecording = async (): Promise<void> => {
     await invoke('start_recording')
   }

@@ -3,6 +3,7 @@ import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { useHotkeyRecorder } from '../../hooks/useHotkeyRecorder'
 import type { AudioDevice } from '../../hooks/useTauri'
+import { useCleanupToggle } from '../../hooks/useCleanupToggle'
 import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
 import { TONE_MODES, STT_MODELS, LLM_MODEL } from '../../lib/constants'
 import { formatHotkey } from '../../lib/utils'
@@ -58,10 +59,11 @@ export function SettingsPage() {
   const [testState, setTestState] = useState<'idle' | 'recording' | 'playing'>('idle')
   const [testCountdown, setTestCountdown] = useState(3)
   const audioRef = useRef<HTMLAudioElement | null>(null)
+  const testIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // AI / LLM state
-  const [llmDownloaded, setLlmDownloaded] = useLlmDownloaded()
-  const [cleanupStarting, setCleanupStarting] = useState(false)
+  const { handleCleanupToggle, cleanupStarting, llmDownloaded } = useCleanupToggle()
+  const [, setLlmDownloaded] = useLlmDownloaded()
 
   // Model download state
   const [downloadError, setDownloadError] = useState<string | null>(null)
@@ -109,34 +111,16 @@ export function SettingsPage() {
   }
 
 
-  const handleCleanupToggle = async (enabled: boolean) => {
-    store.updateSettings({ aiCleanup: enabled })
-    if (enabled && llmDownloaded && !store.llmReady) {
-      setCleanupStarting(true)
-      try {
-        await tauri.startLlm()
-        store.setLlmReady(true)
-      } catch (e) {
-        console.error('Failed to start LLM:', e)
-      }
-      setCleanupStarting(false)
-    } else if (!enabled && store.llmReady) {
-      try {
-        await tauri.stopLlm()
-        store.setLlmReady(false)
-      } catch (e) {
-        console.error('Failed to stop LLM:', e)
-      }
-    }
-  }
-
   const handleTest = async () => {
+    // Clear any stale interval from a previous test
+    if (testIntervalRef.current) clearInterval(testIntervalRef.current)
     setTestState('recording')
     setTestCountdown(3)
-    const interval = setInterval(() => {
+    testIntervalRef.current = setInterval(() => {
       setTestCountdown((c) => {
         if (c <= 1) {
-          clearInterval(interval)
+          if (testIntervalRef.current) clearInterval(testIntervalRef.current)
+          testIntervalRef.current = null
           return 0
         }
         return c - 1
@@ -145,7 +129,8 @@ export function SettingsPage() {
 
     try {
       const wavBytes = await tauri.testMicrophone()
-      clearInterval(interval)
+      if (testIntervalRef.current) clearInterval(testIntervalRef.current)
+      testIntervalRef.current = null
 
       const uint8 = new Uint8Array(wavBytes)
       const blob = new Blob([uint8], { type: 'audio/wav' })
@@ -166,7 +151,8 @@ export function SettingsPage() {
       }
       audio.play()
     } catch {
-      clearInterval(interval)
+      if (testIntervalRef.current) clearInterval(testIntervalRef.current)
+      testIntervalRef.current = null
       setTestState('idle')
     }
   }

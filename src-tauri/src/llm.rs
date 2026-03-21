@@ -248,7 +248,9 @@ pub async fn download_binary(app_handle: &AppHandle) -> Result<(), String> {
     .map_err(|e| format!("Extract task failed: {e}"))??;
 
     // Clean up archive
-    let _ = tokio::fs::remove_file(&archive_path).await;
+    if let Err(e) = tokio::fs::remove_file(&archive_path).await {
+        log::warn!("Failed to clean up LLM archive: {e}");
+    }
 
     let _ = app_handle.emit("llm-download-progress", 100u32);
     Ok(())
@@ -350,7 +352,7 @@ pub async fn start_server(port: u16) -> Result<tokio::process::Child, String> {
         .arg(n_threads.to_string())
         .arg("--gpu-layers")
         .arg("99")
-        .arg("--flash-attn")
+        .arg("--flash-attn").arg("on")
         .arg("--batch-size")
         .arg("512")
         .arg("--parallel")
@@ -503,6 +505,51 @@ pub async fn cleanup_text(port: u16, text: &str, tone_mode: &str) -> Result<Stri
     }
 
     Ok(result)
+}
+
+// ── PID file management ──────────────────────────────────────────────
+// Persists the llama-server PID so we can clean up orphans after crashes.
+
+fn pid_file_path() -> PathBuf {
+    llm_dir().join("llama-server.pid")
+}
+
+/// Save the llama-server PID to a file for crash recovery.
+pub fn save_server_pid(pid: u32) {
+    let dir = llm_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let _ = std::fs::write(pid_file_path(), pid.to_string());
+}
+
+/// Kill a stale llama-server from a previous session (crash recovery) and remove the PID file.
+pub fn kill_stale_server() {
+    let path = pid_file_path();
+    if let Ok(pid_str) = std::fs::read_to_string(&path) {
+        if let Ok(pid) = pid_str.trim().parse::<u32>() {
+            log::info!("Killing stale llama-server (PID {pid})");
+            #[cfg(windows)]
+            {
+                #[allow(unused_imports)]
+                use std::os::windows::process::CommandExt;
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .creation_flags(0x08000000) // CREATE_NO_WINDOW
+                    .output();
+            }
+            #[cfg(unix)]
+            {
+                let _ = std::process::Command::new("kill")
+                    .args(["-9", &pid.to_string()])
+                    .output();
+            }
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+}
+
+/// Remove the PID file (called on clean shutdown).
+pub fn clear_server_pid() {
+    let _ = std::fs::remove_file(pid_file_path());
 }
 
 /// LLM status for frontend

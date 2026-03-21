@@ -249,6 +249,9 @@ pub fn start_key_listener(app: AppHandle, keycode: i64, shared_state: SharedStat
         let _ = app.emit("hotkey-status", "retrying");
 
         unsafe {
+            // Intentionally leaked: TapState lives for the app's lifetime (one listener
+            // thread). Reclaiming it would require synchronizing with the CFRunLoop which
+            // is not worth the complexity for a single ~200-byte allocation.
             let state = Box::leak(Box::new(TapState {
                 app: app.clone(),
                 target_keycode: keycode,
@@ -430,6 +433,7 @@ unsafe extern "C" fn capture_callback(
 /// Returns keycode=-1 if cancelled (Escape).
 /// This blocks the calling thread until a key is pressed.
 pub fn capture_next_key() -> (i64, String) {
+    // Leak to pass across the FFI boundary; reclaimed below after CFRunLoopRun returns.
     let state = Box::leak(Box::new(CaptureState {
         captured_keycode: AtomicI64::new(-2),
         done: AtomicBool::new(false),
@@ -470,6 +474,10 @@ pub fn capture_next_key() -> (i64, String) {
     } else {
         "Cancelled".into()
     };
+
+    // SAFETY: CFRunLoopRun has returned and the tap callback is no longer active.
+    // Reclaim the leaked CaptureState to avoid a memory leak on repeated captures.
+    unsafe { let _ = Box::from_raw(state as *mut CaptureState); }
 
     (code, name)
 }

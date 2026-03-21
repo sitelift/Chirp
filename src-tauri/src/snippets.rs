@@ -5,11 +5,6 @@ use crate::state::SnippetEntry;
 /// Apply snippet expansions: case-insensitive whole-phrase matching.
 /// Longest triggers are matched first to avoid partial replacements.
 pub fn apply_snippets(text: &str, entries: &[SnippetEntry]) -> String {
-    log::debug!("apply_snippets called with {} entries, text: '{text}'", entries.len());
-    for (i, e) in entries.iter().enumerate() {
-        log::debug!("  snippet[{i}]: trigger='{}' expansion='{}'", e.trigger, e.expansion);
-    }
-
     if entries.is_empty() {
         return text.to_string();
     }
@@ -30,19 +25,11 @@ pub fn apply_snippets(text: &str, entries: &[SnippetEntry]) -> String {
         }
         let escaped = regex::escape(&cleaned);
         let pattern = format!(r"(?i)\b{escaped}\b");
-        log::debug!("  trying pattern: '{pattern}' against: '{result}'");
         if let Ok(re) = Regex::new(&pattern) {
-            let new_result = re.replace_all(&result, regex::NoExpand(entry.expansion.as_str())).to_string();
-            if new_result != result {
-                log::debug!("  MATCHED '{}' → '{}'", entry.trigger, entry.expansion);
-            } else {
-                log::debug!("  no match for '{}'", entry.trigger);
-            }
-            result = new_result;
+            result = re.replace_all(&result, regex::NoExpand(entry.expansion.as_str())).to_string();
         }
     }
 
-    log::debug!("apply_snippets result: '{result}'");
     result
 }
 

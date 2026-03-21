@@ -4,7 +4,9 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 
 /// Thread-safe wrapper for sherpa-onnx OfflineRecognizer.
-/// The C API is thread-safe so this is safe to Send+Sync.
+/// SAFETY: sherpa-onnx's C API is internally thread-safe (all state is behind
+/// mutexes in the C++ implementation). We additionally wrap in Arc and only
+/// call from spawn_blocking tasks. See: k2-fsa/sherpa-onnx c-api.h
 pub struct SherpaRecognizer(pub OfflineRecognizer);
 unsafe impl Send for SherpaRecognizer {}
 unsafe impl Sync for SherpaRecognizer {}
@@ -34,12 +36,10 @@ pub enum HotkeyStatus {
 pub struct Settings {
     pub hotkey: String,
     pub launch_at_login: bool,
-    pub show_in_menu_bar: bool,
     pub play_sound_on_complete: bool,
     pub auto_dismiss_overlay: bool,
     pub smart_formatting: bool,
     pub input_device: String,
-    pub noise_suppression: bool,
     #[serde(alias = "whisperModel")]
     pub model: String,
     pub onboarding_complete: bool,
@@ -72,12 +72,10 @@ impl Default for Settings {
         Self {
             hotkey: "CmdOrCtrl+Shift+Space".into(),
             launch_at_login: true,
-            show_in_menu_bar: true,
             play_sound_on_complete: false,
             auto_dismiss_overlay: true,
             smart_formatting: true,
             input_device: "default".into(),
-            noise_suppression: true,
             model: "parakeet-tdt-0.6b".into(),
             onboarding_complete: false,
             ai_cleanup: true,
@@ -167,6 +165,7 @@ pub struct AppState {
     pub snippets: Vec<SnippetEntry>,
     pub history: Vec<TranscriptionEntry>,
     pub recording_state: RecordingState,
+    pub recording_generation: u64,
     pub hotkey_status: HotkeyStatus,
     /// Recognizer is in its own Arc so transcription can proceed without holding
     /// the main state lock. The sherpa C API is thread-safe (Send+Sync).
@@ -183,6 +182,7 @@ impl AppState {
             snippets,
             history,
             recording_state: RecordingState::Idle,
+            recording_generation: 0,
             hotkey_status: HotkeyStatus::Idle,
             recognizer: None,
             llm_process: None,

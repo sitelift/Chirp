@@ -80,7 +80,10 @@ mod win32 {
 static LISTENER_THREAD_ID: Mutex<Option<u32>> = Mutex::new(None);
 static TARGET_KEYCODE: AtomicI64 = AtomicI64::new(-1);
 static PRESSED: AtomicBool = AtomicBool::new(false);
-static APP_HANDLE: Mutex<Option<AppHandle>> = Mutex::new(None);
+// OnceLock: the AppHandle is valid for the entire process lifetime and never
+// changes, so we set it once. This eliminates lock contention in the hook
+// callback, preventing hotkey events from being silently dropped.
+static APP_HANDLE: std::sync::OnceLock<AppHandle> = std::sync::OnceLock::new();
 
 // Statics for capture mode
 static CAPTURE_MODE: AtomicBool = AtomicBool::new(false);
@@ -109,24 +112,16 @@ unsafe extern "system" fn listener_hook_proc(
                     // Ignore repeats
                     if !PRESSED.swap(true, Ordering::SeqCst) {
                         log::info!("Hotkey pressed → start recording");
-                        if let Ok(guard) = APP_HANDLE.try_lock() {
-                            if let Some(ref app) = *guard {
-                                let _ = app.emit("hotkey-pressed", ());
-                            }
-                        } else {
-                            log::warn!("APP_HANDLE lock contention in hook callback — press event dropped");
+                        if let Some(app) = APP_HANDLE.get() {
+                            let _ = app.emit("hotkey-pressed", ());
                         }
                     }
                 }
                 win32::WM_KEYUP | win32::WM_SYSKEYUP => {
                     if PRESSED.swap(false, Ordering::SeqCst) {
                         log::info!("Hotkey released → stop recording");
-                        if let Ok(guard) = APP_HANDLE.try_lock() {
-                            if let Some(ref app) = *guard {
-                                let _ = app.emit("hotkey-released", ());
-                            }
-                        } else {
-                            log::warn!("APP_HANDLE lock contention in hook callback — release event dropped");
+                        if let Some(app) = APP_HANDLE.get() {
+                            let _ = app.emit("hotkey-released", ());
                         }
                     }
                 }
@@ -187,10 +182,7 @@ pub fn start_key_listener(app: AppHandle, keycode: i64, shared_state: SharedStat
     // Store app handle and target keycode in statics
     TARGET_KEYCODE.store(keycode, Ordering::SeqCst);
     PRESSED.store(false, Ordering::SeqCst);
-    {
-        let mut guard = APP_HANDLE.lock().unwrap();
-        *guard = Some(app.clone());
-    }
+    let _ = APP_HANDLE.set(app.clone());
 
     std::thread::spawn(move || {
         // Set status to Retrying
@@ -243,7 +235,9 @@ pub fn start_key_listener(app: AppHandle, keycode: i64, shared_state: SharedStat
             run_message_pump();
 
             // Pump exited (WM_QUIT received) — clean up
-            win32::UnhookWindowsHookEx(hook);
+            if win32::UnhookWindowsHookEx(hook) == 0 {
+                log::warn!("UnhookWindowsHookEx failed for listener hook");
+            }
 
             {
                 let mut guard = LISTENER_THREAD_ID.lock().unwrap();
@@ -265,13 +259,9 @@ pub fn stop_key_listener() {
     }
     drop(guard);
 
-    // Clear statics
+    // Clear statics (APP_HANDLE stays set — valid for process lifetime)
     TARGET_KEYCODE.store(-1, Ordering::SeqCst);
     PRESSED.store(false, Ordering::SeqCst);
-    {
-        let mut guard = APP_HANDLE.lock().unwrap();
-        *guard = None;
-    }
 }
 
 /// Capture the next key press and return (keycode, name).

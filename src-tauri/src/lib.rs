@@ -146,6 +146,9 @@ pub fn run() {
 
             }
 
+            // Kill any stale llama-server from a previous crash (C2 fix)
+            llm::kill_stale_server();
+
             // Auto-start LLM server if AI cleanup is enabled and files exist
             {
                 let state = handle.state::<SharedState>();
@@ -173,6 +176,9 @@ pub fn run() {
                         match llm::start_server(port).await {
                             Ok(child) => {
                                 let mut s = state_clone.lock().await;
+                                if let Some(pid) = child.id() {
+                                    llm::save_server_pid(pid);
+                                }
                                 s.llm_process = Some(child);
                                 s.llm_port = Some(port);
                                 log::info!("LLM server auto-started on port {port}");
@@ -259,6 +265,15 @@ pub fn run() {
 
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                // Kill llama-server on app exit to prevent orphan processes (C1 fix)
+                llm::kill_stale_server();
+                llm::clear_server_pid();
+                log::info!("App exiting — cleaned up LLM process");
+                let _ = app_handle; // suppress unused warning
+            }
+        });
 }

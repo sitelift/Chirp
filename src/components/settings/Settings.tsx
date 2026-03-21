@@ -1,6 +1,7 @@
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { getVersion } from '@tauri-apps/api/app'
 import { Home, BookOpen, Zap, Settings as SettingsIcon, Check, Minus, Square, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
@@ -34,6 +35,9 @@ export function Settings() {
   const hotkey = useAppStore((s) => s.hotkey)
   const aboutModalOpen = useAppStore((s) => s.aboutModalOpen)
   const setAboutModalOpen = useAppStore((s) => s.setAboutModalOpen)
+  const [appVersion, setAppVersion] = useState('...')
+
+  useEffect(() => { getVersion().then(setAppVersion) }, [])
 
   useEffect(() => {
     if (settingsSaved) {
@@ -56,7 +60,15 @@ export function Settings() {
   return (
     <div className="flex flex-col h-screen overflow-hidden no-select">
       {/* Custom titlebar */}
-      <div data-tauri-drag-region className="flex items-center justify-end h-10 shrink-0 bg-sidebar">
+      <div data-tauri-drag-region className="flex items-center justify-between h-10 shrink-0 bg-sidebar">
+        {/* Logo */}
+        <div className="flex items-center gap-[8px] px-[14px] h-full">
+          <BirdMark size={18} color="#F0B723" />
+          <span className="font-display font-black text-[15px] text-white tracking-[-0.5px]">
+            chirp
+          </span>
+        </div>
+        <div className="flex items-center">
         <button
           onClick={() => getCurrentWindow().minimize()}
           className="w-[46px] h-full flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
@@ -75,21 +87,12 @@ export function Settings() {
         >
           <X size={16} />
         </button>
+        </div>
       </div>
 
       <div className="flex flex-1 min-h-0">
       {/* Dark sidebar */}
       <div className="flex w-[220px] shrink-0 flex-col bg-sidebar p-[20px_12px] relative overflow-hidden sidebar-noise sidebar-glow">
-        {/* Logo */}
-        <div data-tauri-drag-region className="flex items-center gap-[10px] px-[10px] mb-8 relative z-10">
-          <div className="w-8 h-8 rounded-[9px] bg-chirp-yellow flex items-center justify-center shadow-logo-glow">
-            <BirdMark size={18} color="white" />
-          </div>
-          <span className="font-display font-black text-xl text-white tracking-[-0.5px]">
-            chirp
-          </span>
-        </div>
-
         {/* Nav items */}
         <nav className="flex flex-col gap-0.5 relative z-10">
           {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
@@ -149,13 +152,13 @@ export function Settings() {
             onClick={() => setAboutModalOpen(true)}
             className="w-full text-center mt-3 text-[10px] text-white/[0.15] hover:text-white/30 transition-colors"
           >
-            v1.0.0
+            v{appVersion}
           </button>
         </div>
       </div>
 
       {/* Content area */}
-      <div className="flex-1 overflow-y-auto px-8 py-7 bg-surface">
+      <div className="flex-1 overflow-y-auto overflow-x-hidden px-8 py-7 bg-surface">
         <div className="max-w-5xl mx-auto">
           <div key={settingsPage} className="animate-fade-in">
             <PageComponent />
