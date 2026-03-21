@@ -219,12 +219,6 @@ fn smart_format(text: &str, skip_ai_overlap: bool) -> String {
         })
         .to_string();
 
-    // Detect list patterns and format as numbered list
-    // Skip when AI cleanup is enabled — the AI model handles lists better
-    if !skip_ai_overlap {
-        result = format_lists(&result);
-    }
-
     result
 }
 
