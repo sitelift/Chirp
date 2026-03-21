@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { Sparkles, CheckCircle } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
@@ -9,11 +9,19 @@ interface SmartCleanupProps {
   onNext: () => void
 }
 
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
 export function SmartCleanup({ onNext }: SmartCleanupProps) {
   const store = useAppStore()
   const tauri = useTauri()
   const [state, setState] = useState<'pre' | 'downloading' | 'starting' | 'complete' | 'error'>('pre')
   const [error, setError] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   // Auto-advance 2s after completion
   useEffect(() => {
@@ -22,6 +30,24 @@ export function SmartCleanup({ onNext }: SmartCleanupProps) {
       return () => clearTimeout(timer)
     }
   }, [state, onNext])
+
+  // Elapsed time counter
+  useEffect(() => {
+    if (state === 'downloading' || state === 'starting') {
+      if (!timerRef.current) {
+        setElapsed(0)
+        timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000)
+      }
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [state])
 
   const handleEnable = async () => {
     store.updateSettings({ aiCleanup: true })
@@ -34,14 +60,20 @@ export function SmartCleanup({ onNext }: SmartCleanupProps) {
       })
       store.setLlmDownloadProgress(null)
 
-      // Auto-start server
+      // Auto-start server with 30s timeout
       setState('starting')
       try {
-        await tauri.startLlm()
+        const startPromise = tauri.startLlm()
+        const timeoutPromise = new Promise<never>((_, reject) =>
+          setTimeout(() => reject(new Error('LLM start timed out')), 30000)
+        )
+        await Promise.race([startPromise, timeoutPromise])
         store.setLlmReady(true)
-      } catch {}
-
-      setState('complete')
+        setState('complete')
+      } catch {
+        setError('Smart Cleanup failed to start. You can retry or skip and enable it later in Settings.')
+        setState('error')
+      }
     } catch {
       setError('Download failed. Please check your internet connection.')
       store.setLlmDownloadProgress(null)
@@ -51,75 +83,52 @@ export function SmartCleanup({ onNext }: SmartCleanupProps) {
 
   return (
     <div className="flex flex-col animate-fade-in">
-      <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
-        STEP 4 OF 4
-      </span>
-
-      {/* Icon card */}
-      <div
-        className={`w-20 h-20 rounded-2xl flex items-center justify-center mt-6 border transition-colors duration-300 ${
-          state === 'complete'
-            ? 'bg-green-50 border-green-200'
-            : state === 'downloading' || state === 'starting'
-              ? 'bg-chirp-amber-50 border-chirp-amber-200 animate-pulse-gentle'
-              : 'bg-chirp-amber-50 border-chirp-amber-200'
-        }`}
-      >
-        {state === 'complete' ? (
-          <CheckCircle size={32} className="text-chirp-success" strokeWidth={1.5} />
-        ) : (
-          <Sparkles size={32} className="text-chirp-amber-500" strokeWidth={1.5} />
-        )}
-      </div>
-
       {state === 'complete' ? (
         <>
-          <h1 className="mt-6 font-display font-extrabold text-3xl text-chirp-stone-900">
-            You're all set!
-          </h1>
-          <p className="mt-2 font-body text-[15px] text-chirp-stone-500">
-            Smart Cleanup is ready. Your transcriptions will be polished automatically.
+          <div className="flex items-center gap-2">
+            <CheckCircle size={20} className="text-chirp-success" strokeWidth={1.5} />
+            <h1 className="font-display font-extrabold text-2xl text-chirp-stone-900">
+              You're all set!
+            </h1>
+          </div>
+          <p className="mt-2 font-body text-sm text-chirp-stone-500">
+            Your transcriptions will be polished automatically.
           </p>
-          <div className="mt-8">
-            <Button size="onboarding" className="w-full text-base" onClick={onNext}>
+          <div className="mt-6">
+            <Button size="onboarding" className="min-w-[160px] text-base" onClick={onNext}>
               Start Using Chirp
             </Button>
           </div>
         </>
       ) : (
         <>
-          <h1 className="mt-6 font-display font-extrabold text-3xl text-chirp-stone-900">
-            Make your text sound polished
+          <h1 className="font-display font-extrabold text-2xl text-chirp-stone-900">
+            Smart Cleanup
           </h1>
-          <p className="mt-2 font-body text-[15px] text-chirp-stone-500">
-            Chirp can automatically clean up grammar, filler words, and messy sentences.
+          <p className="mt-1 font-body text-sm text-chirp-stone-500">
+            Automatically clean up grammar and filler words.
           </p>
 
-          {/* Before/after example */}
-          <div className="rounded-xl border border-card-border bg-white p-4 mt-5 flex flex-col gap-3">
-            <div>
-              <span className="font-body text-[10px] font-semibold uppercase tracking-[0.5px] text-chirp-stone-400">Before</span>
-              <p className="font-body text-sm text-chirp-stone-500 mt-1 italic">
-                "{CLEANUP_EXAMPLE.before}"
-              </p>
+          {/* Compact before/after */}
+          <div className="rounded-lg border border-card-border bg-chirp-stone-50 p-3 mt-4 text-sm">
+            <div className="flex gap-2">
+              <span className="font-body text-[10px] font-semibold uppercase tracking-wide text-chirp-stone-400 shrink-0 mt-0.5">Before</span>
+              <p className="font-body text-chirp-stone-500 italic">"{CLEANUP_EXAMPLE.before}"</p>
             </div>
-            <div className="border-t border-card-border pt-3">
-              <span className="font-body text-[10px] font-semibold uppercase tracking-[0.5px] text-chirp-amber-500">After</span>
-              <p className="font-body text-sm text-chirp-stone-900 mt-1">
-                "{CLEANUP_EXAMPLE.after}"
-              </p>
+            <div className="flex gap-2 mt-2 pt-2 border-t border-card-border">
+              <span className="font-body text-[10px] font-semibold uppercase tracking-wide text-chirp-amber-500 shrink-0 mt-0.5">After</span>
+              <p className="font-body text-chirp-stone-800">"{CLEANUP_EXAMPLE.after}"</p>
             </div>
           </div>
 
-          {/* Model size note */}
-          <p className="font-body text-xs text-chirp-stone-400 mt-3">
-            {LLM_MODEL.friendlySize} download · runs entirely on your device
+          <p className="font-body text-xs text-chirp-stone-400 mt-2">
+            {LLM_MODEL.friendlySize} download, runs on your device
           </p>
 
           {/* Progress bar (downloading state) */}
           {(state === 'downloading' || state === 'starting') && store.llmDownloadProgress !== null && (
-            <div className="mt-6">
-              <div className="h-3 rounded-full bg-chirp-stone-200 overflow-hidden">
+            <div className="mt-4">
+              <div className="h-2 rounded-full bg-chirp-stone-200 overflow-hidden">
                 <div
                   className="h-full rounded-full bg-chirp-amber-400 transition-all duration-200 relative overflow-hidden"
                   style={{ width: `${store.llmDownloadProgress}%` }}
@@ -130,20 +139,37 @@ export function SmartCleanup({ onNext }: SmartCleanupProps) {
               <div className="flex justify-between mt-2">
                 <span className="font-body text-sm text-chirp-stone-500">
                   {store.llmDownloadProgress < 96
-                    ? 'Downloading Smart Cleanup...'
+                    ? `Downloading... ${store.llmDownloadProgress}%`
                     : 'Extracting files...'}
                 </span>
-                <span className="font-mono text-sm font-medium text-chirp-stone-700">
-                  {store.llmDownloadProgress}%
+                <span className="font-mono text-sm text-chirp-stone-400">
+                  {formatElapsed(elapsed)} elapsed
                 </span>
               </div>
+              <button
+                onClick={onNext}
+                className="mt-3 font-body text-sm text-chirp-stone-400 hover:text-chirp-stone-600 transition-colors"
+              >
+                Skip
+              </button>
             </div>
           )}
 
           {state === 'starting' && store.llmDownloadProgress === null && (
-            <div className="mt-6 flex items-center gap-2">
-              <div className="h-2 w-2 rounded-full bg-chirp-amber-400 animate-pulse" />
-              <span className="font-body text-sm text-chirp-stone-500">Starting Smart Cleanup...</span>
+            <div className="mt-4">
+              <div className="flex items-center gap-2">
+                <div className="h-2 w-2 rounded-full bg-chirp-amber-400 animate-pulse" />
+                <span className="font-body text-sm text-chirp-stone-500">Starting Smart Cleanup...</span>
+                <span className="font-mono text-sm text-chirp-stone-400 ml-auto">
+                  {formatElapsed(elapsed)} elapsed
+                </span>
+              </div>
+              <button
+                onClick={onNext}
+                className="mt-3 font-body text-sm text-chirp-stone-400 hover:text-chirp-stone-600 transition-colors"
+              >
+                Skip
+              </button>
             </div>
           )}
 
@@ -156,10 +182,10 @@ export function SmartCleanup({ onNext }: SmartCleanupProps) {
 
           {/* Action buttons */}
           {(state === 'pre' || state === 'error') && (
-            <div className="mt-8 flex flex-col gap-3">
-              <Button size="onboarding" className="w-full text-base" onClick={handleEnable}>
+            <div className="mt-6 flex flex-col gap-2">
+              <Button size="onboarding" className="min-w-[160px] text-base" onClick={handleEnable}>
                 <Sparkles size={16} className="mr-2" />
-                {state === 'error' ? 'Retry Setup' : 'Turn on Smart Cleanup'}
+                {state === 'error' ? 'Retry' : 'Turn on Smart Cleanup'}
               </Button>
               <button
                 onClick={onNext}

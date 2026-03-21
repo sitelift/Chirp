@@ -1,5 +1,5 @@
-import { useState, useEffect } from 'react'
-import { Download, CheckCircle } from 'lucide-react'
+import { useState, useEffect, useRef } from 'react'
+import { CheckCircle } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { STT_MODELS } from '../../lib/constants'
@@ -9,11 +9,19 @@ interface ModelDownloadProps {
   onFinish: () => void
 }
 
+function formatElapsed(seconds: number): string {
+  const m = Math.floor(seconds / 60)
+  const s = seconds % 60
+  return `${m}:${s.toString().padStart(2, '0')}`
+}
+
 export function ModelDownload({ onFinish }: ModelDownloadProps) {
   const store = useAppStore()
   const tauri = useTauri()
   const [state, setState] = useState<'pre' | 'downloading' | 'complete' | 'error'>('pre')
   const [error, setError] = useState<string | null>(null)
+  const [elapsed, setElapsed] = useState(0)
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const currentModel = STT_MODELS.find((m) => m.id === store.model)
   const isAlreadyDownloaded = store.modelDownloaded[store.model]
@@ -32,6 +40,22 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
       return () => clearTimeout(timer)
     }
   }, [state, onFinish])
+
+  // Elapsed time counter
+  useEffect(() => {
+    if (state === 'downloading') {
+      setElapsed(0)
+      timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000)
+    } else {
+      if (timerRef.current) {
+        clearInterval(timerRef.current)
+        timerRef.current = null
+      }
+    }
+    return () => {
+      if (timerRef.current) clearInterval(timerRef.current)
+    }
+  }, [state])
 
   const handleDownload = async () => {
     setState('downloading')
@@ -55,66 +79,46 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
 
   return (
     <div className="flex flex-col animate-fade-in">
-      <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
-        STEP 3 OF 4
-      </span>
-
-      {/* Icon card */}
-      <div
-        className={`w-20 h-20 rounded-2xl flex items-center justify-center mt-6 border transition-colors duration-300 ${
-          state === 'complete'
-            ? 'bg-green-50 border-green-200'
-            : state === 'downloading'
-              ? 'bg-chirp-amber-50 border-chirp-amber-200 animate-pulse-gentle'
-              : 'bg-chirp-amber-50 border-chirp-amber-200'
-        }`}
-      >
-        {state === 'complete' ? (
-          <CheckCircle size={32} className="text-chirp-success" strokeWidth={1.5} />
-        ) : (
-          <Download size={32} className="text-chirp-amber-500" strokeWidth={1.5} />
-        )}
-      </div>
-
       {state === 'complete' ? (
         <>
-          <h1 className="mt-6 font-display font-extrabold text-3xl text-chirp-stone-900">
-            Speech model ready!
-          </h1>
-          <p className="mt-2 font-body text-[15px] text-chirp-stone-500">
-            Chirp can now transcribe your voice. One more optional step...
+          <div className="flex items-center gap-2">
+            <CheckCircle size={20} className="text-chirp-success" strokeWidth={1.5} />
+            <h1 className="font-display font-extrabold text-2xl text-chirp-stone-900">
+              Speech model ready
+            </h1>
+          </div>
+          <p className="mt-2 font-body text-sm text-chirp-stone-500">
+            One more optional step...
           </p>
-          <div className="mt-8">
-            <Button size="onboarding" className="w-full text-base" onClick={onFinish}>
+          <div className="mt-6">
+            <Button size="onboarding" className="min-w-[160px] text-base" onClick={onFinish}>
               Continue
             </Button>
           </div>
         </>
       ) : (
         <>
-          <h1 className="mt-6 font-display font-extrabold text-3xl text-chirp-stone-900">
+          <h1 className="font-display font-extrabold text-2xl text-chirp-stone-900">
             Download Speech Model
           </h1>
 
-          {/* Model info card */}
-          <div className="rounded-xl bg-white border border-card-border p-4 mt-4">
-            <div className="flex items-center justify-between">
-              <span className="font-mono text-sm font-medium text-chirp-stone-900">
-                {currentModel?.name}
-              </span>
-              <span className="font-body text-sm text-chirp-stone-500">
-                {currentModel?.size}
-              </span>
-            </div>
-            <p className="font-body text-xs text-chirp-stone-400 mt-1">
-              One-time download · runs entirely on your device
-            </p>
+          {/* Model info */}
+          <div className="flex items-center justify-between mt-3 px-1">
+            <span className="font-mono text-sm font-medium text-chirp-stone-700">
+              {currentModel?.name}
+            </span>
+            <span className="font-body text-sm text-chirp-stone-400">
+              {currentModel?.size}
+            </span>
           </div>
+          <p className="font-body text-xs text-chirp-stone-400 mt-1 px-1">
+            One-time download, runs entirely on your device
+          </p>
 
-          {/* Progress bar (downloading state) */}
+          {/* Progress bar */}
           {state === 'downloading' && store.modelDownloadProgress !== null && (
-            <div className="mt-6">
-              <div className="h-3 rounded-full bg-chirp-stone-200 overflow-hidden">
+            <div className="mt-5">
+              <div className="h-2 rounded-full bg-chirp-stone-200 overflow-hidden">
                 <div
                   className="h-full rounded-full bg-chirp-amber-400 transition-all duration-200 relative overflow-hidden"
                   style={{ width: `${store.modelDownloadProgress}%` }}
@@ -125,16 +129,19 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
               <div className="flex justify-between mt-2">
                 <span className="font-body text-sm text-chirp-stone-500">
                   {store.modelDownloadProgress < 96
-                    ? 'Downloading model...'
+                    ? `Downloading... ${store.modelDownloadProgress}%`
                     : 'Extracting files...'}
                 </span>
-                <span className="font-mono text-sm font-medium text-chirp-stone-700">
-                  {store.modelDownloadProgress}%
+                <span className="font-mono text-sm text-chirp-stone-400">
+                  {formatElapsed(elapsed)} elapsed
                 </span>
               </div>
-              <p className="font-body text-xs text-chirp-stone-400 mt-2">
-                This may take a few minutes
-              </p>
+              <button
+                onClick={onFinish}
+                className="mt-3 font-body text-sm text-chirp-stone-400 hover:text-chirp-stone-600 transition-colors"
+              >
+                Skip
+              </button>
             </div>
           )}
 
@@ -142,14 +149,13 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
           {state === 'error' && error && (
             <div className="rounded-lg bg-red-50 border border-red-200 p-3 mt-4">
               <p className="font-body text-sm text-red-700">{error}</p>
-              <p className="font-body text-xs text-red-500 mt-1">Check your internet connection</p>
             </div>
           )}
 
           {/* Download / Retry button */}
           {(state === 'pre' || state === 'error') && (
-            <div className="mt-8">
-              <Button size="onboarding" className="w-full text-base" onClick={handleDownload}>
+            <div className="mt-6">
+              <Button size="onboarding" className="min-w-[160px] text-base" onClick={handleDownload}>
                 {state === 'error' ? 'Retry Download' : 'Download Model'}
               </Button>
             </div>

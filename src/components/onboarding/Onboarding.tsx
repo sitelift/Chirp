@@ -17,47 +17,36 @@ export function Onboarding() {
   }
 
   return (
-    <div className="flex h-screen">
-      {/* Left branded panel — dark sidebar */}
-      <div className="w-[40%] bg-sidebar flex flex-col items-center justify-center relative overflow-hidden">
-        {/* Floating amber gradient orb */}
-        <div className="absolute w-72 h-72 rounded-full blur-3xl opacity-20 bg-gradient-to-br from-chirp-yellow via-chirp-amber-400 to-chirp-amber-600 animate-float-1" />
-
-        {/* Bird mark with glow */}
-        <div className="relative">
-          <div className="absolute inset-0 w-[120px] h-[120px] rounded-full blur-2xl opacity-40 bg-chirp-yellow" />
-          <BirdMark size={120} className="relative" />
+    <div className="h-screen overflow-hidden bg-surface flex items-center justify-center">
+      <div className="max-w-lg w-full mx-auto bg-white rounded-[18px] shadow-lg p-8">
+        {/* Logo */}
+        <div className="flex items-center gap-2 mb-6">
+          <BirdMark size={24} />
+          <span className="font-display font-black text-lg text-chirp-stone-900">
+            chirp
+          </span>
         </div>
 
-        <span className="font-display font-black text-4xl text-white mt-4 relative">
-          chirp
-        </span>
-        <span className="font-body text-lg text-white/40 mt-2 relative">
-          Speak freely.
-        </span>
+        {/* Step content */}
+        {step === 0 && <Welcome onNext={() => setStep(1)} />}
+        {step === 1 && <SetupStep onNext={() => setStep(2)} />}
+        {step === 2 && <ModelDownload onFinish={() => setStep(3)} />}
+        {step === 3 && <SmartCleanup onNext={handleFinish} />}
 
-        {/* Step indicator dots */}
-        <div className="flex gap-2 mt-12 relative">
+        {/* Progress dots */}
+        <div className="flex justify-center gap-2 mt-6">
           {Array.from({ length: STEPS }, (_, i) => (
             <div
               key={i}
-              className={`rounded-full transition-all duration-300 ease-out h-2 ${
+              className={`rounded-full transition-all duration-300 ease-out h-1.5 ${
                 i === step
-                  ? 'w-8 bg-chirp-yellow'
-                  : 'w-2 bg-white/20'
+                  ? 'w-6 bg-chirp-amber-400'
+                  : i < step
+                    ? 'w-1.5 bg-chirp-amber-300'
+                    : 'w-1.5 bg-chirp-stone-200'
               }`}
             />
           ))}
-        </div>
-      </div>
-
-      {/* Right content panel */}
-      <div className="w-[60%] bg-surface flex items-center justify-center px-16">
-        <div className="max-w-[480px] w-full">
-          {step === 0 && <Welcome onNext={() => setStep(1)} />}
-          {step === 1 && <SetupStep onNext={() => setStep(2)} />}
-          {step === 2 && <ModelDownload onFinish={() => setStep(3)} />}
-          {step === 3 && <SmartCleanup onNext={handleFinish} />}
         </div>
       </div>
     </div>
