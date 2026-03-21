@@ -61,3 +61,6 @@ target/
 
 # Superpowers brainstorm artifacts
 .superpowers/
+
+# Flat DLL copies for Windows bundling
+src-tauri/*.dll

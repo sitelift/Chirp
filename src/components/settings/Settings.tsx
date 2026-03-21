@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { Home, BookOpen, Zap, Settings as SettingsIcon, Check } from 'lucide-react'
+import { getCurrentWindow } from '@tauri-apps/api/window'
+import { Home, BookOpen, Zap, Settings as SettingsIcon, Check, Minus, Square, X } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { BirdMark } from '../shared/BirdMark'
@@ -57,7 +58,30 @@ export function Settings() {
   const PageComponent = PAGES[settingsPage] ?? HomePage
 
   return (
-    <div className="flex h-screen no-select">
+    <div className="flex flex-col h-screen no-select">
+      {/* Custom titlebar */}
+      <div data-tauri-drag-region className="flex items-center justify-end h-8 shrink-0 bg-sidebar">
+        <button
+          onClick={() => getCurrentWindow().minimize()}
+          className="w-[46px] h-full flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
+        >
+          <Minus size={16} />
+        </button>
+        <button
+          onClick={() => getCurrentWindow().toggleMaximize()}
+          className="w-[46px] h-full flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
+        >
+          <Square size={12} />
+        </button>
+        <button
+          onClick={() => getCurrentWindow().close()}
+          className="w-[46px] h-full flex items-center justify-center text-white/40 hover:bg-red-500 hover:text-white transition-colors"
+        >
+          <X size={16} />
+        </button>
+      </div>
+
+      <div className="flex flex-1 min-h-0">
       {/* Dark sidebar */}
       <div className="flex w-[220px] shrink-0 flex-col bg-sidebar p-[20px_12px] relative overflow-hidden sidebar-noise sidebar-glow">
         {/* Logo */}
@@ -137,8 +161,11 @@ export function Settings() {
       {/* Content area */}
       <div className="flex-1 overflow-y-auto px-8 py-7 bg-surface">
         <div className="max-w-5xl mx-auto">
-          <PageComponent />
+          <div key={settingsPage} className="animate-fade-in">
+            <PageComponent />
+          </div>
         </div>
+      </div>
       </div>
 
       {/* Saved indicator */}
