@@ -1,10 +1,10 @@
 import { useState, useMemo } from 'react'
-import { Search, Download, Trash2, Copy, Lightbulb, Cpu } from 'lucide-react'
+import { Search, Download, Trash2, Copy, BookOpen, Zap } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
 import { useCountUp } from '../../hooks/useCountUp'
-import { STT_MODELS } from '../../lib/constants'
+import { TONE_MODES } from '../../lib/constants'
 import {
   formatRelativeTime,
   getWeekBarChartData,
@@ -13,7 +13,8 @@ import {
   groupHistoryByDay,
   formatDayLabel,
 } from '../../lib/utils'
-import { ContextCard } from '../shared/ContextCard'
+import { Toggle } from '../shared/Toggle'
+import { Select } from '../shared/Select'
 
 function getGreeting(): string {
   const hour = new Date().getHours()
@@ -22,23 +23,20 @@ function getGreeting(): string {
   return 'Good evening'
 }
 
-const QUICK_TIPS = [
-  'Try adding a snippet for text you type often, like your email signature',
-  'You can change your hotkey anytime in Settings',
-  'Dictionary rules auto-replace words as you dictate',
-  'Smart Cleanup polishes grammar and removes filler words automatically',
-  'Hold the hotkey to talk, release to transcribe',
-]
-
 export function HomePage() {
   const store = useAppStore()
   const tauri = useTauri()
   const [llmDownloaded] = useLlmDownloaded()
-  const [downloadError, setDownloadError] = useState<string | null>(null)
   const [copiedTimestamp, setCopiedTimestamp] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
+  const [cleanupStarting, setCleanupStarting] = useState(false)
+  const [quickAddTab, setQuickAddTab] = useState<'dictionary' | 'snippets'>('dictionary')
+  const [qaFrom, setQaFrom] = useState('')
+  const [qaTo, setQaTo] = useState('')
+  const [qaTrigger, setQaTrigger] = useState('')
+  const [qaExpansion, setQaExpansion] = useState('')
+  const [qaAdded, setQaAdded] = useState(false)
 
-  const currentModel = STT_MODELS.find((m) => m.id === store.model)
   const isDownloaded = store.modelDownloaded[store.model]
 
   // Stats
@@ -87,8 +85,6 @@ export function HomePage() {
   // Group by day
   const grouped = groupHistoryByDay(filteredHistory)
 
-  const tipIndex = useMemo(() => Math.floor(Date.now() / 86400000) % QUICK_TIPS.length, [])
-
   // Formatted date
   const dateStr = new Date().toLocaleDateString('en-US', {
     weekday: 'long',
@@ -96,21 +92,43 @@ export function HomePage() {
     day: 'numeric',
   })
 
-  const handleDownload = async () => {
-    setDownloadError(null)
-    store.setModelDownloadProgress(0)
-    try {
-      await tauri.downloadModel(store.model, (progress) => {
-        store.setModelDownloadProgress(progress)
-      })
-      store.updateSettings({
-        modelDownloaded: { ...store.modelDownloaded, [store.model]: true },
-      })
-    } catch {
-      setDownloadError('Download failed. Check your internet connection and try again.')
-    } finally {
-      store.setModelDownloadProgress(null)
+  const handleCleanupToggle = async (enabled: boolean) => {
+    store.updateSettings({ aiCleanup: enabled })
+    if (enabled && llmDownloaded && !store.llmReady) {
+      setCleanupStarting(true)
+      try {
+        await tauri.startLlm()
+        store.setLlmReady(true)
+      } catch { /* ignore */ }
+      setCleanupStarting(false)
+    } else if (!enabled && store.llmReady) {
+      try {
+        await tauri.stopLlm()
+        store.setLlmReady(false)
+      } catch { /* ignore */ }
     }
+  }
+
+  const handleQuickAddDict = () => {
+    const from = qaFrom.trim()
+    const to = qaTo.trim()
+    if (!from || !to) return
+    store.addDictionaryEntry(from, to)
+    setQaFrom('')
+    setQaTo('')
+    setQaAdded(true)
+    setTimeout(() => setQaAdded(false), 1200)
+  }
+
+  const handleQuickAddSnippet = () => {
+    const trigger = qaTrigger.trim()
+    const expansion = qaExpansion.trim()
+    if (!trigger || !expansion) return
+    store.addSnippet(trigger, expansion)
+    setQaTrigger('')
+    setQaExpansion('')
+    setQaAdded(true)
+    setTimeout(() => setQaAdded(false), 1200)
   }
 
   const handleCopy = async (text: string, timestamp: string) => {
@@ -250,66 +268,142 @@ export function HomePage() {
         </div>
       </div>
 
-      {/* Contextual Cards Row — always both visible */}
+      {/* Contextual Cards Row */}
       <div className="flex gap-[10px]">
-        <ContextCard
-          icon={<Lightbulb size={16} />}
-          title="Quick tip"
-          description={QUICK_TIPS[tipIndex]}
-          variant="suggestion"
-        />
-        <ContextCard
-          icon={<Cpu size={16} />}
-          title="Models"
-          description={
-            isDownloaded && llmDownloaded
-              ? 'Speech and cleanup models ready. Ready to transcribe.'
-              : isDownloaded
-                ? 'Speech model ready. Cleanup model not downloaded.'
-                : 'Speech model needs to be downloaded.'
-          }
-          variant="default"
-          actions={
-            !isDownloaded
-              ? [
-                  {
-                    label: store.modelDownloadProgress !== null
-                      ? `Downloading... ${store.modelDownloadProgress}%`
-                      : `Download (${currentModel?.size})`,
-                    onClick: handleDownload,
-                  },
-                ]
-              : undefined
-          }
-        />
-      </div>
-
-      {/* Download progress + error */}
-      {!isDownloaded && store.modelDownloadProgress !== null && (
-        <div className="rounded-card border border-card-border bg-white p-4">
-          <div className="flex items-center gap-2">
-            <div className="h-2 flex-1 overflow-hidden rounded-full bg-chirp-stone-200">
-              <div
-                className="h-full rounded-full bg-chirp-amber-400 transition-all duration-200 relative overflow-hidden"
-                style={{ width: `${store.modelDownloadProgress}%` }}
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/30 to-transparent animate-shimmer" />
+        {/* Smart Cleanup controls */}
+        <div className="flex-1 rounded-card border border-card-border bg-white p-4 hover-lift">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <span className="text-[13px] font-semibold text-[#1a1a1a]">Smart Cleanup</span>
+              {store.aiCleanup && (
+                <span className="flex items-center gap-1">
+                  {cleanupStarting ? (
+                    <>
+                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
+                      <span className="text-[11px] text-[#aaa]">Starting...</span>
+                    </>
+                  ) : store.llmReady ? (
+                    <>
+                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
+                      <span className="text-[11px] text-[#aaa]">Active</span>
+                    </>
+                  ) : !llmDownloaded ? (
+                    <>
+                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400" />
+                      <span className="text-[11px] text-chirp-amber-500">Model needed</span>
+                    </>
+                  ) : null}
+                </span>
+              )}
+            </div>
+            <Toggle
+              checked={store.aiCleanup}
+              onChange={handleCleanupToggle}
+              disabled={cleanupStarting}
+            />
+          </div>
+          <p className="text-[11px] text-[#aaa] mb-3">Polish grammar and filler words with local AI</p>
+          {store.aiCleanup && (
+            <div className="flex items-center justify-between pt-3 border-t border-[#F5F4F0]">
+              <span className="text-[12px] text-[#888]">Tone</span>
+              <div className="w-[140px]">
+                <Select
+                  options={TONE_MODES.map(m => ({ value: m.id, label: m.label }))}
+                  value={store.toneMode}
+                  onChange={(v) => store.updateSettings({ toneMode: String(v) })}
+                />
               </div>
             </div>
-            <span className="font-mono text-xs text-[#888] w-10 text-right">
-              {store.modelDownloadProgress}%
-            </span>
-          </div>
-          <p className="font-body text-xs text-[#888] mt-1">
-            {store.modelDownloadProgress < 96
-              ? `Downloading ${currentModel?.name}...`
-              : 'Extracting model...'}
-          </p>
+          )}
         </div>
-      )}
-      {downloadError && (
-        <p className="font-body text-xs text-chirp-error">{downloadError}</p>
-      )}
+
+        {/* Quick-add dictionary/snippets */}
+        <div className="flex-1 rounded-card border border-card-border bg-white p-4 hover-lift">
+          {/* Tab header */}
+          <div className="flex items-center gap-3 mb-3">
+            <button
+              onClick={() => setQuickAddTab('dictionary')}
+              className={`flex items-center gap-1.5 text-[13px] font-semibold transition-colors ${
+                quickAddTab === 'dictionary' ? 'text-[#1a1a1a]' : 'text-[#ccc] hover:text-[#888]'
+              }`}
+            >
+              <BookOpen size={14} />
+              Dictionary
+              <span className="text-[10px] font-normal text-[#bbb]">{store.dictionary.length}</span>
+            </button>
+            <span className="text-[#e5e5e5]">|</span>
+            <button
+              onClick={() => setQuickAddTab('snippets')}
+              className={`flex items-center gap-1.5 text-[13px] font-semibold transition-colors ${
+                quickAddTab === 'snippets' ? 'text-[#1a1a1a]' : 'text-[#ccc] hover:text-[#888]'
+              }`}
+            >
+              <Zap size={14} />
+              Snippets
+              <span className="text-[10px] font-normal text-[#bbb]">{store.snippets.length}</span>
+            </button>
+          </div>
+
+          {qaAdded ? (
+            <div className="flex items-center justify-center py-4 text-[12px] text-chirp-success font-medium animate-fade-in">
+              Added
+            </div>
+          ) : quickAddTab === 'dictionary' ? (
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={qaFrom}
+                onChange={(e) => setQaFrom(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleQuickAddDict()}
+                placeholder="Heard..."
+                className="flex-1 h-[34px] rounded-lg border border-card-border bg-[#FAFAF8] px-2.5 text-[12px] text-[#333] placeholder:text-[#ccc] focus:border-chirp-yellow focus:outline-none transition-colors"
+              />
+              <input
+                type="text"
+                value={qaTo}
+                onChange={(e) => setQaTo(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleQuickAddDict()}
+                placeholder="Replace with..."
+                className="flex-1 h-[34px] rounded-lg border border-card-border bg-[#FAFAF8] px-2.5 text-[12px] text-[#333] placeholder:text-[#ccc] focus:border-chirp-yellow focus:outline-none transition-colors"
+              />
+              <button
+                onClick={handleQuickAddDict}
+                disabled={!qaFrom.trim() || !qaTo.trim()}
+                className="h-[34px] px-3 rounded-lg bg-[#1a1a1a] text-white text-[12px] font-medium disabled:bg-[#ccc] transition-colors"
+              >
+                Add
+              </button>
+            </div>
+          ) : (
+            <div className="flex flex-col gap-2">
+              <input
+                type="text"
+                value={qaTrigger}
+                onChange={(e) => setQaTrigger(e.target.value)}
+                placeholder="Trigger phrase..."
+                className="h-[34px] rounded-lg border border-card-border bg-[#FAFAF8] px-2.5 text-[12px] text-[#333] placeholder:text-[#ccc] focus:border-chirp-yellow focus:outline-none transition-colors"
+              />
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={qaExpansion}
+                  onChange={(e) => setQaExpansion(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleQuickAddSnippet()}
+                  placeholder="Expands to..."
+                  className="flex-1 h-[34px] rounded-lg border border-card-border bg-[#FAFAF8] px-2.5 text-[12px] text-[#333] placeholder:text-[#ccc] focus:border-chirp-yellow focus:outline-none transition-colors"
+                />
+                <button
+                  onClick={handleQuickAddSnippet}
+                  disabled={!qaTrigger.trim() || !qaExpansion.trim()}
+                  className="h-[34px] px-3 rounded-lg bg-[#1a1a1a] text-white text-[12px] font-medium disabled:bg-[#ccc] transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* History Section */}
       <div className="mt-2">
