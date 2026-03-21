@@ -29,7 +29,7 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
   // If model is already downloaded, jump straight to complete
   useEffect(() => {
     if (isAlreadyDownloaded && state === 'pre') {
-      setState('complete')
+      setState('complete') // eslint-disable-line react-hooks/set-state-in-effect -- intentional state init from prop
     }
   }, [isAlreadyDownloaded, state])
 
@@ -44,7 +44,7 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
   // Elapsed time counter
   useEffect(() => {
     if (state === 'downloading') {
-      setElapsed(0)
+      setElapsed(0) // eslint-disable-line react-hooks/set-state-in-effect -- reset timer on state change
       timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000)
     } else {
       if (timerRef.current) {

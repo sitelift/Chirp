@@ -7,7 +7,7 @@ export function useCountUp(target: number, duration = 800): number {
 
   useEffect(() => {
     if (target === 0) {
-      setValue(0)
+      setValue(0) // eslint-disable-line react-hooks/set-state-in-effect -- reset animation
       return
     }
 

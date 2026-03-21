@@ -2,8 +2,6 @@ use crate::audio;
 use crate::cleanup;
 use crate::dictionary;
 use crate::history;
-#[cfg(any(target_os = "macos", target_os = "windows"))]
-use crate::hotkey;
 use crate::inject;
 use crate::llm;
 use crate::settings;
@@ -12,6 +10,7 @@ use crate::state::*;
 use crate::transcribe;
 use std::io::Cursor;
 use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, State};
 use tauri_plugin_autostart::ManagerExt;
@@ -22,6 +21,7 @@ const CHIRP_SOUND: &[u8] = include_bytes!("../sounds/chirp.wav");
 /// cpal::Stream is !Send but we only access it from the main thread.
 pub struct StreamHandle(pub std::sync::Mutex<Option<StreamWrapper>>);
 
+#[allow(dead_code)]
 pub struct StreamWrapper(cpal::Stream);
 unsafe impl Send for StreamWrapper {}
 unsafe impl Sync for StreamWrapper {}
@@ -53,8 +53,6 @@ pub async fn update_settings(
 ) -> Result<(), String> {
     let mut s = state.lock().await;
     let old_hotkey = s.settings.hotkey.clone();
-    let old_hotkey_mode = s.settings.hotkey_mode.clone();
-    let old_hotkey_keycode = s.settings.hotkey_keycode;
 
     // Merge partial into current settings
     let mut settings_val = serde_json::to_value(&s.settings).unwrap();
@@ -67,29 +65,37 @@ pub async fn update_settings(
         serde_json::from_value(settings_val).map_err(|e| format!("Invalid settings: {e}"))?;
     settings::save_settings(&s.settings)?;
 
+    // If history retention changed, prune immediately
+    let new_retention = s.settings.history_retention_days;
+    if partial.get("historyRetentionDays").is_some() && new_retention > 0 {
+        history::prune_history(&mut s.history, new_retention);
+    }
+
     // Broadcast settings change to all windows (cross-window sync)
     let _ = app_handle.emit("settings-changed", &partial);
+
+    // Notify frontend to refresh history if retention changed
+    if partial.get("historyRetentionDays").is_some() {
+        let _ = app_handle.emit("history-changed", ());
+    }
+
+    // Sync autostart
+    let autostart = app_handle.autolaunch();
+    if s.settings.launch_at_login {
+        let _ = autostart.enable();
+    } else {
+        let _ = autostart.disable();
+    }
 
     // Re-register global shortcut if hotkey changed
     if s.settings.hotkey != old_hotkey {
         let new_hotkey = s.settings.hotkey.clone();
-
-        // Sync autostart before dropping lock
-        let autostart = app_handle.autolaunch();
-        if s.settings.launch_at_login {
-            let _ = autostart.enable();
-        } else {
-            let _ = autostart.disable();
-        }
         drop(s); // Release lock before accessing shortcut plugin
 
         use tauri_plugin_global_shortcut::GlobalShortcutExt;
         let gs = app_handle.global_shortcut();
-
-        // Unregister all existing shortcuts
         let _ = gs.unregister_all();
 
-        // Register the new one
         if let Ok(shortcut) = new_hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>() {
             let _ = gs.on_shortcut(shortcut, move |app, _shortcut, event| {
                 match event.state {
@@ -104,44 +110,13 @@ pub async fn update_settings(
                 }
             });
             log::info!("Re-registered global hotkey: {new_hotkey}");
+            let _ = app_handle.emit("hotkey-status", "active");
         } else {
             log::error!("Failed to parse new hotkey: {new_hotkey}");
+            let _ = app_handle.emit("hotkey-status", "failed");
         }
     } else {
-        // Sync autostart with launch_at_login setting
-        let autostart = app_handle.autolaunch();
-        let launch_at_login = s.settings.launch_at_login;
-        let new_mode = s.settings.hotkey_mode.clone();
-        let new_keycode = s.settings.hotkey_keycode;
-        drop(s); // Release lock before restart
-
-        if launch_at_login {
-            let _ = autostart.enable();
-        } else {
-            let _ = autostart.disable();
-        }
-
-        // Auto-restart key listener if mode or keycode changed
-        if new_mode != old_hotkey_mode || new_keycode != old_hotkey_keycode {
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            {
-                hotkey::stop_key_listener();
-                if new_mode == "dedicated_key" && new_keycode > 0 {
-                    let shared = state.inner().clone();
-                    hotkey::start_key_listener(app_handle.clone(), new_keycode, shared);
-                } else {
-                    let mut s = state.lock().await;
-                    s.hotkey_status = crate::state::HotkeyStatus::Idle;
-                    let _ = app_handle.emit("hotkey-status", "idle");
-                }
-            }
-            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-            {
-                let mut s = state.lock().await;
-                s.hotkey_status = crate::state::HotkeyStatus::Idle;
-                let _ = app_handle.emit("hotkey-status", "idle");
-            }
-        }
+        drop(s);
     }
 
     Ok(())
@@ -152,6 +127,9 @@ pub async fn update_dictionary(
     entries: Vec<DictionaryEntry>,
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
+    if entries.len() > 500 {
+        return Err("Dictionary cannot exceed 500 entries".to_string());
+    }
     let mut s = state.lock().await;
     s.dictionary = entries.clone();
     settings::save_dictionary(&s.dictionary)?;
@@ -169,6 +147,9 @@ pub async fn update_snippets(
     entries: Vec<SnippetEntry>,
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
+    if entries.len() > 100 {
+        return Err("Snippets cannot exceed 100 entries".to_string());
+    }
     let mut s = state.lock().await;
     s.snippets = entries.clone();
     settings::save_snippets(&s.snippets)?;
@@ -433,12 +414,8 @@ pub async fn stop_recording(
             return Err("transcription_failed".to_string());
         }
 
-        // Cleanup/formatting — skip list detection when AI cleanup will handle it
-        let formatted = if ai_cleanup {
-            cleanup::cleanup_text_for_ai(&raw, smart_fmt)
-        } else {
-            cleanup::cleanup_text(&raw, smart_fmt)
-        };
+        // Cleanup/formatting
+        let formatted = cleanup::cleanup_text(&raw, smart_fmt);
 
         // Apply dictionary and snippet expansions BEFORE AI cleanup so the
         // LLM doesn't alter trigger phrases (e.g. "my email" → "My E-mail").
@@ -566,8 +543,22 @@ pub async fn cancel_recording(
 }
 
 #[tauri::command]
-pub async fn download_model(model: String, app_handle: AppHandle) -> Result<(), String> {
-    transcribe::download_model(&model, app_handle).await
+pub async fn download_model(
+    model: String,
+    app_handle: AppHandle,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    transcribe::download_model(&model, app_handle).await?;
+
+    // Load the recognizer into app state immediately so recording works
+    // without requiring a restart.
+    let recognizer = transcribe::load_model(&model)
+        .map_err(|e| format!("Model downloaded but failed to load: {e}"))?;
+    let mut s = state.lock().await;
+    s.recognizer = Some(Arc::new(recognizer));
+    log::info!("Recognizer loaded after model download");
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -820,39 +811,6 @@ pub async fn transcribe_file(
 }
 
 #[tauri::command]
-pub async fn restart_hotkey_listener(
-    app_handle: AppHandle,
-    state: State<'_, SharedState>,
-) -> Result<(), String> {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    {
-        hotkey::stop_key_listener();
-
-        let s = state.lock().await;
-        if s.settings.hotkey_mode == "dedicated_key" && s.settings.hotkey_keycode > 0 {
-            let kc = s.settings.hotkey_keycode;
-            let name = s.settings.hotkey_key_name.clone();
-            let shared = state.inner().clone();
-            drop(s);
-            log::info!("Restarting key listener for '{name}' (keycode {kc})");
-            hotkey::start_key_listener(app_handle, kc, shared);
-        } else {
-            let mut s_mut = state.lock().await;
-            s_mut.hotkey_status = crate::state::HotkeyStatus::Idle;
-            drop(s_mut);
-            let _ = app_handle.emit("hotkey-status", "idle");
-        }
-    }
-
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        let _ = (&app_handle, &state); // suppress unused warnings
-    }
-
-    Ok(())
-}
-
-#[tauri::command]
 pub async fn get_hotkey_status(
     state: State<'_, SharedState>,
 ) -> Result<String, String> {
@@ -864,36 +822,5 @@ pub async fn get_hotkey_status(
         crate::state::HotkeyStatus::Failed => "failed",
     };
     Ok(status.to_string())
-}
-
-#[tauri::command]
-pub async fn check_input_monitoring() -> Result<bool, String> {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    { Ok(hotkey::preflight_listen_access()) }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    { Ok(true) }
-}
-
-#[derive(serde::Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct CapturedKey {
-    pub keycode: i64,
-    pub name: String,
-}
-
-#[tauri::command]
-pub async fn capture_hotkey_key() -> Result<CapturedKey, String> {
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
-    {
-        // Run capture on a blocking thread since it blocks until a key is pressed
-        let (keycode, name) = tokio::task::spawn_blocking(hotkey::capture_next_key)
-            .await
-            .map_err(|e| format!("capture task failed: {e}"))?;
-        Ok(CapturedKey { keycode, name })
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
-    {
-        Err("Dedicated key capture is not supported on this platform".into())
-    }
 }
 

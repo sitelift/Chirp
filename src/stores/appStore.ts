@@ -33,7 +33,6 @@ export interface AppState {
   // Settings
   hotkey: string
   launchAtLogin: boolean
-  showInMenuBar: boolean
   playSoundOnComplete: boolean
   autoDismissOverlay: boolean
   smartFormatting: boolean
@@ -41,7 +40,6 @@ export interface AppState {
   // Audio
   inputDevice: string
   inputLevel: number
-  noiseSuppression: boolean
 
   // Model
   model: SttModel
@@ -67,11 +65,6 @@ export interface AppState {
 
   // Tone
   toneMode: string
-
-  // Hotkey mode
-  hotkeyMode: 'dedicated_key' | 'custom'
-  hotkeyKeycode: number
-  hotkeyKeyName: string
 
   // Overlay
   overlayPosition: 'bottom' | 'top'
@@ -131,7 +124,6 @@ export const useAppStore = create<AppState>((set) => ({
   // Settings (from defaults)
   hotkey: DEFAULT_SETTINGS.hotkey,
   launchAtLogin: DEFAULT_SETTINGS.launchAtLogin,
-  showInMenuBar: DEFAULT_SETTINGS.showInMenuBar,
   playSoundOnComplete: DEFAULT_SETTINGS.playSoundOnComplete,
   autoDismissOverlay: DEFAULT_SETTINGS.autoDismissOverlay,
   smartFormatting: DEFAULT_SETTINGS.smartFormatting,
@@ -139,7 +131,6 @@ export const useAppStore = create<AppState>((set) => ({
   // Audio
   inputDevice: DEFAULT_SETTINGS.inputDevice,
   inputLevel: 0,
-  noiseSuppression: DEFAULT_SETTINGS.noiseSuppression,
 
   // Model
   model: DEFAULT_SETTINGS.model,
@@ -165,11 +156,6 @@ export const useAppStore = create<AppState>((set) => ({
 
   // Tone
   toneMode: DEFAULT_SETTINGS.toneMode,
-
-  // Hotkey mode
-  hotkeyMode: DEFAULT_SETTINGS.hotkeyMode,
-  hotkeyKeycode: DEFAULT_SETTINGS.hotkeyKeycode,
-  hotkeyKeyName: DEFAULT_SETTINGS.hotkeyKeyName,
 
   // Overlay
   overlayPosition: DEFAULT_SETTINGS.overlayPosition,

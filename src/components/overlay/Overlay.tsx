@@ -24,7 +24,6 @@ export function Overlay() {
   const position = useAppStore((s) => s.overlayPosition)
   const showPassive = useAppStore((s) => s.showPassiveOverlay)
   const hotkeyStatus = useAppStore((s) => s.hotkeyStatus)
-  const hotkeyMode = useAppStore((s) => s.hotkeyMode)
   const [dismissing, setDismissing] = useState(false)
 
   useAudio()
@@ -93,9 +92,9 @@ export function Overlay() {
         <BirdMark size={isActive ? 24 : 18} className={
           isActive
             ? 'text-chirp-amber-500'
-            : hotkeyMode === 'dedicated_key' && hotkeyStatus === 'failed'
+            : hotkeyStatus === 'failed'
               ? 'text-red-400'
-              : hotkeyMode === 'dedicated_key' && hotkeyStatus === 'retrying'
+              : hotkeyStatus === 'retrying'
                 ? 'text-chirp-amber-400 animate-pulse'
                 : 'text-chirp-stone-400'
         } />

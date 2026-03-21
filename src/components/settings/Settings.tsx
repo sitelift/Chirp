@@ -32,8 +32,6 @@ export function Settings() {
   const settingsSaved = useAppStore((s) => s.settingsSaved)
   const setSettingsSaved = useAppStore((s) => s.setSettingsSaved)
   const hotkey = useAppStore((s) => s.hotkey)
-  const hotkeyMode = useAppStore((s) => s.hotkeyMode)
-  const hotkeyKeyName = useAppStore((s) => s.hotkeyKeyName)
   const aboutModalOpen = useAppStore((s) => s.aboutModalOpen)
   const setAboutModalOpen = useAppStore((s) => s.setAboutModalOpen)
 
@@ -51,16 +49,14 @@ export function Settings() {
     return () => { unlisten.then((f) => f()) }
   }, [setAboutModalOpen])
 
-  const hotkeyKeys = hotkeyMode === 'dedicated_key'
-    ? [hotkeyKeyName]
-    : formatHotkey(hotkey)
+  const hotkeyKeys = formatHotkey(hotkey)
 
   const PageComponent = PAGES[settingsPage] ?? HomePage
 
   return (
     <div className="flex flex-col h-screen overflow-hidden no-select">
       {/* Custom titlebar */}
-      <div data-tauri-drag-region className="flex items-center justify-end h-8 shrink-0 bg-sidebar">
+      <div data-tauri-drag-region className="flex items-center justify-end h-10 shrink-0 bg-sidebar">
         <button
           onClick={() => getCurrentWindow().minimize()}
           className="w-[46px] h-full flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
@@ -85,7 +81,7 @@ export function Settings() {
       {/* Dark sidebar */}
       <div className="flex w-[220px] shrink-0 flex-col bg-sidebar p-[20px_12px] relative overflow-hidden sidebar-noise sidebar-glow">
         {/* Logo */}
-        <div className="flex items-center gap-[10px] px-[10px] mb-8 relative z-10">
+        <div data-tauri-drag-region className="flex items-center gap-[10px] px-[10px] mb-8 relative z-10">
           <div className="w-8 h-8 rounded-[9px] bg-chirp-yellow flex items-center justify-center shadow-logo-glow">
             <BirdMark size={18} color="white" />
           </div>

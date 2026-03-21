@@ -109,20 +109,24 @@ unsafe extern "system" fn listener_hook_proc(
                     // Ignore repeats
                     if !PRESSED.swap(true, Ordering::SeqCst) {
                         log::info!("Hotkey pressed → start recording");
-                        if let Ok(guard) = APP_HANDLE.lock() {
+                        if let Ok(guard) = APP_HANDLE.try_lock() {
                             if let Some(ref app) = *guard {
                                 let _ = app.emit("hotkey-pressed", ());
                             }
+                        } else {
+                            log::warn!("APP_HANDLE lock contention in hook callback — press event dropped");
                         }
                     }
                 }
                 win32::WM_KEYUP | win32::WM_SYSKEYUP => {
                     if PRESSED.swap(false, Ordering::SeqCst) {
                         log::info!("Hotkey released → stop recording");
-                        if let Ok(guard) = APP_HANDLE.lock() {
+                        if let Ok(guard) = APP_HANDLE.try_lock() {
                             if let Some(ref app) = *guard {
                                 let _ = app.emit("hotkey-released", ());
                             }
+                        } else {
+                            log::warn!("APP_HANDLE lock contention in hook callback — release event dropped");
                         }
                     }
                 }

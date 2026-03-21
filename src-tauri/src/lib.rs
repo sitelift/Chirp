@@ -4,11 +4,6 @@ mod commands;
 mod dictionary;
 mod file_transcribe;
 mod history;
-#[cfg(target_os = "macos")]
-mod hotkey;
-#[cfg(target_os = "windows")]
-#[path = "hotkey_windows.rs"]
-mod hotkey;
 mod inject;
 mod llm;
 mod settings;
@@ -35,23 +30,15 @@ pub fn run() {
     let mut initial_history = history::load_history();
     history::prune_history(&mut initial_history, initial_settings.history_retention_days);
     let hotkey_str = initial_settings.hotkey.clone();
-    let hotkey_mode = initial_settings.hotkey_mode.clone();
 
-    log::info!("Hotkey mode: {hotkey_mode}");
-
-    // Build the global shortcut plugin — only registers a shortcut in "custom" mode
-    let shortcut_plugin = if hotkey_mode == "custom" {
-        let modifier_only = hotkey_str
-            .split('+')
-            .all(|p| matches!(p.trim(), "CmdOrCtrl" | "Ctrl" | "Shift" | "Alt" | "Meta" | "Super" | "Cmd"));
-        let shortcut: tauri_plugin_global_shortcut::Shortcut = if modifier_only {
-            log::warn!("Hotkey '{hotkey_str}' has no key, falling back to CmdOrCtrl+Shift+Space");
-            "CmdOrCtrl+Shift+Space".parse().unwrap()
-        } else {
-            hotkey_str
-                .parse()
-                .unwrap_or_else(|_| "CmdOrCtrl+Shift+Space".parse().unwrap())
-        };
+    // Build the global shortcut plugin with the configured hotkey
+    let shortcut_plugin = {
+        let shortcut: tauri_plugin_global_shortcut::Shortcut = hotkey_str
+            .parse()
+            .unwrap_or_else(|_| {
+                log::warn!("Failed to parse hotkey '{hotkey_str}', falling back to CmdOrCtrl+Shift+Space");
+                "CmdOrCtrl+Shift+Space".parse().unwrap()
+            });
         log::info!("Registering global hotkey: {hotkey_str}");
         tauri_plugin_global_shortcut::Builder::new()
             .with_shortcut(shortcut)
@@ -69,9 +56,6 @@ pub fn run() {
                 }
             })
             .build()
-    } else {
-        // Dedicated key mode — register plugin with no shortcuts (needed for API availability)
-        tauri_plugin_global_shortcut::Builder::new().build()
     };
 
     tauri::Builder::default()
@@ -123,10 +107,7 @@ pub fn run() {
             commands::update_snippets,
             commands::play_completion_sound,
             commands::transcribe_file,
-            commands::capture_hotkey_key,
-            commands::restart_hotkey_listener,
             commands::get_hotkey_status,
-            commands::check_input_monitoring,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -201,20 +182,6 @@ pub fn run() {
                             }
                         }
                     });
-                }
-            }
-
-            // Start dedicated key listener if configured
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
-            {
-                let state = handle.state::<SharedState>();
-                let s = state.blocking_lock();
-                if s.settings.hotkey_mode == "dedicated_key" && s.settings.hotkey_keycode > 0 {
-                    let kc = s.settings.hotkey_keycode;
-                    let name = &s.settings.hotkey_key_name;
-                    log::info!("Starting key listener for '{name}' (keycode {kc})");
-                    let shared = handle.state::<SharedState>().inner().clone();
-                    hotkey::start_key_listener(handle.clone(), kc, shared);
                 }
             }
 

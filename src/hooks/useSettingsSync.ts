@@ -7,7 +7,7 @@ import { useTauri } from './useTauri'
 
 // Settings keys that should be synced to the backend
 const SYNCED_KEYS = [
-  'hotkey', 'hotkeyMode', 'hotkeyKeycode', 'hotkeyKeyName', 'launchAtLogin', 'playSoundOnComplete',
+  'hotkey', 'launchAtLogin', 'playSoundOnComplete',
   'autoDismissOverlay', 'smartFormatting',
   'inputDevice', 'model', 'onboardingComplete',
   'aiCleanup',
@@ -38,24 +38,25 @@ export function useSettingsSync() {
         updateSettings(settings as Partial<ReturnType<typeof useAppStore.getState>>)
       }
       useAppStore.getState().setSettingsLoaded()
-    }).catch(() => {
+    }).catch((e) => {
+      console.error('Failed to load settings:', e)
       useAppStore.getState().setSettingsLoaded()
     })
 
     // Load transcription history
     tauri.getHistory().then((entries) => {
       useAppStore.getState().setHistory(entries)
-    }).catch(() => {})
+    }).catch((e) => console.error('Failed to load history:', e))
 
     // Load snippets
     tauri.getSnippets().then((entries) => {
       useAppStore.getState().setSnippets(entries)
-    }).catch(() => {})
+    }).catch((e) => console.error('Failed to load snippets:', e))
 
     // Load initial hotkey status
     tauri.getHotkeyStatus().then((status) => {
       useAppStore.getState().setHotkeyStatus(status as 'idle' | 'retrying' | 'active' | 'failed')
-    }).catch(() => {})
+    }).catch((e) => console.error('Failed to get hotkey status:', e))
 
     // Check model download status
     for (const model of ['parakeet-tdt-0.6b']) {
@@ -68,9 +69,16 @@ export function useSettingsSync() {
             },
           })
         }
-      }).catch(() => {})
+      }).catch((e) => console.error('Failed to get model status:', e))
     }
-  }, [])
+
+    // Initialize LLM ready state from backend
+    tauri.getLlmStatus().then((status) => {
+      if (status.serverRunning) {
+        useAppStore.getState().setLlmReady(true)
+      }
+    }).catch((e) => console.error('Failed to get LLM status:', e))
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- one-time init
 
   // Always-active: sync store changes back to backend + listen for events.
   useEffect(() => {
@@ -85,6 +93,13 @@ export function useSettingsSync() {
     listen<TranscriptionEntry>('history-updated', (event) => {
       const state = useAppStore.getState()
       state.setHistory([...state.history, event.payload])
+    }).then((fn) => unlisteners.push(fn))
+
+    // Listen for history pruning (e.g. retention change)
+    listen('history-changed', () => {
+      tauri.getHistory().then((entries) => {
+        useAppStore.getState().setHistory(entries)
+      }).catch((e) => console.error('Failed to reload history:', e))
     }).then((fn) => unlisteners.push(fn))
 
     // Listen for settings changes from other windows (cross-window sync)
@@ -113,21 +128,21 @@ export function useSettingsSync() {
       if (Object.keys(changed).length > 0) {
         invoke('update_settings', { partial: changed }).then(() => {
           useAppStore.getState().setSettingsSaved(true)
-        }).catch(() => {})
+        }).catch((e) => console.error('Failed to sync settings:', e))
       }
 
       // Sync dictionary changes
       if (state.dictionary !== prevState.dictionary) {
         invoke('update_dictionary', { entries: state.dictionary }).then(() => {
           useAppStore.getState().setSettingsSaved(true)
-        }).catch(() => {})
+        }).catch((e) => console.error('Failed to sync dictionary:', e))
       }
 
       // Sync snippet changes
       if (state.snippets !== prevState.snippets) {
         invoke('update_snippets', { entries: state.snippets }).then(() => {
           useAppStore.getState().setSettingsSaved(true)
-        }).catch(() => {})
+        }).catch((e) => console.error('Failed to sync snippets:', e))
       }
     })
 
@@ -135,5 +150,5 @@ export function useSettingsSync() {
       unsub()
       unlisteners.forEach((fn) => fn())
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- event subscriptions registered once
 }

@@ -18,7 +18,6 @@ struct CleanupRegexes {
     number_words: Vec<(Regex, &'static str)>,
     percentage: Regex,
     hundred_pct: Regex,
-    list_pattern: Regex,
 }
 
 fn regexes() -> &'static CleanupRegexes {
@@ -119,24 +118,12 @@ fn regexes() -> &'static CleanupRegexes {
             }).collect(),
             percentage: Regex::new(r"(?i)\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\s+percent\b").unwrap(),
             hundred_pct: Regex::new(r"(?i)\b(one )?hundred percent\b").unwrap(),
-            list_pattern: Regex::new(r"(?i)\b(first|one|1)[,:]?\s+(.+?)[,.]?\s+(second|two|2)[,:]?\s+(.+?)(?:[,.]?\s+(third|three|3)[,:]?\s+(.+?))?(?:[,.]?\s+(fourth|four|4)[,:]?\s+(.+?))?(?:[,.]?\s+(fifth|five|5)[,:]?\s+(.+?))?[.]?$").unwrap(),
         }
     })
 }
 
 /// Full cleanup pipeline: filler removal → regex formatting
-/// When `ai_cleanup` is true, skip list detection and sentence restructuring
-/// since the AI model handles those better.
 pub fn cleanup_text(text: &str, smart_formatting: bool) -> String {
-    cleanup_text_inner(text, smart_formatting, false)
-}
-
-/// Same as cleanup_text but with option to skip transforms the AI handles
-pub fn cleanup_text_for_ai(text: &str, smart_formatting: bool) -> String {
-    cleanup_text_inner(text, smart_formatting, true)
-}
-
-fn cleanup_text_inner(text: &str, smart_formatting: bool, skip_ai_overlap: bool) -> String {
     if text.is_empty() {
         return String::new();
     }
@@ -149,7 +136,7 @@ fn cleanup_text_inner(text: &str, smart_formatting: bool, skip_ai_overlap: bool)
     }
 
     // Step 2: Regex-based formatting (spoken punctuation, numbers, etc.)
-    smart_format(&cleaned, skip_ai_overlap)
+    smart_format(&cleaned)
 }
 
 /// Remove common filler words from transcript
@@ -179,7 +166,7 @@ fn capitalize_first(text: &str) -> String {
 }
 
 /// Smart formatting: punctuation, capitalization, numbers, common patterns
-fn smart_format(text: &str, skip_ai_overlap: bool) -> String {
+fn smart_format(text: &str) -> String {
     let re = regexes();
     let mut result = text.to_string();
 
@@ -284,41 +271,6 @@ fn format_spoken_patterns(text: &str) -> String {
     result
 }
 
-/// Detect and format list patterns
-fn format_lists(text: &str) -> String {
-    let re = regexes();
-    if let Some(caps) = re.list_pattern.captures(text) {
-        let mut items = Vec::new();
-        for i in (1..caps.len()).step_by(2) {
-            if let (Some(_keyword), Some(content)) = (caps.get(i), caps.get(i + 1)) {
-                let item = content.as_str().trim().trim_end_matches(['.', ',']).to_string();
-                if !item.is_empty() {
-                    items.push(item);
-                }
-            }
-        }
-        if items.len() >= 2 {
-            let numbered: Vec<String> = items
-                .iter()
-                .enumerate()
-                .map(|(i, item)| {
-                    let s = capitalize_first(item);
-                    format!("{}. {}", i + 1, s)
-                })
-                .collect();
-            let match_start = caps.get(0).unwrap().start();
-            let preamble = text[..match_start].trim();
-            if preamble.is_empty() {
-                return numbered.join("\n");
-            } else {
-                return format!("{}\n{}", preamble, numbered.join("\n"));
-            }
-        }
-    }
-
-    text.to_string()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -334,38 +286,38 @@ mod tests {
 
     #[test]
     fn test_capitalize_i() {
-        let result = smart_format("i want to go and i need help", false);
+        let result = smart_format("i want to go and i need help");
         assert!(result.contains("I want"));
         assert!(result.contains("I need"));
     }
 
     #[test]
     fn test_sentence_ending() {
-        let result = smart_format("hello world", false);
+        let result = smart_format("hello world");
         assert!(result.ends_with('.'));
     }
 
     #[test]
     fn test_spoken_punctuation() {
-        let result = smart_format("hello comma how are you question mark", false);
+        let result = smart_format("hello comma how are you question mark");
         assert!(result.contains("Hello, how are you?"));
     }
 
     #[test]
     fn test_percentage() {
-        let result = smart_format("it was about fifty percent done", false);
+        let result = smart_format("it was about fifty percent done");
         assert!(result.contains("50%"));
     }
 
     #[test]
     fn test_email() {
-        let result = smart_format("send it to john at example dot com", false);
+        let result = smart_format("send it to john at example dot com");
         assert!(result.contains("john@example.com"));
     }
 
     #[test]
     fn test_new_paragraph() {
-        let result = smart_format("hello new paragraph world", false);
+        let result = smart_format("hello new paragraph world");
         assert!(result.contains("\n\n"));
     }
 

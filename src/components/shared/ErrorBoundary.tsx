@@ -39,11 +39,11 @@ export class ErrorBoundary extends Component<Props, State> {
   }
 }
 
-function OverlayFallback(_props: { error: string | null }) {
+function OverlayFallback({ error }: { error: string | null }) {
   return (
     <div className="flex h-screen w-screen items-end justify-center pb-[80px]">
       <div className="flex h-12 items-center gap-3 rounded-full border border-red-300/30 bg-white/90 backdrop-blur-xl px-4">
-        <span className="text-sm text-red-600">Something went wrong</span>
+        <span className="text-sm text-red-600">{error ?? 'Something went wrong'}</span>
       </div>
     </div>
   )

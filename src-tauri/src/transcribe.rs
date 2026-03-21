@@ -167,9 +167,36 @@ pub async fn download_model(model: &str, app_handle: AppHandle) -> Result<(), St
             .map_err(|e| format!("Failed to open archive: {e}"))?;
         let decompressor = BzDecoder::new(file);
         let mut archive = Archive::new(decompressor);
-        archive
-            .unpack(&extract_dir)
-            .map_err(|e| format!("Failed to extract archive: {e}"))?;
+
+        // Manually iterate entries to validate paths (prevent directory traversal)
+        for entry in archive.entries().map_err(|e| format!("Failed to read tar: {e}"))? {
+            let mut entry = entry.map_err(|e| format!("Failed to read tar entry: {e}"))?;
+            let path = entry.path()
+                .map_err(|e| format!("Invalid tar path: {e}"))?
+                .to_path_buf();
+
+            // Reject paths with ".." components
+            if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+                log::warn!("Skipping suspicious archive path: {}", path.display());
+                continue;
+            }
+
+            let full_path = extract_dir.join(&path);
+
+            if entry.header().entry_type().is_dir() {
+                std::fs::create_dir_all(&full_path)
+                    .map_err(|e| format!("Failed to create dir {}: {e}", path.display()))?;
+            } else if entry.header().entry_type().is_file() {
+                if let Some(parent) = full_path.parent() {
+                    std::fs::create_dir_all(parent)
+                        .map_err(|e| format!("Failed to create parent dir: {e}"))?;
+                }
+                let mut out = std::fs::File::create(&full_path)
+                    .map_err(|e| format!("Failed to create {}: {e}", path.display()))?;
+                std::io::copy(&mut entry, &mut out)
+                    .map_err(|e| format!("Failed to extract {}: {e}", path.display()))?;
+            }
+        }
         Ok::<(), String>(())
     })
     .await

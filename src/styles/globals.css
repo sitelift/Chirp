@@ -23,6 +23,16 @@
     user-select: none;
   }
 
+  /* Enable native window drag on titlebar regions */
+  [data-tauri-drag-region] {
+    -webkit-app-region: drag;
+  }
+  [data-tauri-drag-region] button,
+  [data-tauri-drag-region] a,
+  [data-tauri-drag-region] input {
+    -webkit-app-region: no-drag;
+  }
+
   /* Make scrollbars subtle */
   ::-webkit-scrollbar {
     width: 6px;

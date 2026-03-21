@@ -1,21 +1,16 @@
 export const DEFAULT_SETTINGS = {
   hotkey: 'CmdOrCtrl+Shift+Space',
   launchAtLogin: true,
-  showInMenuBar: true,
   playSoundOnComplete: false,
   autoDismissOverlay: true,
   smartFormatting: true,
   inputDevice: 'default',
-  noiseSuppression: true,
   model: 'parakeet-tdt-0.6b' as const,
   onboardingComplete: false,
   aiCleanup: true,
   overlayPosition: 'bottom' as 'bottom' | 'top',
   showPassiveOverlay: true,
   toneMode: 'message',
-  hotkeyMode: 'dedicated_key' as 'dedicated_key' | 'custom',
-  hotkeyKeycode: 0,
-  hotkeyKeyName: 'Not set',
   historyRetentionDays: 0,
 }
 

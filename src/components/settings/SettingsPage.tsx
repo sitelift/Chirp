@@ -1,9 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
+import { useHotkeyRecorder } from '../../hooks/useHotkeyRecorder'
 import type { AudioDevice } from '../../hooks/useTauri'
 import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
 import { TONE_MODES, STT_MODELS, LLM_MODEL } from '../../lib/constants'
+import { formatHotkey } from '../../lib/utils'
 import { Toggle } from '../shared/Toggle'
 import { Select } from '../shared/Select'
 import { SegmentedControl } from '../shared/SegmentedControl'
@@ -47,9 +49,7 @@ function Card({ children }: { children: React.ReactNode }) {
 export function SettingsPage() {
   const store = useAppStore()
   const tauri = useTauri()
-
-  // Hotkey state
-  const [capturing, setCapturing] = useState(false)
+  const { capturing, pendingHotkey, previewLabels, canConfirm, startCapture, confirmCapture, cancelCapture, clearPending } = useHotkeyRecorder()
 
   // Audio state
   const [devices, setDevices] = useState<AudioDevice[]>([])
@@ -69,11 +69,12 @@ export function SettingsPage() {
 
   const currentModel = STT_MODELS.find((m) => m.id === store.model)
   const isDownloaded = store.modelDownloaded[store.model]
+  const currentHotkeyLabels = formatHotkey(store.hotkey)
 
   // Load audio devices
   useEffect(() => {
     tauri.getAudioDevices().then(setDevices).finally(() => setDevicesLoading(false))
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- one-time init
 
   // Live input level polling (~15fps)
   useEffect(() => {
@@ -81,27 +82,32 @@ export function SettingsPage() {
       try {
         const level = await tauri.getInputLevel()
         setInputLevel(level)
-      } catch { /* device may be unavailable */ }
+      } catch { /* input level polling — device may be unavailable */ }
     }, 67)
     return () => clearInterval(interval)
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- continuous polling
 
   // ── Handlers ──────────────────────────────────────────────
 
-  const handleCaptureKey = async () => {
-    setCapturing(true)
-    try {
-      const result = await tauri.captureHotkeyKey()
-      if (result.keycode >= 0) {
-        store.updateSettings({
-          hotkeyKeycode: result.keycode,
-          hotkeyKeyName: result.name,
-        })
-      }
-    } catch {
-    }
-    setCapturing(false)
+  const handleCaptureKey = () => {
+    startCapture()
   }
+
+  const handleConfirmCapture = () => {
+    const result = confirmCapture()
+    if (result) {
+      store.updateSettings({ hotkey: result.hotkey })
+      clearPending()
+    }
+  }
+
+  const handleConfirmPending = () => {
+    if (pendingHotkey) {
+      store.updateSettings({ hotkey: pendingHotkey.hotkey })
+      clearPending()
+    }
+  }
+
 
   const handleCleanupToggle = async (enabled: boolean) => {
     store.updateSettings({ aiCleanup: enabled })
@@ -110,13 +116,17 @@ export function SettingsPage() {
       try {
         await tauri.startLlm()
         store.setLlmReady(true)
-      } catch {}
+      } catch (e) {
+        console.error('Failed to start LLM:', e)
+      }
       setCleanupStarting(false)
     } else if (!enabled && store.llmReady) {
       try {
         await tauri.stopLlm()
         store.setLlmReady(false)
-      } catch {}
+      } catch (e) {
+        console.error('Failed to stop LLM:', e)
+      }
     }
   }
 
@@ -191,9 +201,12 @@ export function SettingsPage() {
         try {
           await tauri.startLlm()
           store.setLlmReady(true)
-        } catch {}
+        } catch (e) {
+          console.error('Failed to start LLM after download:', e)
+        }
       }
-    } catch {
+    } catch (e) {
+      console.error('LLM download failed:', e)
       setLlmDownloadError('Download failed. Check your internet connection and try again.')
     } finally {
       store.setLlmDownloadProgress(null)
@@ -215,51 +228,116 @@ export function SettingsPage() {
       <div className="animate-slide-up stagger-1">
         <SectionLabel>Hotkey</SectionLabel>
         <Card>
-          <Row last>
-            <div className="flex-1">
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Hotkey</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Hold to talk, release to transcribe</div>
+          {capturing ? (
+            /* ── CAPTURING STATE: big prominent capture zone ── */
+            <div className="p-5">
+              <div className="flex items-center justify-between mb-4">
+                <div>
+                  <div className="text-[13px] font-medium text-[#1a1a1a]">Recording shortcut</div>
+                  <div className="text-[11px] text-[#aaa] mt-0.5">Press keys one at a time — they&apos;ll stick</div>
+                </div>
+                <button
+                  onClick={cancelCapture}
+                  className="text-[12px] text-[#aaa] hover:text-[#666] hover:underline whitespace-nowrap transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
 
-              {/* Hotkey status indicators */}
-              {store.hotkeyKeycode > 0 && store.hotkeyStatus === 'active' && (
-                <div className="flex items-center gap-1.5 mt-2">
-                  <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                  <span className="text-[11px] text-[#aaa]">Hotkey active</span>
-                </div>
-              )}
-              {store.hotkeyStatus === 'retrying' && (
-                <div className="flex items-center gap-1.5 mt-2">
-                  <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
-                  <span className="text-[11px] text-[#aaa]">Setting up hotkey...</span>
-                </div>
-              )}
-              {store.hotkeyStatus === 'failed' && (
-                <div className="flex items-center gap-1.5 mt-2">
-                  <div className="h-1.5 w-1.5 rounded-full bg-red-400" />
-                  <span className="text-[11px] text-red-500">Hotkey unavailable</span>
-                </div>
-              )}
+              {/* Large capture zone */}
+              <div className="flex h-24 items-center justify-center rounded-xl border-2 border-dashed border-chirp-amber-400 bg-chirp-amber-50/30 transition-all duration-200">
+                {previewLabels.length > 0 ? (
+                  <div className="flex items-center gap-3">
+                    {previewLabels.map((label, i) => (
+                      <div key={label} className="flex items-center gap-3">
+                        {i > 0 && <span className="text-[13px] text-chirp-stone-300 font-medium select-none">+</span>}
+                        <span className="inline-flex min-w-[36px] items-center justify-center rounded-lg border border-card-border bg-white px-3 py-2 font-mono text-sm font-medium text-[#333] shadow-[0_2px_4px_rgba(0,0,0,0.06)]">
+                          {label}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <span className="text-sm text-chirp-stone-400 animate-pulse">Press any key or combo...</span>
+                )}
+              </div>
 
-              {/* Capture area */}
-              {capturing && (
-                <div className="flex h-10 items-center justify-center rounded-lg border-2 border-dashed border-chirp-amber-400 bg-[#FAFAF8] mt-3">
-                  <span className="text-[12px] text-[#aaa]">Press your new hotkey...</span>
+              {/* Confirm button */}
+              {canConfirm && (
+                <div className="mt-4 flex justify-end">
+                  <button
+                    onClick={handleConfirmCapture}
+                    className="rounded-lg bg-[#1a1a1a] px-5 py-2 text-[13px] font-medium text-white hover:bg-[#333] transition-colors"
+                  >
+                    Set hotkey
+                  </button>
                 </div>
               )}
             </div>
-
-            {!capturing && (
-              <div className="flex items-center gap-3 ml-4">
-                <KeyBadge keyLabel={store.hotkeyKeycode > 0 ? store.hotkeyKeyName : 'Not set'} />
-                <button
-                  onClick={handleCaptureKey}
-                  className="text-[12px] text-chirp-amber-500 hover:underline whitespace-nowrap"
-                >
-                  {store.hotkeyKeycode > 0 ? 'Change' : 'Set key'}
-                </button>
+          ) : (
+            /* ── IDLE / PENDING STATE: compact row ── */
+            <Row last>
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <div className="text-[13px] font-medium text-[#1a1a1a]">Hotkey</div>
+                  {store.hotkeyStatus === 'active' && (
+                    <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
+                  )}
+                  {store.hotkeyStatus === 'retrying' && (
+                    <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
+                  )}
+                  {store.hotkeyStatus === 'failed' && (
+                    <div className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                  )}
+                </div>
+                <div className="text-[11px] text-[#aaa] mt-0.5">
+                  {store.hotkeyStatus === 'failed'
+                    ? 'Hotkey unavailable — try a different shortcut'
+                    : store.hotkeyStatus === 'retrying'
+                      ? 'Setting up hotkey...'
+                      : 'Hold to talk, release to transcribe'}
+                </div>
               </div>
-            )}
-          </Row>
+
+              <div className="flex items-center gap-3 ml-4">
+                {pendingHotkey ? (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      {pendingHotkey.labels.map((label) => (
+                        <KeyBadge key={label} keyLabel={label} />
+                      ))}
+                    </div>
+                    <button
+                      onClick={handleConfirmPending}
+                      className="text-[12px] font-medium text-chirp-amber-500 hover:underline whitespace-nowrap"
+                    >
+                      Set hotkey
+                    </button>
+                    <button
+                      onClick={cancelCapture}
+                      className="text-[12px] text-[#aaa] hover:underline whitespace-nowrap"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <div className="flex items-center gap-1.5">
+                      {currentHotkeyLabels.map((label) => (
+                        <KeyBadge key={label} keyLabel={label} />
+                      ))}
+                    </div>
+                    <button
+                      onClick={handleCaptureKey}
+                      className="text-[12px] text-chirp-amber-500 hover:underline whitespace-nowrap"
+                    >
+                      Change
+                    </button>
+                  </>
+                )}
+              </div>
+            </Row>
+          )}
         </Card>
       </div>
 

@@ -174,5 +174,5 @@ export function useRecording() {
       unlisteners.forEach((fn) => fn())
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- event listeners registered once
 }

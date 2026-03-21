@@ -366,7 +366,7 @@ pub async fn start_server(port: u16) -> Result<tokio::process::Child, String> {
         cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
     }
 
-    let child = cmd.spawn()
+    let mut child = cmd.spawn()
         .map_err(|e| format!("Failed to start llama-server: {e}"))?;
 
     // Wait for server to be ready
@@ -384,6 +384,11 @@ pub async fn start_server(port: u16) -> Result<tokio::process::Child, String> {
             }
         }
     }
+
+    // Kill the orphan process before returning error
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+    log::warn!("Killed llama-server after startup timeout");
 
     Err("llama-server failed to start within 30s".to_string())
 }

@@ -97,7 +97,7 @@ export function DictionaryPage() {
           placeholder="Replaced by..."
           className="flex-1 h-10 rounded-lg border border-card-border bg-white px-3 text-[13px] text-[#333] placeholder:text-[#ccc] focus:border-chirp-yellow focus:shadow-[0_0_0_3px_rgba(240,183,35,0.1)] focus:outline-none transition-all duration-150"
         />
-        <Button onClick={handleAdd} disabled={!newFrom.trim() || !newTo.trim()}>
+        <Button onClick={handleAdd} disabled={!newFrom.trim() || !newTo.trim() || dictionary.length >= 500}>
           Add
         </Button>
       </div>

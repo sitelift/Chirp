@@ -52,14 +52,6 @@ pub struct Settings {
     #[serde(default = "default_tone_mode")]
     pub tone_mode: String,
     #[serde(default)]
-    pub translate_to_english: bool,
-    #[serde(default = "default_hotkey_mode")]
-    pub hotkey_mode: String,
-    #[serde(default)]
-    pub hotkey_keycode: i64,
-    #[serde(default = "default_hotkey_key_name")]
-    pub hotkey_key_name: String,
-    #[serde(default)]
     pub history_retention_days: i64,
 }
 
@@ -73,14 +65,6 @@ fn default_true() -> bool {
 
 fn default_tone_mode() -> String {
     "message".into()
-}
-
-fn default_hotkey_mode() -> String {
-    "dedicated_key".into()
-}
-
-fn default_hotkey_key_name() -> String {
-    "Not set".into()
 }
 
 impl Default for Settings {
@@ -100,10 +84,6 @@ impl Default for Settings {
             overlay_position: "bottom".into(),
             show_passive_overlay: true,
             tone_mode: "message".into(),
-            translate_to_english: false,
-            hotkey_mode: "dedicated_key".into(),
-            hotkey_keycode: 0,
-            hotkey_key_name: "Not set".into(),
             history_retention_days: 0,
         }
     }

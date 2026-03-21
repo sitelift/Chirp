@@ -99,13 +99,17 @@ export function HomePage() {
       try {
         await tauri.startLlm()
         store.setLlmReady(true)
-      } catch { /* ignore */ }
+      } catch (e) {
+        console.error('Failed to start LLM:', e)
+      }
       setCleanupStarting(false)
     } else if (!enabled && store.llmReady) {
       try {
         await tauri.stopLlm()
         store.setLlmReady(false)
-      } catch { /* ignore */ }
+      } catch (e) {
+        console.error('Failed to stop LLM:', e)
+      }
     }
   }
 

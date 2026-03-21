@@ -35,7 +35,7 @@ export function SmartCleanup({ onNext }: SmartCleanupProps) {
   useEffect(() => {
     if (state === 'downloading' || state === 'starting') {
       if (!timerRef.current) {
-        setElapsed(0)
+        setElapsed(0) // eslint-disable-line react-hooks/set-state-in-effect -- reset timer on state change
         timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000)
       }
     } else {
