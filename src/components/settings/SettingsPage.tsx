@@ -4,7 +4,6 @@ import { useTauri } from '../../hooks/useTauri'
 import type { AudioDevice } from '../../hooks/useTauri'
 import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
 import { TONE_MODES, STT_MODELS, LLM_MODEL } from '../../lib/constants'
-import { formatHotkey } from '../../lib/utils'
 import { Toggle } from '../shared/Toggle'
 import { Select } from '../shared/Select'
 import { SegmentedControl } from '../shared/SegmentedControl'
@@ -70,7 +69,6 @@ export function SettingsPage() {
 
   const currentModel = STT_MODELS.find((m) => m.id === store.model)
   const isDownloaded = store.modelDownloaded[store.model]
-  const hotkeyParts = formatHotkey(store.hotkey)
 
   // Load audio devices
   useEffect(() => {
@@ -104,31 +102,6 @@ export function SettingsPage() {
       console.debug('Key capture failed:', e)
     }
     setCapturing(false)
-  }
-
-  const handleCaptureShortcut = () => {
-    setCapturing(true)
-    const handler = (e: KeyboardEvent) => {
-      e.preventDefault()
-      if (e.key === 'Escape') {
-        setCapturing(false)
-        window.removeEventListener('keydown', handler)
-        return
-      }
-      const parts: string[] = []
-      if (e.ctrlKey || e.metaKey) parts.push('CmdOrCtrl')
-      if (e.shiftKey) parts.push('Shift')
-      if (e.altKey) parts.push('Alt')
-      if (!['Control', 'Shift', 'Alt', 'Meta'].includes(e.key)) {
-        parts.push(e.key.toUpperCase())
-      }
-      if (parts.length > 1) {
-        store.updateSettings({ hotkey: parts.join('+') })
-        setCapturing(false)
-        window.removeEventListener('keydown', handler)
-      }
-    }
-    window.addEventListener('keydown', handler)
   }
 
   const handleCleanupToggle = async (enabled: boolean) => {
@@ -243,34 +216,13 @@ export function SettingsPage() {
       <div className="animate-slide-up stagger-1">
         <SectionLabel>Hotkey</SectionLabel>
         <Card>
-          <Row>
-            <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Activation mode</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">How you trigger dictation</div>
-            </div>
-            <SegmentedControl
-              options={[
-                { value: 'custom', label: 'Custom shortcut' },
-                { value: 'dedicated_key', label: 'Dedicated key' },
-              ]}
-              value={store.hotkeyMode}
-              onChange={(v) => store.updateSettings({ hotkeyMode: v as 'dedicated_key' | 'custom' })}
-            />
-          </Row>
-
           <Row last>
             <div className="flex-1">
-              <div className="text-[13px] font-medium text-[#1a1a1a]">
-                {store.hotkeyMode === 'dedicated_key' ? 'Assigned key' : 'Shortcut'}
-              </div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">
-                {store.hotkeyMode === 'dedicated_key'
-                  ? 'Hold for push-to-talk, double-tap for hands-free'
-                  : 'Hold to talk, release to transcribe'}
-              </div>
+              <div className="text-[13px] font-medium text-[#1a1a1a]">Hotkey</div>
+              <div className="text-[11px] text-[#aaa] mt-0.5">Hold to talk, release to transcribe</div>
 
               {/* Hotkey status indicators */}
-              {store.hotkeyMode === 'dedicated_key' && store.hotkeyKeycode > 0 && store.hotkeyStatus === 'active' && (
+              {store.hotkeyKeycode > 0 && store.hotkeyStatus === 'active' && (
                 <div className="flex items-center gap-1.5 mt-2">
                   <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
                   <span className="text-[11px] text-[#aaa]">Hotkey active</span>
@@ -283,57 +235,29 @@ export function SettingsPage() {
                 </div>
               )}
               {store.hotkeyStatus === 'failed' && (
-                <div className="mt-2 space-y-1">
-                  <div className="flex items-center gap-1.5">
-                    <div className="h-1.5 w-1.5 rounded-full bg-red-400" />
-                    <span className="text-[11px] text-red-500">Input monitoring permission needed</span>
-                  </div>
-                  <button
-                    onClick={() => tauri.restartHotkeyListener()}
-                    className="text-[11px] text-chirp-amber-500 hover:underline"
-                  >
-                    Retry
-                  </button>
+                <div className="flex items-center gap-1.5 mt-2">
+                  <div className="h-1.5 w-1.5 rounded-full bg-red-400" />
+                  <span className="text-[11px] text-red-500">Hotkey unavailable</span>
                 </div>
               )}
 
               {/* Capture area */}
               {capturing && (
                 <div className="flex h-10 items-center justify-center rounded-lg border-2 border-dashed border-chirp-amber-400 bg-[#FAFAF8] mt-3">
-                  <span className="text-[12px] text-[#aaa]">
-                    {store.hotkeyMode === 'dedicated_key' ? 'Press any key...' : 'Press new shortcut...'}
-                  </span>
+                  <span className="text-[12px] text-[#aaa]">Press your new hotkey...</span>
                 </div>
               )}
             </div>
 
             {!capturing && (
               <div className="flex items-center gap-3 ml-4">
-                {store.hotkeyMode === 'dedicated_key' ? (
-                  <>
-                    <KeyBadge keyLabel={store.hotkeyKeycode > 0 ? store.hotkeyKeyName : 'Not set'} />
-                    <button
-                      onClick={handleCaptureKey}
-                      className="text-[12px] text-chirp-amber-500 hover:underline whitespace-nowrap"
-                    >
-                      {store.hotkeyKeycode > 0 ? 'Change' : 'Set key'}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <div className="flex items-center gap-1.5">
-                      {hotkeyParts.map((part, i) => (
-                        <KeyBadge key={i} keyLabel={part} />
-                      ))}
-                    </div>
-                    <button
-                      onClick={handleCaptureShortcut}
-                      className="text-[12px] text-chirp-amber-500 hover:underline whitespace-nowrap"
-                    >
-                      Change
-                    </button>
-                  </>
-                )}
+                <KeyBadge keyLabel={store.hotkeyKeycode > 0 ? store.hotkeyKeyName : 'Not set'} />
+                <button
+                  onClick={handleCaptureKey}
+                  className="text-[12px] text-chirp-amber-500 hover:underline whitespace-nowrap"
+                >
+                  {store.hotkeyKeycode > 0 ? 'Change' : 'Set key'}
+                </button>
               </div>
             )}
           </Row>
