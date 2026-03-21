@@ -2,13 +2,11 @@ import { useState } from 'react'
 import { useAppStore } from '../../stores/appStore'
 import { BirdMark } from '../shared/BirdMark'
 import { Welcome } from './Welcome'
-import { Microphone } from './Microphone'
-import { MicTest } from './MicTest'
-import { Hotkey } from './Hotkey'
+import { SetupStep } from './SetupStep'
 import { ModelDownload } from './ModelDownload'
 import { SmartCleanup } from './SmartCleanup'
 
-const STEPS = 6
+const STEPS = 4
 
 export function Onboarding() {
   const [step, setStep] = useState(0)
@@ -20,20 +18,21 @@ export function Onboarding() {
 
   return (
     <div className="flex h-screen">
-      {/* Left branded panel */}
-      <div className="w-[40%] bg-gradient-to-br from-chirp-amber-50 via-chirp-amber-100/50 to-chirp-stone-100 flex flex-col items-center justify-center relative overflow-hidden">
-        {/* Decorative blurs */}
-        <div className="absolute top-[-100px] right-[-100px] w-[300px] h-[300px] bg-chirp-amber-200/20 rounded-full blur-3xl" />
-        <div className="absolute bottom-[-80px] left-[-80px] w-[250px] h-[250px] bg-chirp-amber-200/20 rounded-full blur-3xl" />
+      {/* Left branded panel — dark sidebar */}
+      <div className="w-[40%] bg-sidebar flex flex-col items-center justify-center relative overflow-hidden">
+        {/* Floating amber gradient orb */}
+        <div className="absolute w-72 h-72 rounded-full blur-3xl opacity-20 bg-gradient-to-br from-chirp-yellow via-chirp-amber-400 to-chirp-amber-600 animate-float-1" />
 
-        {/* Ambient glow behind bird */}
-        <div className="absolute w-64 h-64 bg-chirp-amber-200 rounded-full blur-3xl opacity-30" />
+        {/* Bird mark with glow */}
+        <div className="relative">
+          <div className="absolute inset-0 w-[120px] h-[120px] rounded-full blur-2xl opacity-40 bg-chirp-yellow" />
+          <BirdMark size={120} className="relative" />
+        </div>
 
-        <BirdMark size={120} />
-        <span className="font-display font-extrabold text-4xl text-chirp-stone-900 mt-4 relative">
+        <span className="font-display font-black text-4xl text-white mt-4 relative">
           chirp
         </span>
-        <span className="font-body text-lg text-chirp-stone-500 mt-2 relative">
+        <span className="font-body text-lg text-white/40 mt-2 relative">
           Speak freely.
         </span>
 
@@ -42,10 +41,10 @@ export function Onboarding() {
           {Array.from({ length: STEPS }, (_, i) => (
             <div
               key={i}
-              className={`rounded-full transition-all duration-300 ease-out ${
+              className={`rounded-full transition-all duration-300 ease-out h-2 ${
                 i === step
-                  ? 'w-8 h-2 bg-chirp-amber-400'
-                  : 'w-2 h-2 bg-chirp-stone-300'
+                  ? 'w-8 bg-chirp-yellow'
+                  : 'w-2 bg-white/20'
               }`}
             />
           ))}
@@ -53,14 +52,12 @@ export function Onboarding() {
       </div>
 
       {/* Right content panel */}
-      <div className="w-[60%] bg-white flex items-center justify-center px-16">
+      <div className="w-[60%] bg-surface flex items-center justify-center px-16">
         <div className="max-w-[480px] w-full">
           {step === 0 && <Welcome onNext={() => setStep(1)} />}
-          {step === 1 && <Microphone onNext={() => setStep(2)} />}
-          {step === 2 && <MicTest onNext={() => setStep(3)} />}
-          {step === 3 && <Hotkey onNext={() => setStep(4)} />}
-          {step === 4 && <ModelDownload onFinish={() => setStep(5)} />}
-          {step === 5 && <SmartCleanup onNext={handleFinish} />}
+          {step === 1 && <SetupStep onNext={() => setStep(2)} />}
+          {step === 2 && <ModelDownload onFinish={() => setStep(3)} />}
+          {step === 3 && <SmartCleanup onNext={handleFinish} />}
         </div>
       </div>
     </div>

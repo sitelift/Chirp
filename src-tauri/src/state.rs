@@ -59,6 +59,8 @@ pub struct Settings {
     pub hotkey_keycode: i64,
     #[serde(default = "default_hotkey_key_name")]
     pub hotkey_key_name: String,
+    #[serde(default)]
+    pub history_retention_days: i64,
 }
 
 fn default_overlay_position() -> String {
@@ -102,6 +104,7 @@ impl Default for Settings {
             hotkey_mode: "dedicated_key".into(),
             hotkey_keycode: 0,
             hotkey_key_name: "Not set".into(),
+            history_retention_days: 0,
         }
     }
 }

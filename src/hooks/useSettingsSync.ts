@@ -7,22 +7,26 @@ import { useTauri } from './useTauri'
 
 // Settings keys that should be synced to the backend
 const SYNCED_KEYS = [
-  'hotkey', 'hotkeyMode', 'hotkeyKeycode', 'hotkeyKeyName', 'launchAtLogin', 'showInMenuBar', 'playSoundOnComplete',
+  'hotkey', 'hotkeyMode', 'hotkeyKeycode', 'hotkeyKeyName', 'launchAtLogin', 'playSoundOnComplete',
   'autoDismissOverlay', 'smartFormatting',
-  'inputDevice', 'noiseSuppression', 'model', 'onboardingComplete',
+  'inputDevice', 'model', 'onboardingComplete',
   'aiCleanup',
   'toneMode',
   'overlayPosition',
   'showPassiveOverlay',
+  'historyRetentionDays',
 ] as const
 
 /**
  * Loads settings from the Rust backend on mount and syncs changes back.
+ * Also listens for cross-window settings-changed events to keep all windows in sync.
  */
 export function useSettingsSync() {
   const tauri = useTauri()
   const updateSettings = useAppStore((s) => s.updateSettings)
   const loaded = useRef(false)
+  // Guard to prevent re-syncing changes that came from this window
+  const suppressSync = useRef(false)
 
   useEffect(() => {
     if (loaded.current) return
@@ -78,8 +82,6 @@ export function useSettingsSync() {
   }, [])
 
   // Always-active: sync store changes back to backend + listen for events.
-  // This is intentionally in a separate useEffect WITHOUT the loaded guard
-  // so that React StrictMode's remount correctly recreates the subscription.
   useEffect(() => {
     const unlisteners: Array<() => void> = []
 
@@ -94,11 +96,22 @@ export function useSettingsSync() {
       state.setHistory([...state.history, event.payload])
     }).then((fn) => unlisteners.push(fn))
 
+    // Listen for settings changes from other windows (cross-window sync)
+    listen<Record<string, unknown>>('settings-changed', (event) => {
+      const partial = event.payload
+      if (partial && typeof partial === 'object' && Object.keys(partial).length > 0) {
+        // Apply changes to this window's store without re-syncing back to Rust
+        suppressSync.current = true
+        useAppStore.getState().updateSettings(partial as Partial<ReturnType<typeof useAppStore.getState>>)
+        // Reset suppress flag after a tick to allow future local changes to sync
+        setTimeout(() => { suppressSync.current = false }, 0)
+      }
+    }).then((fn) => unlisteners.push(fn))
+
     // Subscribe to store changes and sync settings + dictionary to backend
-    // Guard: don't sync until backend settings have been loaded to avoid
-    // overwriting saved values with zustand defaults during startup.
     const unsub = useAppStore.subscribe((state, prevState) => {
       if (!state.settingsLoaded) return
+      if (suppressSync.current) return
 
       const changed: Record<string, unknown> = {}
       for (const key of SYNCED_KEYS) {

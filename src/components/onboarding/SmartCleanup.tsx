@@ -52,7 +52,7 @@ export function SmartCleanup({ onNext }: SmartCleanupProps) {
   return (
     <div className="flex flex-col animate-fade-in">
       <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
-        STEP 6 OF 6
+        STEP 4 OF 4
       </span>
 
       {/* Icon card */}
@@ -96,14 +96,14 @@ export function SmartCleanup({ onNext }: SmartCleanupProps) {
           </p>
 
           {/* Before/after example */}
-          <div className="rounded-xl border border-chirp-stone-200 bg-chirp-stone-50 p-4 mt-5 flex flex-col gap-3">
+          <div className="rounded-xl border border-card-border bg-white p-4 mt-5 flex flex-col gap-3">
             <div>
               <span className="font-body text-[10px] font-semibold uppercase tracking-[0.5px] text-chirp-stone-400">Before</span>
               <p className="font-body text-sm text-chirp-stone-500 mt-1 italic">
                 "{CLEANUP_EXAMPLE.before}"
               </p>
             </div>
-            <div className="border-t border-chirp-stone-200 pt-3">
+            <div className="border-t border-card-border pt-3">
               <span className="font-body text-[10px] font-semibold uppercase tracking-[0.5px] text-chirp-amber-500">After</span>
               <p className="font-body text-sm text-chirp-stone-900 mt-1">
                 "{CLEANUP_EXAMPLE.after}"

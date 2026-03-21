@@ -4,6 +4,10 @@ mod commands;
 mod dictionary;
 mod file_transcribe;
 mod history;
+#[cfg(target_os = "macos")]
+mod hotkey;
+#[cfg(target_os = "windows")]
+#[path = "hotkey_windows.rs"]
 mod hotkey;
 mod inject;
 mod llm;
@@ -28,7 +32,8 @@ pub fn run() {
     let initial_settings = settings::load_settings();
     let initial_dictionary = settings::load_dictionary();
     let initial_snippets = settings::load_snippets();
-    let initial_history = history::load_history();
+    let mut initial_history = history::load_history();
+    history::prune_history(&mut initial_history, initial_settings.history_retention_days);
     let hotkey_str = initial_settings.hotkey.clone();
     let hotkey_mode = initial_settings.hotkey_mode.clone();
 
@@ -200,6 +205,7 @@ pub fn run() {
             }
 
             // Start dedicated key listener if configured
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
             {
                 let state = handle.state::<SharedState>();
                 let s = state.blocking_lock();

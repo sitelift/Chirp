@@ -77,11 +77,17 @@ export interface AppState {
   overlayPosition: 'bottom' | 'top'
   showPassiveOverlay: boolean
 
+  // History retention
+  historyRetentionDays: number
+
   // Hotkey status
   hotkeyStatus: 'idle' | 'retrying' | 'active' | 'failed'
 
   // Settings saved indicator
   settingsSaved: boolean
+
+  // About modal
+  aboutModalOpen: boolean
 
   // Loading
   settingsLoaded: boolean
@@ -112,6 +118,7 @@ export interface AppState {
   setHotkeyStatus: (status: 'idle' | 'retrying' | 'active' | 'failed') => void
   setOnboardingComplete: (complete: boolean) => void
   setSettingsSaved: (saved: boolean) => void
+  setAboutModalOpen: (open: boolean) => void
 }
 
 export const useAppStore = create<AppState>((set) => ({
@@ -168,11 +175,17 @@ export const useAppStore = create<AppState>((set) => ({
   overlayPosition: DEFAULT_SETTINGS.overlayPosition,
   showPassiveOverlay: DEFAULT_SETTINGS.showPassiveOverlay,
 
+  // History retention
+  historyRetentionDays: DEFAULT_SETTINGS.historyRetentionDays,
+
   // Hotkey status
   hotkeyStatus: 'idle',
 
   // Settings saved indicator
   settingsSaved: false,
+
+  // About modal
+  aboutModalOpen: false,
 
   // Loading
   settingsLoaded: false,
@@ -211,4 +224,5 @@ export const useAppStore = create<AppState>((set) => ({
   setHotkeyStatus: (hotkeyStatus) => set({ hotkeyStatus }),
   setOnboardingComplete: (onboardingComplete) => set({ onboardingComplete }),
   setSettingsSaved: (settingsSaved) => set({ settingsSaved }),
+  setAboutModalOpen: (aboutModalOpen) => set({ aboutModalOpen }),
 }))

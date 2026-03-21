@@ -58,3 +58,6 @@ scripts/.env
 
 # Rust build
 target/
+
+# Superpowers brainstorm artifacts
+.superpowers/

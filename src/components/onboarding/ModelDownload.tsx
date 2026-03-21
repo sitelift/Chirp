@@ -56,7 +56,7 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
   return (
     <div className="flex flex-col animate-fade-in">
       <span className="inline-flex items-center self-start rounded-full bg-chirp-amber-50 border border-chirp-amber-200 px-3 py-1 font-body text-xs text-chirp-amber-500 font-medium">
-        STEP 5 OF 6
+        STEP 3 OF 4
       </span>
 
       {/* Icon card */}
@@ -97,7 +97,7 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
           </h1>
 
           {/* Model info card */}
-          <div className="rounded-lg bg-chirp-stone-50 border border-chirp-stone-200 p-4 mt-4">
+          <div className="rounded-xl bg-white border border-card-border p-4 mt-4">
             <div className="flex items-center justify-between">
               <span className="font-mono text-sm font-medium text-chirp-stone-900">
                 {currentModel?.name}
