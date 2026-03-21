@@ -18,6 +18,24 @@ pub fn load_history() -> Vec<TranscriptionEntry> {
     }
 }
 
+/// Prune entries older than retention_days. If retention_days is 0, keep all.
+pub fn prune_history(entries: &mut Vec<TranscriptionEntry>, retention_days: i64) {
+    if retention_days <= 0 {
+        return;
+    }
+    let cutoff = chrono::Utc::now() - chrono::Duration::days(retention_days);
+    let cutoff_str = cutoff.to_rfc3339();
+    let before = entries.len();
+    entries.retain(|e| e.timestamp >= cutoff_str);
+    let pruned = before - entries.len();
+    if pruned > 0 {
+        log::info!("Pruned {pruned} history entries older than {retention_days} days");
+        if let Err(e) = save_history(entries) {
+            log::warn!("Failed to save pruned history: {e}");
+        }
+    }
+}
+
 /// Save transcription history to disk, capping at 1000 entries (drops oldest)
 pub fn save_history(entries: &[TranscriptionEntry]) -> Result<(), String> {
     let dir = config_dir();

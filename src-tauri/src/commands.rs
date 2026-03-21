@@ -2,6 +2,7 @@ use crate::audio;
 use crate::cleanup;
 use crate::dictionary;
 use crate::history;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use crate::hotkey;
 use crate::inject;
 use crate::llm;
@@ -66,6 +67,9 @@ pub async fn update_settings(
         serde_json::from_value(settings_val).map_err(|e| format!("Invalid settings: {e}"))?;
     settings::save_settings(&s.settings)?;
 
+    // Broadcast settings change to all windows (cross-window sync)
+    let _ = app_handle.emit("settings-changed", &partial);
+
     // Re-register global shortcut if hotkey changed
     if s.settings.hotkey != old_hotkey {
         let new_hotkey = s.settings.hotkey.clone();
@@ -119,11 +123,20 @@ pub async fn update_settings(
 
         // Auto-restart key listener if mode or keycode changed
         if new_mode != old_hotkey_mode || new_keycode != old_hotkey_keycode {
-            hotkey::stop_key_listener();
-            if new_mode == "dedicated_key" && new_keycode > 0 {
-                let shared = state.inner().clone();
-                hotkey::start_key_listener(app_handle.clone(), new_keycode, shared);
-            } else {
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            {
+                hotkey::stop_key_listener();
+                if new_mode == "dedicated_key" && new_keycode > 0 {
+                    let shared = state.inner().clone();
+                    hotkey::start_key_listener(app_handle.clone(), new_keycode, shared);
+                } else {
+                    let mut s = state.lock().await;
+                    s.hotkey_status = crate::state::HotkeyStatus::Idle;
+                    let _ = app_handle.emit("hotkey-status", "idle");
+                }
+            }
+            #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+            {
                 let mut s = state.lock().await;
                 s.hotkey_status = crate::state::HotkeyStatus::Idle;
                 let _ = app_handle.emit("hotkey-status", "idle");
@@ -811,21 +824,29 @@ pub async fn restart_hotkey_listener(
     app_handle: AppHandle,
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
-    hotkey::stop_key_listener();
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        hotkey::stop_key_listener();
 
-    let s = state.lock().await;
-    if s.settings.hotkey_mode == "dedicated_key" && s.settings.hotkey_keycode > 0 {
-        let kc = s.settings.hotkey_keycode;
-        let name = s.settings.hotkey_key_name.clone();
-        let shared = state.inner().clone();
-        drop(s);
-        log::info!("Restarting key listener for '{name}' (keycode {kc})");
-        hotkey::start_key_listener(app_handle, kc, shared);
-    } else {
-        let mut s_mut = state.lock().await;
-        s_mut.hotkey_status = crate::state::HotkeyStatus::Idle;
-        drop(s_mut);
-        let _ = app_handle.emit("hotkey-status", "idle");
+        let s = state.lock().await;
+        if s.settings.hotkey_mode == "dedicated_key" && s.settings.hotkey_keycode > 0 {
+            let kc = s.settings.hotkey_keycode;
+            let name = s.settings.hotkey_key_name.clone();
+            let shared = state.inner().clone();
+            drop(s);
+            log::info!("Restarting key listener for '{name}' (keycode {kc})");
+            hotkey::start_key_listener(app_handle, kc, shared);
+        } else {
+            let mut s_mut = state.lock().await;
+            s_mut.hotkey_status = crate::state::HotkeyStatus::Idle;
+            drop(s_mut);
+            let _ = app_handle.emit("hotkey-status", "idle");
+        }
+    }
+
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        let _ = (&app_handle, &state); // suppress unused warnings
     }
 
     Ok(())
@@ -847,7 +868,10 @@ pub async fn get_hotkey_status(
 
 #[tauri::command]
 pub async fn check_input_monitoring() -> Result<bool, String> {
-    Ok(hotkey::preflight_listen_access())
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    { Ok(hotkey::preflight_listen_access()) }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    { Ok(true) }
 }
 
 #[derive(serde::Serialize)]
@@ -859,10 +883,17 @@ pub struct CapturedKey {
 
 #[tauri::command]
 pub async fn capture_hotkey_key() -> Result<CapturedKey, String> {
-    // Run capture on a blocking thread since it blocks until a key is pressed
-    let (keycode, name) = tokio::task::spawn_blocking(hotkey::capture_next_key)
-        .await
-        .map_err(|e| format!("capture task failed: {e}"))?;
-    Ok(CapturedKey { keycode, name })
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    {
+        // Run capture on a blocking thread since it blocks until a key is pressed
+        let (keycode, name) = tokio::task::spawn_blocking(hotkey::capture_next_key)
+            .await
+            .map_err(|e| format!("capture task failed: {e}"))?;
+        Ok(CapturedKey { keycode, name })
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+    {
+        Err("Dedicated key capture is not supported on this platform".into())
+    }
 }
 
