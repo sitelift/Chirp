@@ -1,65 +1,40 @@
 import { useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
-import { LayoutDashboard, Settings as SettingsIcon, Mic, Cpu, BookOpen, Zap, Info, FileAudio } from 'lucide-react'
+import { Home, BookOpen, Zap, Settings as SettingsIcon, Check } from 'lucide-react'
+import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
-import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
 import { BirdMark } from '../shared/BirdMark'
+import { KeyBadge } from '../shared/KeyBadge'
+import { AboutModal } from '../shared/AboutModal'
+import { formatHotkey } from '../../lib/utils'
 import { HomePage } from './HomePage'
-import { GeneralPage } from './GeneralPage'
-import { AudioPage } from './AudioPage'
-import { ModelPage } from './ModelPage'
 import { DictionaryPage } from './DictionaryPage'
 import { SnippetsPage } from './SnippetsPage'
-import { AboutPage } from './AboutPage'
-import { TranscribePage } from './TranscribePage'
+import { SettingsPage } from './SettingsPage'
 
-const NAV_SECTIONS = [
-  {
-    label: 'MAIN',
-    items: [
-      { id: 'home', label: 'Home', icon: LayoutDashboard },
-    ],
-  },
-  {
-    label: 'SETTINGS',
-    items: [
-      { id: 'general', label: 'General', icon: SettingsIcon },
-      { id: 'audio', label: 'Audio', icon: Mic },
-      { id: 'model', label: 'Model', icon: Cpu },
-    ],
-  },
-  {
-    label: 'TOOLS',
-    items: [
-      { id: 'dictionary', label: 'Dictionary', icon: BookOpen },
-      { id: 'snippets', label: 'Snippets', icon: Zap },
-      { id: 'transcribe', label: 'Transcribe File', icon: FileAudio },
-    ],
-  },
+const NAV_ITEMS: { id: string; label: string; icon: LucideIcon }[] = [
+  { id: 'home', label: 'Home', icon: Home },
+  { id: 'dictionary', label: 'Dictionary', icon: BookOpen },
+  { id: 'snippets', label: 'Snippets', icon: Zap },
 ]
 
 const PAGES: Record<string, React.FC> = {
   home: HomePage,
-  general: GeneralPage,
-  audio: AudioPage,
-  model: ModelPage,
   dictionary: DictionaryPage,
   snippets: SnippetsPage,
-  about: AboutPage,
-  transcribe: TranscribePage,
+  settings: SettingsPage,
 }
 
 export function Settings() {
   const settingsPage = useAppStore((s) => s.settingsPage)
   const setSettingsPage = useAppStore((s) => s.setSettingsPage)
-  const modelDownloaded = useAppStore((s) => s.modelDownloaded)
-  const model = useAppStore((s) => s.model)
-  const aiCleanup = useAppStore((s) => s.aiCleanup)
   const settingsSaved = useAppStore((s) => s.settingsSaved)
   const setSettingsSaved = useAppStore((s) => s.setSettingsSaved)
-  const [llmDownloaded] = useLlmDownloaded()
-
-  const sttReady = modelDownloaded[model]
+  const hotkey = useAppStore((s) => s.hotkey)
+  const hotkeyMode = useAppStore((s) => s.hotkeyMode)
+  const hotkeyKeyName = useAppStore((s) => s.hotkeyKeyName)
+  const aboutModalOpen = useAppStore((s) => s.aboutModalOpen)
+  const setAboutModalOpen = useAppStore((s) => s.setAboutModalOpen)
 
   useEffect(() => {
     if (settingsSaved) {
@@ -70,103 +45,111 @@ export function Settings() {
 
   useEffect(() => {
     const unlisten = listen('check-for-updates', () => {
-      setSettingsPage('about')
+      setAboutModalOpen(true)
     })
     return () => { unlisten.then((f) => f()) }
-  }, [setSettingsPage])
+  }, [setAboutModalOpen])
 
-  const isReady = sttReady && (!aiCleanup || llmDownloaded)
-  const statusLabel = !sttReady
-    ? 'Model needed'
-    : aiCleanup && !llmDownloaded
-      ? 'Setup needed'
-      : 'Ready'
+  const hotkeyKeys = hotkeyMode === 'dedicated_key'
+    ? [hotkeyKeyName]
+    : formatHotkey(hotkey)
+
   const PageComponent = PAGES[settingsPage] ?? HomePage
 
   return (
     <div className="flex h-screen no-select">
-      {/* Sidebar */}
-      <div className="flex w-56 shrink-0 flex-col border-r border-chirp-stone-200 bg-white py-4 px-2.5">
-        {/* Logo lockup */}
-        <div className="flex items-center gap-2 px-3 pb-2">
-          <BirdMark size={24} />
-          <span className="font-display font-extrabold text-[16px] text-chirp-stone-900 tracking-[-0.5px] leading-[1.2]">
+      {/* Dark sidebar */}
+      <div className="flex w-[220px] shrink-0 flex-col bg-sidebar p-[20px_12px] relative overflow-hidden sidebar-noise sidebar-glow">
+        {/* Logo */}
+        <div className="flex items-center gap-[10px] px-[10px] mb-8 relative z-10">
+          <div className="w-8 h-8 rounded-[9px] bg-chirp-yellow flex items-center justify-center shadow-logo-glow">
+            <BirdMark size={18} color="white" />
+          </div>
+          <span className="font-display font-black text-xl text-white tracking-[-0.5px]">
             chirp
           </span>
         </div>
 
-        {/* Status pill */}
-        <div className="flex items-center justify-between gap-2 px-3 pb-4 mb-2 border-b border-chirp-stone-200">
-          <div className="flex items-center gap-2">
-            <div className={`w-2 h-2 rounded-full ${isReady ? 'bg-chirp-success' : 'bg-chirp-amber-400'}`} />
-            <span className="font-body text-xs text-chirp-stone-500">
-              {statusLabel}
-            </span>
-          </div>
-          <span
-            className={`font-body text-xs text-chirp-success transition-opacity duration-300 ${
-              settingsSaved ? 'opacity-100' : 'opacity-0'
+        {/* Nav items */}
+        <nav className="flex flex-col gap-0.5 relative z-10">
+          {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
+            const active = settingsPage === id
+            return (
+              <button
+                key={id}
+                onClick={() => setSettingsPage(id)}
+                className={`flex items-center gap-[10px] px-[14px] py-[10px] rounded-lg text-[13px] transition-all duration-200 relative ${
+                  active
+                    ? 'text-chirp-yellow font-semibold bg-chirp-yellow/[0.08]'
+                    : 'text-white/40 hover:text-white/70 hover:bg-white/[0.04]'
+                }`}
+              >
+                {active && (
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-chirp-yellow rounded-r-sm" />
+                )}
+                <Icon size={16} strokeWidth={1.5} />
+                {label}
+              </button>
+            )
+          })}
+        </nav>
+
+        {/* Footer */}
+        <div className="mt-auto relative z-10">
+          {/* Settings nav item */}
+          <button
+            onClick={() => setSettingsPage('settings')}
+            className={`flex items-center gap-[10px] w-full px-[14px] py-[10px] rounded-lg text-[13px] transition-all duration-200 relative mb-3 ${
+              settingsPage === 'settings'
+                ? 'text-chirp-yellow font-semibold bg-chirp-yellow/[0.08]'
+                : 'text-white/40 hover:text-white/70 hover:bg-white/[0.04]'
             }`}
           >
-            Saved
-          </span>
-        </div>
+            {settingsPage === 'settings' && (
+              <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-chirp-yellow rounded-r-sm" />
+            )}
+            <SettingsIcon size={16} strokeWidth={1.5} />
+            Settings
+          </button>
 
-        {/* Nav sections */}
-        <nav className="flex flex-col flex-1">
-          {NAV_SECTIONS.map((section) => (
-            <div key={section.label}>
-              <span className="text-[11px] font-semibold uppercase tracking-[0.8px] text-chirp-stone-400 px-3 mt-5 mb-1.5 block">
-                {section.label}
-              </span>
-              <div className="flex flex-col gap-0.5">
-                {section.items.map(({ id, label, icon: Icon }) => {
-                  const active = settingsPage === id
-                  return (
-                    <button
-                      key={id}
-                      onClick={() => setSettingsPage(id)}
-                      className={`flex h-9 items-center gap-2.5 rounded-lg px-3 text-sm font-body font-medium transition-colors duration-150 ease-out ${
-                        active
-                          ? 'bg-chirp-stone-100 text-chirp-stone-900 shadow-subtle'
-                          : 'text-chirp-stone-500 hover:bg-chirp-stone-50'
-                      }`}
-                    >
-                      <Icon size={18} strokeWidth={1.5} />
-                      {label}
-                    </button>
-                  )
-                })}
-              </div>
+          {/* Hotkey card */}
+          <div className="mx-1 p-[14px] bg-white/[0.05] rounded-[10px] border border-white/[0.06] backdrop-blur-sm">
+            <div className="text-[10px] text-white/30 font-semibold uppercase tracking-[1px] mb-2">
+              Hold to dictate
             </div>
-          ))}
-
-          {/* Footer */}
-          <div className="mt-auto border-t border-chirp-stone-200 pt-3">
-            <button
-              onClick={() => setSettingsPage('about')}
-              className={`flex h-9 w-full items-center justify-between rounded-lg px-3 text-sm font-body font-medium transition-colors duration-150 ease-out ${
-                settingsPage === 'about'
-                  ? 'bg-chirp-stone-100 text-chirp-stone-900 shadow-subtle'
-                  : 'text-chirp-stone-500 hover:bg-chirp-stone-50'
-              }`}
-            >
-              <div className="flex items-center gap-2.5">
-                <Info size={18} strokeWidth={1.5} />
-                About
-              </div>
-              <span className="font-mono text-[11px] text-chirp-stone-400">v1.0.0</span>
-            </button>
+            <div className="flex gap-1">
+              {hotkeyKeys.map((key) => (
+                <KeyBadge key={key} keyLabel={key} variant="glass" />
+              ))}
+            </div>
           </div>
-        </nav>
+
+          {/* Version / About */}
+          <button
+            onClick={() => setAboutModalOpen(true)}
+            className="w-full text-center mt-3 text-[10px] text-white/[0.15] hover:text-white/30 transition-colors"
+          >
+            v1.0.0
+          </button>
+        </div>
       </div>
 
       {/* Content area */}
-      <div className="flex-1 overflow-y-auto px-10 py-8 bg-chirp-stone-50">
-        <div className="max-w-3xl">
+      <div className="flex-1 overflow-y-auto px-8 py-7 bg-surface">
+        <div className="max-w-5xl mx-auto">
           <PageComponent />
         </div>
       </div>
+
+      {/* Saved indicator */}
+      {settingsSaved && (
+        <div className="fixed bottom-5 right-5 flex items-center gap-[6px] px-4 py-2 bg-[#1a1a1a] text-white rounded-lg text-xs font-medium shadow-elevated animate-saved-pop z-50">
+          <Check size={14} className="text-chirp-success" /> Saved
+        </div>
+      )}
+
+      {/* About modal */}
+      {aboutModalOpen && <AboutModal />}
     </div>
   )
 }
