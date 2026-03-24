@@ -1,7 +1,9 @@
+mod announcements;
 mod audio;
 mod cleanup;
 mod commands;
 mod dictionary;
+mod feedback;
 mod history;
 mod inject;
 mod llm;
@@ -167,6 +169,9 @@ pub fn run() {
             commands::update_snippets,
             commands::play_completion_sound,
             commands::get_hotkey_status,
+            commands::get_announcements,
+            commands::dismiss_announcement,
+            commands::send_feedback,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

@@ -816,3 +816,31 @@ pub async fn get_hotkey_status(
     Ok(status.to_string())
 }
 
+// ── Announcements commands ─────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn get_announcements() -> Result<Vec<crate::announcements::Announcement>, String> {
+    let app_version = env!("CARGO_PKG_VERSION");
+    Ok(crate::announcements::fetch_announcements(app_version).await)
+}
+
+#[tauri::command]
+pub async fn dismiss_announcement(id: String) -> Result<(), String> {
+    let mut seen = crate::announcements::load_seen();
+    if !seen.contains(&id) {
+        seen.push(id);
+        crate::announcements::save_seen(&seen)?;
+    }
+    Ok(())
+}
+
+// ── Feedback command ───────────────────────────────────────────────────
+
+#[tauri::command]
+pub async fn send_feedback(
+    text: String,
+    state: State<'_, SharedState>,
+) -> Result<(), String> {
+    crate::feedback::send_feedback_command(text, state.inner()).await
+}
+
