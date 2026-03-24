@@ -35,9 +35,9 @@
         "minWidth": 900,
         "minHeight": 600,
         "decorations": false,
-        "visible": true,
+        "visible": false,
         "center": true,
-        "maximized": true
+        "maximized": false
       }
     ],
     "macOSPrivateApi": true,

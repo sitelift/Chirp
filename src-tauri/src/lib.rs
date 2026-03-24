@@ -111,7 +111,15 @@ pub fn run() {
                 .build(),
         )
         .plugin(shortcut_plugin)
-        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
+        .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            // Focus existing settings window when second instance tries to launch
+            if let Some(win) = app.get_webview_window("settings") {
+                let _ = win.show();
+                let _ = win.unminimize();
+                let _ = win.set_focus();
+            }
+        }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init());
@@ -326,6 +334,16 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // Show settings window unless launched with --minimized (autostart)
+            let minimized = std::env::args().any(|a| a == "--minimized");
+            if !minimized {
+                if let Some(win) = app.get_webview_window("settings") {
+                    let _ = win.show();
+                    let _ = win.maximize();
+                    let _ = win.set_focus();
+                }
+            }
 
             // Prevent settings window from fully closing — hide to tray instead
             if let Some(settings_win) = app.get_webview_window("settings") {
