@@ -2,7 +2,6 @@ mod audio;
 mod cleanup;
 mod commands;
 mod dictionary;
-mod file_transcribe;
 mod history;
 mod inject;
 mod llm;
@@ -69,6 +68,16 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin({
+            // Only send telemetry when the user has opted in.
+            // An empty app key disables the Aptabase client entirely (all track_event calls become no-ops).
+            let app_key = if initial_settings.help_improve {
+                "A-US-6633912873"
+            } else {
+                ""
+            };
+            tauri_plugin_aptabase::Builder::new(app_key).build()
+        })
         .manage::<SharedState>({
             Arc::new(tokio::sync::Mutex::new(AppState::new(
                 initial_settings,
@@ -106,7 +115,6 @@ pub fn run() {
             commands::get_snippets,
             commands::update_snippets,
             commands::play_completion_sound,
-            commands::transcribe_file,
             commands::get_hotkey_status,
         ])
         .setup(|app| {
@@ -144,6 +152,19 @@ pub fn run() {
 
                 }
 
+            }
+
+            // Track app_started event (only fires if help_improve is on)
+            {
+                use tauri_plugin_aptabase::EventTracker;
+                let state = handle.state::<SharedState>();
+                let s = state.blocking_lock();
+                let model_loaded = s.recognizer.is_some();
+                drop(s);
+                let _ = app.track_event("app_started", Some(serde_json::json!({
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "model_loaded": model_loaded,
+                })));
             }
 
             // Kill any stale llama-server from a previous crash (C2 fix)

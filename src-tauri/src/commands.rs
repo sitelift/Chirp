@@ -402,13 +402,13 @@ pub async fn stop_recording(
         )
     };
 
+    let had_dictionary = !dict.is_empty();
+
     // Transcribe using the sherpa-onnx recognizer.
-    // Chunk long audio into 15s segments (1s overlap) so the 0.6B model
+    // Chunk long audio into 30s segments (1s overlap) so the 0.6B model
     // stays in its comfort zone — longer buffers produce gibberish.
     let result = tokio::task::spawn_blocking(move || {
-        use crate::file_transcribe;
-
-        let chunks = file_transcribe::chunk_audio(&audio_data, 16000, 15.0, 1.0);
+        let chunks = crate::transcribe::chunk_audio(&audio_data, 16000, 30.0, 1.0);
         log::info!("Starting Parakeet TDT transcription ({} chunk(s))...", chunks.len());
 
         let mut transcriptions = Vec::new();
@@ -430,7 +430,7 @@ pub async fn stop_recording(
             transcriptions.push(chunk_raw);
         }
 
-        let raw = file_transcribe::merge_transcriptions(transcriptions);
+        let raw = crate::transcribe::merge_transcriptions(transcriptions);
 
         if raw.is_empty() {
             log::warn!("Transcription returned empty text");
@@ -528,6 +528,17 @@ pub async fn stop_recording(
     let new_entry = s.history.last().cloned();
     s.recording_state = RecordingState::Idle;
 
+    // Track dictation_completed telemetry (no-op if help_improve is off)
+    {
+        use tauri_plugin_aptabase::EventTracker;
+        let _ = app_handle.track_event("dictation_completed", Some(serde_json::json!({
+            "duration_seconds": (duration_ms as f64 / 1000.0),
+            "word_count": word_count,
+            "used_ai_cleanup": was_cleaned_up,
+            "used_dictionary": had_dictionary,
+        })));
+    }
+
     // Notify all windows (including settings) that history changed
     if let Some(entry) = new_entry {
         let _ = app_handle.emit("history-updated", entry);
@@ -550,6 +561,7 @@ pub async fn stop_recording(
 
 #[tauri::command]
 pub async fn cancel_recording(
+    app_handle: AppHandle,
     state: State<'_, SharedState>,
     buffer: State<'_, AudioBuffer>,
     stream_handle: State<'_, StreamHandle>,
@@ -575,6 +587,13 @@ pub async fn cancel_recording(
     // Reset state
     let mut s = state.lock().await;
     s.recording_state = RecordingState::Idle;
+    drop(s);
+
+    // Track dictation_cancelled telemetry (no-op if help_improve is off)
+    {
+        use tauri_plugin_aptabase::EventTracker;
+        let _ = app_handle.track_event("dictation_cancelled", None);
+    }
 
     Ok(())
 }
@@ -585,7 +604,15 @@ pub async fn download_model(
     app_handle: AppHandle,
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
-    transcribe::download_model(&model, app_handle).await?;
+    transcribe::download_model(&model, app_handle.clone()).await?;
+
+    // Track model_downloaded telemetry (no-op if help_improve is off)
+    {
+        use tauri_plugin_aptabase::EventTracker;
+        let _ = app_handle.track_event("model_downloaded", Some(serde_json::json!({
+            "model": &model,
+        })));
+    }
 
     // Load the recognizer into app state immediately so recording works
     // without requiring a restart.
@@ -773,85 +800,6 @@ pub async fn play_completion_sound() -> Result<(), String> {
     })
     .await
     .map_err(|e| format!("Task error: {e}"))?
-}
-
-// ── File transcription ────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn transcribe_file(
-    path: String,
-    app_handle: AppHandle,
-    state: State<'_, SharedState>,
-) -> Result<FileTranscriptionResult, String> {
-    use crate::file_transcribe;
-
-    let file_path = std::path::PathBuf::from(&path);
-    if !file_path.exists() {
-        return Err("File not found".to_string());
-    }
-
-    let _ = app_handle.emit("file-transcribe-progress", serde_json::json!({"phase": "decoding", "progress": 0}));
-
-    // Decode audio file (blocking - heavy CPU work)
-    let (samples, _sample_rate) = tokio::task::spawn_blocking(move || {
-        file_transcribe::decode_audio_file(&file_path)
-    })
-    .await
-    .map_err(|e| format!("Task failed: {e}"))??;
-
-    let duration_secs = samples.len() as f32 / 16000.0;
-    let _ = app_handle.emit("file-transcribe-progress", serde_json::json!({"phase": "transcribing", "progress": 0}));
-
-    // Chunk the audio
-    let chunks = file_transcribe::chunk_audio(&samples, 16000, 30.0, 1.0);
-    let total_chunks = chunks.len();
-    let mut transcriptions = Vec::new();
-
-    // Clone the recognizer Arc so we don't hold the state lock during transcription
-    let recognizer = {
-        let s = state.lock().await;
-        s.recognizer.clone().ok_or("model_not_loaded".to_string())?
-    };
-
-    // Transcribe each chunk
-    for (i, chunk) in chunks.into_iter().enumerate() {
-        let chunk_owned = chunk.to_vec();
-        let rec = recognizer.clone();
-
-        let segment = tokio::task::spawn_blocking(move || {
-            crate::transcribe::transcribe(&rec, &chunk_owned)
-        })
-        .await
-        .map_err(|e| format!("Task failed: {e}"))??;
-
-        transcriptions.push(segment);
-
-        let progress = ((i + 1) as f32 / total_chunks as f32 * 100.0) as u32;
-        let _ = app_handle.emit("file-transcribe-progress", serde_json::json!({
-            "phase": "transcribing",
-            "progress": progress,
-            "chunk": i + 1,
-            "totalChunks": total_chunks,
-        }));
-    }
-
-    let text = file_transcribe::merge_transcriptions(transcriptions);
-    let word_count = text.split_whitespace().count();
-
-    let _ = app_handle.emit("file-transcribe-progress", serde_json::json!({"phase": "done", "progress": 100}));
-
-    log::info!(
-        "File transcription complete: {} chunk(s), {:.1}s audio",
-        total_chunks,
-        duration_secs
-    );
-
-    Ok(FileTranscriptionResult {
-        text,
-        duration_secs,
-        word_count,
-        chunks: total_chunks,
-    })
 }
 
 #[tauri::command]
