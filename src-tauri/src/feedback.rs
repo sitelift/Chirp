@@ -1,12 +1,10 @@
 use crate::state::SharedState;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-/// Discord webhook URL, injected at compile time from .env file.
-/// If not set, feedback silently fails (no crash, just returns an error to the user).
-const DISCORD_WEBHOOK_URL: &str = match option_env!("DISCORD_WEBHOOK_URL") {
-    Some(url) => url,
-    None => "",
-};
+/// Discord webhook URL for user feedback.
+/// Write-only — can only post messages, not read the channel.
+/// Replace with your actual webhook URL before release.
+const DISCORD_WEBHOOK_URL: &str = "https://discord.com/api/webhooks/PLACEHOLDER";
 
 /// Unix timestamp (seconds) of the last feedback submission.
 /// Zero means no submission has been made yet.

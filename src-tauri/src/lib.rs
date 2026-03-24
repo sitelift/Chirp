@@ -24,6 +24,14 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Ensure a Tokio runtime context exists before plugin setup.
+    // tauri-plugin-aptabase calls tokio::spawn() during plugin setup, which
+    // panics if no runtime is present. Tauri creates its own runtime later
+    // (during .run()), but plugin .setup() hooks run during .build() which
+    // is too early. This runtime lives for the duration of run().
+    let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
+    let _rt_guard = rt.enter();
+
     // Read settings early so we can configure the shortcut before building
     let initial_settings = settings::load_settings();
 
@@ -31,7 +39,7 @@ pub fn run() {
     // The guard must live for the entire run() scope — dropping it disables Sentry.
     let _sentry_guard = if initial_settings.help_improve {
         let client = sentry::init(sentry::ClientOptions {
-            dsn: option_env!("SENTRY_DSN").and_then(|s| s.parse().ok()),
+            dsn: "https://examplePublicKey@o0.ingest.sentry.io/0".parse().ok(),
             release: Some(std::borrow::Cow::Borrowed(env!("CARGO_PKG_VERSION"))),
             before_breadcrumb: Some(Arc::new(|breadcrumb| {
                 // Drop breadcrumbs that may contain transcription text
@@ -125,16 +133,15 @@ pub fn run() {
         builder = builder.plugin(tauri_plugin_sentry::init(guard));
     }
 
-    builder.plugin({
-            // Only send telemetry when the user has opted in.
-            // An empty app key disables the Aptabase client entirely (all track_event calls become no-ops).
-            let app_key = if initial_settings.help_improve {
-                option_env!("APTABASE_KEY").unwrap_or("")
-            } else {
-                ""
-            };
-            tauri_plugin_aptabase::Builder::new(app_key).build()
-        })
+    // Aptabase telemetry — empty key disables all tracking (no-op).
+    // Key is hardcoded; it's write-only (can only send events, not read data).
+    let aptabase_key = if initial_settings.help_improve {
+        "A-US-6633912873"
+    } else {
+        ""
+    };
+
+    builder.plugin(tauri_plugin_aptabase::Builder::new(aptabase_key).build())
         .manage::<SharedState>({
             Arc::new(tokio::sync::Mutex::new(AppState::new(
                 initial_settings,
