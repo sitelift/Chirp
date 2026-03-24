@@ -31,11 +31,7 @@ pub fn run() {
     // The guard must live for the entire run() scope — dropping it disables Sentry.
     let _sentry_guard = if initial_settings.help_improve {
         let client = sentry::init(sentry::ClientOptions {
-            dsn: Some(
-                "https://examplePublicKey@o0.ingest.sentry.io/0"
-                    .parse()
-                    .unwrap(),
-            ),
+            dsn: option_env!("SENTRY_DSN").and_then(|s| s.parse().ok()),
             release: Some(std::borrow::Cow::Borrowed(env!("CARGO_PKG_VERSION"))),
             before_breadcrumb: Some(Arc::new(|breadcrumb| {
                 // Drop breadcrumbs that may contain transcription text
@@ -133,7 +129,7 @@ pub fn run() {
             // Only send telemetry when the user has opted in.
             // An empty app key disables the Aptabase client entirely (all track_event calls become no-ops).
             let app_key = if initial_settings.help_improve {
-                "A-US-6633912873"
+                option_env!("APTABASE_KEY").unwrap_or("")
             } else {
                 ""
             };

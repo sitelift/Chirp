@@ -1,7 +1,12 @@
 use crate::state::SharedState;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-const DISCORD_WEBHOOK_URL: &str = "https://discord.com/api/webhooks/PLACEHOLDER";
+/// Discord webhook URL, injected at compile time from .env file.
+/// If not set, feedback silently fails (no crash, just returns an error to the user).
+const DISCORD_WEBHOOK_URL: &str = match option_env!("DISCORD_WEBHOOK_URL") {
+    Some(url) => url,
+    None => "",
+};
 
 /// Unix timestamp (seconds) of the last feedback submission.
 /// Zero means no submission has been made yet.
@@ -26,6 +31,10 @@ pub struct FeedbackContext {
 }
 
 pub async fn send(ctx: FeedbackContext) -> Result<(), String> {
+    if DISCORD_WEBHOOK_URL.is_empty() {
+        return Err("Feedback not configured yet.".into());
+    }
+
     let last = LAST_FEEDBACK_TS.load(Ordering::Relaxed);
     let now = now_secs();
     if last > 0 && now.saturating_sub(last) < RATE_LIMIT_SECS {
