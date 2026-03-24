@@ -12,13 +12,12 @@ export const DEFAULT_SETTINGS = {
   showPassiveOverlay: true,
   toneMode: 'message',
   historyRetentionDays: 0,
+  helpImprove: false,
 }
 
 export const TONE_MODES = [
   { id: 'message', label: 'Message', description: 'Natural conversational tone' },
   { id: 'email', label: 'Email', description: 'Formatted with greeting and sign-off' },
-  { id: 'formal', label: 'Formal', description: 'Professional, no contractions' },
-  { id: 'casual', label: 'Casual', description: 'Short and conversational' },
 ] as const
 
 export const STT_MODELS = [
@@ -26,11 +25,11 @@ export const STT_MODELS = [
 ]
 
 export const LLM_MODEL = {
-  name: 'Qwen 2.5 1.5B',
+  name: 'Qwen 2.5 3B',
   displayName: 'Smart Cleanup',
-  size: '1.1 GB',
-  friendlySize: 'About 1 GB',
-  description: 'Fast, local AI cleanup on any PC.',
+  size: '2.1 GB',
+  friendlySize: 'About 2 GB',
+  description: 'Multilingual grammar correction (29 languages).',
 }
 
 export const CLEANUP_EXAMPLE = {

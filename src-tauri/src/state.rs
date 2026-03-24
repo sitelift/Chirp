@@ -53,6 +53,8 @@ pub struct Settings {
     pub tone_mode: String,
     #[serde(default)]
     pub history_retention_days: i64,
+    #[serde(default)]
+    pub help_improve: bool,
 }
 
 fn default_overlay_position() -> String {
@@ -83,6 +85,7 @@ impl Default for Settings {
             show_passive_overlay: true,
             tone_mode: "message".into(),
             history_retention_days: 0,
+            help_improve: false,
         }
     }
 }
@@ -146,16 +149,6 @@ pub struct ModelStatus {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AmplitudeData {
     pub bars: Vec<f32>,
-}
-
-/// File transcription result
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct FileTranscriptionResult {
-    pub text: String,
-    pub duration_secs: f32,
-    pub word_count: usize,
-    pub chunks: usize,
 }
 
 /// Main application state shared across commands

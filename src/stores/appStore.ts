@@ -73,6 +73,9 @@ export interface AppState {
   // History retention
   historyRetentionDays: number
 
+  // Telemetry
+  helpImprove: boolean
+
   // Hotkey status
   hotkeyStatus: 'idle' | 'retrying' | 'active' | 'failed'
 
@@ -163,6 +166,9 @@ export const useAppStore = create<AppState>((set) => ({
 
   // History retention
   historyRetentionDays: DEFAULT_SETTINGS.historyRetentionDays,
+
+  // Telemetry
+  helpImprove: DEFAULT_SETTINGS.helpImprove,
 
   // Hotkey status
   hotkeyStatus: 'idle',
