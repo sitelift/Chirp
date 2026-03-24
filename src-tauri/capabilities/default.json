@@ -25,6 +25,7 @@
     "global-shortcut:default",
     "autostart:default",
     "dialog:default",
-    "aptabase:default"
+    "aptabase:default",
+    "sentry:default"
   ]
 }

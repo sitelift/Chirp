@@ -24,6 +24,51 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 pub fn run() {
     // Read settings early so we can configure the shortcut before building
     let initial_settings = settings::load_settings();
+
+    // Initialize Sentry crash reporting (only when user has opted in).
+    // The guard must live for the entire run() scope — dropping it disables Sentry.
+    let _sentry_guard = if initial_settings.help_improve {
+        let client = sentry::init(sentry::ClientOptions {
+            dsn: Some(
+                "https://examplePublicKey@o0.ingest.sentry.io/0"
+                    .parse()
+                    .unwrap(),
+            ),
+            release: Some(std::borrow::Cow::Borrowed(env!("CARGO_PKG_VERSION"))),
+            before_breadcrumb: Some(Arc::new(|breadcrumb| {
+                // Drop breadcrumbs that may contain transcription text
+                if let Some(msg) = &breadcrumb.message {
+                    let skip = [
+                        "After regex",
+                        "Parakeet chunk",
+                        "LLM cleanup:",
+                        "After AI cleanup",
+                        "clipboard",
+                        "dictionary",
+                    ];
+                    if skip.iter().any(|p| msg.contains(p)) {
+                        return None;
+                    }
+                }
+                Some(breadcrumb)
+            })),
+            before_send: Some(Arc::new(|mut event| {
+                // Scrub exception values that could contain user text
+                for exc_val in event.exception.values.iter_mut() {
+                    if let Some(ref v) = exc_val.value {
+                        if v.len() > 200 {
+                            exc_val.value = Some("[scrubbed — value too long]".into());
+                        }
+                    }
+                }
+                Some(event)
+            })),
+            ..Default::default()
+        });
+        Some(client)
+    } else {
+        None
+    };
     let initial_dictionary = settings::load_dictionary();
     let initial_snippets = settings::load_snippets();
     let mut initial_history = history::load_history();
@@ -57,7 +102,7 @@ pub fn run() {
             .build()
     };
 
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
@@ -67,8 +112,14 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, None))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
-        .plugin(tauri_plugin_dialog::init())
-        .plugin({
+        .plugin(tauri_plugin_dialog::init());
+
+    // Register Sentry plugin (auto-injects @sentry/browser into webviews)
+    if let Some(ref guard) = _sentry_guard {
+        builder = builder.plugin(tauri_plugin_sentry::init(guard));
+    }
+
+    builder.plugin({
             // Only send telemetry when the user has opted in.
             // An empty app key disables the Aptabase client entirely (all track_event calls become no-ops).
             let app_key = if initial_settings.help_improve {
