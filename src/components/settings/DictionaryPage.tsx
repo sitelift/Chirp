@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { trackEvent } from '@aptabase/tauri'
 import { useAppStore } from '../../stores/appStore'
 import { Button } from '../shared/Button'
 
@@ -17,6 +18,7 @@ export function DictionaryPage() {
     addEntry(from, to)
     setNewFrom('')
     setNewTo('')
+    trackEvent('feature_used', { feature: 'dictionary_add' })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

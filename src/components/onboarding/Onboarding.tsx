@@ -1,4 +1,5 @@
 import { useState } from 'react'
+import { trackEvent } from '@aptabase/tauri'
 import { useAppStore } from '../../stores/appStore'
 import { BirdMark } from '../shared/BirdMark'
 import { Welcome } from './Welcome'
@@ -14,6 +15,7 @@ export function Onboarding() {
   const setOnboardingComplete = useAppStore((s) => s.setOnboardingComplete)
 
   const handleFinish = () => {
+    trackEvent('onboarding_completed', { steps_completed: String(STEPS) })
     setOnboardingComplete(true)
   }
 

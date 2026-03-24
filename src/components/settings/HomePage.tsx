@@ -1,4 +1,5 @@
 import { useState, useMemo } from 'react'
+import { trackEvent } from '@aptabase/tauri'
 import { Search, Download, Trash2, Copy, BookOpen, Zap, ChevronDown, Clock, Mic, Type, Hash } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
@@ -120,6 +121,7 @@ export function HomePage() {
       await navigator.clipboard.writeText(text)
       setCopiedTimestamp(timestamp)
       setTimeout(() => setCopiedTimestamp(null), 1500)
+      trackEvent('feature_used', { feature: 'history_copy' })
     } catch { /* clipboard access denied — window may not be focused */ }
   }
 
