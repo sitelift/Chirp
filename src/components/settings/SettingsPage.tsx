@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { useHotkeyRecorder } from '../../hooks/useHotkeyRecorder'
@@ -43,6 +44,72 @@ function Card({ children }: { children: React.ReactNode }) {
   return (
     <div className="bg-white rounded-card border border-card-border overflow-hidden">
       {children}
+    </div>
+  )
+}
+
+function FeedbackSection() {
+  const [expanded, setExpanded] = useState(false)
+  const [text, setText] = useState('')
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [errorMsg, setErrorMsg] = useState('')
+
+  const handleSend = async () => {
+    setStatus('sending')
+    try {
+      await invoke('send_feedback', { text })
+      setStatus('sent')
+      setText('')
+      setTimeout(() => {
+        setStatus('idle')
+        setExpanded(false)
+      }, 3000)
+    } catch (e) {
+      setStatus('error')
+      setErrorMsg(String(e))
+    }
+  }
+
+  if (!expanded) {
+    return (
+      <button
+        onClick={() => setExpanded(true)}
+        className="text-[13px] font-medium text-[#1a1a1a] hover:text-chirp-amber-500 transition-colors w-full text-left"
+      >
+        Send Feedback
+      </button>
+    )
+  }
+
+  return (
+    <div className="w-full">
+      <div className="text-[13px] font-medium text-[#1a1a1a] mb-2">Send Feedback</div>
+      <textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Tell us what you think..."
+        maxLength={2000}
+        className="w-full h-24 rounded-lg border border-card-border bg-white p-3 text-sm font-body text-chirp-stone-900 resize-none focus:outline-none focus:border-chirp-amber-400 transition-colors"
+      />
+      <div className="flex items-center justify-between mt-2">
+        <span className="text-[11px] text-chirp-stone-400">
+          {status === 'sent' ? 'Sent!' : status === 'error' ? errorMsg : `${text.length}/2000`}
+        </span>
+        <div className="flex gap-2">
+          <button
+            onClick={() => { setExpanded(false); setText(''); setStatus('idle') }}
+            className="text-[12px] text-chirp-stone-400 hover:text-chirp-stone-600"
+          >
+            Cancel
+          </button>
+          <Button
+            onClick={handleSend}
+            disabled={text.trim().length === 0 || status === 'sending' || status === 'sent'}
+          >
+            {status === 'sending' ? 'Sending...' : status === 'sent' ? 'Sent!' : 'Send'}
+          </Button>
+        </div>
+      </div>
     </div>
   )
 }
@@ -606,6 +673,31 @@ export function SettingsPage() {
                 </Button>
               )}
             </div>
+          </Row>
+        </Card>
+      </div>
+
+      {/* ── PRIVACY & FEEDBACK ───────────────────────── */}
+      <div className="mt-6">
+        <SectionLabel>Privacy & Feedback</SectionLabel>
+        <Card>
+          <Row>
+            <div className="flex-1">
+              <div className="text-[13px] font-medium text-[#1a1a1a]">Help improve Chirp</div>
+              <div className="text-[11px] text-[#aaa] mt-0.5">
+                Share anonymous usage stats and crash reports
+              </div>
+              <div className="text-[10px] text-chirp-stone-400 mt-1">
+                Changes take effect on restart
+              </div>
+            </div>
+            <Toggle
+              checked={store.helpImprove}
+              onChange={(v) => store.updateSettings({ helpImprove: v })}
+            />
+          </Row>
+          <Row last>
+            <FeedbackSection />
           </Row>
         </Card>
       </div>

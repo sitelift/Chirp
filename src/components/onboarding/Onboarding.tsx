@@ -5,8 +5,9 @@ import { Welcome } from './Welcome'
 import { SetupStep } from './SetupStep'
 import { ModelDownload } from './ModelDownload'
 import { SmartCleanup } from './SmartCleanup'
+import { HelpImprove } from './HelpImprove'
 
-const STEPS = 4
+const STEPS = 5
 
 export function Onboarding() {
   const [step, setStep] = useState(0)
@@ -56,7 +57,8 @@ export function Onboarding() {
           {step === 0 && <Welcome onNext={() => setStep(1)} />}
           {step === 1 && <SetupStep onNext={() => setStep(2)} />}
           {step === 2 && <ModelDownload onFinish={() => setStep(3)} />}
-          {step === 3 && <SmartCleanup onNext={handleFinish} />}
+          {step === 3 && <SmartCleanup onNext={() => setStep(4)} />}
+          {step === 4 && <HelpImprove onNext={handleFinish} />}
         </div>
       </div>
     </div>

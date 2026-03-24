@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react'
-import { Search, Download, Trash2, Copy, BookOpen, Zap, ChevronDown, Clock, Mic, Type, Hash, Sparkles } from 'lucide-react'
+import { Search, Download, Trash2, Copy, BookOpen, Zap, ChevronDown, Clock, Mic, Type, Hash } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { useCleanupToggle } from '../../hooks/useCleanupToggle'
@@ -15,6 +15,7 @@ import {
 } from '../../lib/utils'
 import { Toggle } from '../shared/Toggle'
 import { Select } from '../shared/Select'
+import { AnnouncementBanner } from './AnnouncementBanner'
 
 function getGreeting(): string {
   const hour = new Date().getHours()
@@ -153,6 +154,7 @@ export function HomePage() {
 
   return (
     <div className="flex flex-col gap-[10px] animate-fade-in">
+      <AnnouncementBanner />
       {/* Hero Stats Block */}
       <div className="bg-sidebar rounded-[18px] relative overflow-hidden">
         {/* Floating orbs */}
@@ -458,8 +460,6 @@ export function HomePage() {
                         : null
                       const isCopied = copiedTimestamp === entry.timestamp
                       const isExpanded = expandedTimestamp === entry.timestamp
-                      const cleanupTimeMs = entry.durationMs - entry.speechDurationMs
-
                       return (
                         <div
                           key={entry.timestamp}
@@ -495,7 +495,7 @@ export function HomePage() {
                             {/* Expanded stats */}
                             {isExpanded && (
                               <div className="mt-3 animate-fade-in">
-                                <div className="grid grid-cols-3 gap-3 p-3 bg-[#FAFAF8] rounded-[10px] border border-card-border">
+                                <div className="flex items-center gap-4 p-3 bg-[#FAFAF8] rounded-[10px] border border-card-border">
                                   <div className="flex items-center gap-2">
                                     <Mic size={12} className="text-[#ccc]" />
                                     <div>
@@ -526,22 +526,6 @@ export function HomePage() {
                                       <div className="text-[13px] text-[#555] font-medium">{entry.wordCount}</div>
                                     </div>
                                   </div>
-                                  <div className="flex items-center gap-2">
-                                    <Type size={12} className="text-[#ccc]" />
-                                    <div>
-                                      <div className="text-[10px] text-[#999] uppercase tracking-wide">Characters</div>
-                                      <div className="text-[13px] text-[#555] font-medium">{entry.text.length.toLocaleString()}</div>
-                                    </div>
-                                  </div>
-                                  {entry.wasCleanedUp && (
-                                    <div className="flex items-center gap-2">
-                                      <Sparkles size={12} className="text-[#D4A020]" />
-                                      <div>
-                                        <div className="text-[10px] text-[#999] uppercase tracking-wide">Cleanup</div>
-                                        <div className="text-[13px] text-[#555] font-medium">{(cleanupTimeMs / 1000).toFixed(1)}s</div>
-                                      </div>
-                                    </div>
-                                  )}
                                 </div>
 
                                 {/* Expanded actions + full timestamp */}
