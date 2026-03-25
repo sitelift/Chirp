@@ -134,8 +134,9 @@ jobs:
           rm -rf sherpa.tar.bz2 ${ARCHIVE}
 
       - name: Generate onnxruntime import library
+        uses: ilammy/msvc-dev-cmd@v1
+      - run: lib /DEF:src-tauri\sherpa-onnx-lib\onnxruntime.def /OUT:src-tauri\sherpa-onnx-lib\onnxruntime.lib /MACHINE:X64
         shell: cmd
-        run: lib /DEF:src-tauri\sherpa-onnx-lib\onnxruntime.def /OUT:src-tauri\sherpa-onnx-lib\onnxruntime.lib /MACHINE:X64
 
       - name: Verify sherpa-onnx libraries
         shell: bash
