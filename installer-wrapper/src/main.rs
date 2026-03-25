@@ -38,7 +38,7 @@ const INSTALLED_EXE: &str = "chirp.exe";
 // Build the NSIS installer first, then build this wrapper.
 // If the file doesn't exist at compile time, we'll fall back to looking next to the exe.
 #[cfg(feature = "embed")]
-const EMBEDDED_INSTALLER: &[u8] = include_bytes!("../../src-tauri/target/release/bundle/nsis/Chirp_1.1.1_x64-setup.exe");
+const EMBEDDED_INSTALLER: &[u8] = include_bytes!(concat!(env!("OUT_DIR"), "/installer.exe"));
 #[cfg(not(feature = "embed"))]
 const EMBEDDED_INSTALLER: &[u8] = &[];
 
