@@ -221,6 +221,15 @@ jobs:
           cd installer-wrapper
           cargo build --release --features embed
 
+      - name: Sign splash installer wrapper with Azure
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          trusted-signing-cli -e "https://eus.codesigning.azure.net" -a "chirp" -c "chirp-codesigning" -d "Chirp" "installer-wrapper/target/release/installer-wrapper.exe"
+
       - name: Prepare release assets
         id: prep
         shell: bash
