@@ -506,6 +506,10 @@ pub async fn stop_recording(
         let mut s = state.lock().await;
         s.recording_state = RecordingState::Idle;
         log::error!("Injection failed: {e}");
+        // Pass through accessibility_denied so the frontend can show a specific message
+        if e == "accessibility_denied" {
+            return Err("accessibility_denied".into());
+        }
         return Err("injection_failed".into());
     }
 
@@ -814,6 +818,26 @@ pub async fn get_hotkey_status(
         crate::state::HotkeyStatus::Failed => "failed",
     };
     Ok(status.to_string())
+}
+
+// ── Mic permission (macOS early-trigger) ───────────────────────────────
+
+#[tauri::command]
+pub async fn request_mic_permission() -> Result<bool, String> {
+    // Briefly open the default audio input to trigger the macOS permission dialog.
+    // On Windows/Linux this is a no-op (permissions granted by default).
+    use cpal::traits::{DeviceTrait, HostTrait};
+    let host = cpal::default_host();
+    match host.default_input_device() {
+        Some(device) => {
+            // Try to get the default config — this triggers the permission dialog on macOS
+            match device.default_input_config() {
+                Ok(_) => Ok(true),
+                Err(_) => Ok(false),
+            }
+        }
+        None => Ok(false),
+    }
 }
 
 // ── Announcements commands ─────────────────────────────────────────────

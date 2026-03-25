@@ -183,6 +183,7 @@ pub fn run() {
             commands::get_announcements,
             commands::dismiss_announcement,
             commands::send_feedback,
+            commands::request_mic_permission,
         ])
         .setup(|app| {
             let handle = app.handle().clone();

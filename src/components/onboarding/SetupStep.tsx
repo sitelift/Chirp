@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../../stores/appStore'
 import { useHotkeyRecorder } from '../../hooks/useHotkeyRecorder'
 import { formatHotkey } from '../../lib/utils'
@@ -11,9 +13,23 @@ interface SetupStepProps {
 export function SetupStep({ onNext }: SetupStepProps) {
   const store = useAppStore()
   const { capturing, pendingHotkey, previewLabels, canConfirm, startCapture, confirmCapture, cancelCapture, clearPending } = useHotkeyRecorder()
+  const [requestingMic, setRequestingMic] = useState(false)
 
   const confirmed = Boolean(store.hotkey)
   const currentHotkeyLabels = formatHotkey(store.hotkey)
+
+  const handleContinue = async () => {
+    // Trigger macOS mic permission dialog before advancing.
+    // On Windows this returns immediately (permissions granted by default).
+    setRequestingMic(true)
+    try {
+      await invoke('request_mic_permission')
+    } catch {
+      // Non-fatal — user can grant permission later
+    }
+    setRequestingMic(false)
+    onNext()
+  }
 
   const handleRecord = () => {
     startCapture()
@@ -132,24 +148,32 @@ export function SetupStep({ onNext }: SetupStepProps) {
             </button>
           </>
         ) : (
-          <div className="flex items-center gap-3">
-            <Button
-              size="onboarding"
-              className="min-w-[140px] text-base"
-              onClick={handleRecord}
-            >
-              {confirmed ? 'Change shortcut' : 'Set hotkey'}
-            </Button>
-            {confirmed && (
+          <>
+            <div className="flex items-center gap-3">
               <Button
                 size="onboarding"
                 className="min-w-[140px] text-base"
-                onClick={onNext}
+                onClick={handleRecord}
               >
-                Continue
+                {confirmed ? 'Change shortcut' : 'Set hotkey'}
               </Button>
+              {confirmed && (
+                <Button
+                  size="onboarding"
+                  className="min-w-[140px] text-base"
+                  onClick={handleContinue}
+                  disabled={requestingMic}
+                >
+                  {requestingMic ? 'Checking mic...' : 'Continue'}
+                </Button>
+              )}
+            </div>
+            {requestingMic && (
+              <p className="mt-2 font-body text-xs text-chirp-stone-500">
+                Chirp needs microphone access to hear you.
+              </p>
             )}
-          </div>
+          </>
         )}
       </div>
     </div>

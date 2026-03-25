@@ -78,7 +78,15 @@ pub fn inject_text(text: &str) -> Result<(), String> {
     };
 
     let mut enigo =
-        Enigo::new(&Settings::default()).map_err(|e| format!("Failed to init enigo: {e}"))?;
+        Enigo::new(&Settings::default()).map_err(|e| {
+            let msg = format!("{e}");
+            // On macOS, enigo fails with a permission error when Accessibility is not granted
+            if cfg!(target_os = "macos") && (msg.contains("accessibility") || msg.contains("permission") || msg.contains("trusted")) {
+                "accessibility_denied".to_string()
+            } else {
+                format!("Failed to init enigo: {e}")
+            }
+        })?;
     enigo
         .key(paste_modifier, Direction::Press)
         .map_err(|e| format!("Key press failed: {e}"))?;

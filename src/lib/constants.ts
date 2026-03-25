@@ -64,6 +64,11 @@ export const ERROR_MESSAGES = {
     help: 'Make sure a text field is focused',
     action: { label: 'Copy to Clipboard', type: 'copy' as const },
   },
+  accessibility_denied: {
+    title: 'Accessibility access needed',
+    help: 'Enable Chirp in System Settings > Privacy > Accessibility',
+    action: { label: 'Open Settings', type: 'os_settings' as const },
+  },
   unknown: {
     title: 'Something went wrong',
     help: 'Please try again',
