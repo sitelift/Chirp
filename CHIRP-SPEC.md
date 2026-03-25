@@ -178,9 +178,7 @@ chirp/
 │   └── brand/
 │       ├── chirp-mark-primary.svg
 │       ├── chirp-mark-white.svg
-│       ├── chirp-appicon.svg
-│       ├── chirp-wordmark.svg
-│       └── chirp-mark-soundwaves.svg
+│       └── chirp-appicon.svg
 ├── STYLE.md                     # Design system (see separate file)
 ├── package.json
 ├── tailwind.config.ts

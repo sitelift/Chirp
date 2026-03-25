@@ -157,8 +157,3 @@ export function buildHotkeyString(capture: StickyCapture): CapturedHotkey | null
 export function captureIsValid(capture: StickyCapture): boolean {
   return capture.mainKey !== null
 }
-
-/** Check if the capture has any keys at all (for showing preview) */
-export function captureHasKeys(capture: StickyCapture): boolean {
-  return capture.modifiers.size > 0 || capture.mainKey !== null
-}
