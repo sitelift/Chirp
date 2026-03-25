@@ -26,6 +26,27 @@ jobs:
           node-version: 20
           cache: npm
 
+      - name: Sync version from git tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting version to $VERSION"
+          node -e "
+            const fs = require('fs');
+            const v = '$VERSION';
+            for (const f of ['package.json', 'src-tauri/tauri.conf.json']) {
+              const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+              j.version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
+            }
+            let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+            cargo = cargo.replace(/^version = \".*\"/m, 'version = \"' + v + '\"');
+            fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+            let lock = fs.readFileSync('src-tauri/Cargo.lock', 'utf8');
+            lock = lock.replace(/name = \"chirp\"\nversion = \".*\"/, 'name = \"chirp\"\nversion = \"' + v + '\"');
+            fs.writeFileSync('src-tauri/Cargo.lock', lock);
+          "
+
       - name: Install frontend dependencies
         run: npm ci
 
@@ -106,6 +127,27 @@ jobs:
         with:
           node-version: 22
           cache: npm
+
+      - name: Sync version from git tag
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          echo "Setting version to $VERSION"
+          node -e "
+            const fs = require('fs');
+            const v = '$VERSION';
+            for (const f of ['package.json', 'src-tauri/tauri.conf.json']) {
+              const j = JSON.parse(fs.readFileSync(f, 'utf8'));
+              j.version = v;
+              fs.writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
+            }
+            let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
+            cargo = cargo.replace(/^version = \".*\"/m, 'version = \"' + v + '\"');
+            fs.writeFileSync('src-tauri/Cargo.toml', cargo);
+            let lock = fs.readFileSync('src-tauri/Cargo.lock', 'utf8');
+            lock = lock.replace(/name = \"chirp\"\nversion = \".*\"/, 'name = \"chirp\"\nversion = \"' + v + '\"');
+            fs.writeFileSync('src-tauri/Cargo.lock', lock);
+          "
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
