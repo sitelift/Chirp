@@ -4,7 +4,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// Discord webhook URL for user feedback.
 /// Write-only — can only post messages, not read the channel.
 /// Replace with your actual webhook URL before release.
-const DISCORD_WEBHOOK_URL: &str = "https://discord.com/api/webhooks/PLACEHOLDER";
+const DISCORD_WEBHOOK_URL: &str = "https://discord.com/api/webhooks/1486152939553685594/mXEvBkSEcphb1t3c_ewYxn2IuEmEYBdBss8uqUq_oFfmkAPomUfMcMgFHABPdGJAxWW_";
 
 /// Unix timestamp (seconds) of the last feedback submission.
 /// Zero means no submission has been made yet.
