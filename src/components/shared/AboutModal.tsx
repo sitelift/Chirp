@@ -100,12 +100,12 @@ export function AboutModal() {
           </p>
 
           <a
-            href="https://trychirp.app"
+            href="https://chirptype.com"
             target="_blank"
             rel="noopener noreferrer"
             className="mt-2 font-mono text-[13px] text-chirp-info hover:underline"
           >
-            trychirp.app
+            chirptype.com
           </a>
 
           <div className="mt-4">
@@ -147,7 +147,7 @@ export function AboutModal() {
 
           {/* Support Chirp */}
           <button
-            onClick={() => open('https://buymeacoffee.com/chirpapp')}
+            onClick={() => open('https://buymeacoffee.com/pieterdebruijn')}
             className="mt-4 inline-flex items-center gap-1.5 font-body text-[13px] text-chirp-stone-400 hover:text-chirp-amber-500 transition-colors"
           >
             <Heart size={14} strokeWidth={1.5} />

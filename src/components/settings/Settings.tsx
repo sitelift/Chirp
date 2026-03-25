@@ -138,7 +138,7 @@ export function Settings() {
 
           {/* Support Chirp */}
           <button
-            onClick={() => open('https://buymeacoffee.com/chirpapp')}
+            onClick={() => open('https://buymeacoffee.com/pieterdebruijn')}
             className="flex items-center gap-[10px] w-full px-[14px] py-[10px] rounded-lg text-[13px] text-white/30 hover:text-white/50 hover:bg-white/[0.04] transition-all duration-200 mb-3"
           >
             <Heart size={16} strokeWidth={1.5} />
