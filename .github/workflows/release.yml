@@ -283,3 +283,12 @@ jobs:
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           gh release edit "v${VERSION}" --draft=false
+
+      - name: Update website version
+        env:
+          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh api repos/sitelift/chirp-website/dispatches \
+            -f event_type=chirp-release \
+            -f "client_payload[version]=$VERSION"
