@@ -263,8 +263,8 @@ unsafe fn paint(hdc: HDC) {
     // Set up text rendering
     SetBkMode(mem_dc, TRANSPARENT);
 
-    // Draw the bird icon (simple geometric bird using GDI shapes)
-    draw_bird(mem_dc, WIN_W / 2, 90);
+    // Draw the bird icon (embedded PNG rendered via GDI)
+    draw_bird_png(mem_dc, WIN_W / 2, 90);
 
     // Draw "chirp" title text
     let title_font = create_font(32, 800, "Segoe UI");
@@ -349,104 +349,85 @@ unsafe fn paint(hdc: HDC) {
     DeleteDC(mem_dc);
 }
 
-/// Draw a simple geometric bird icon using GDI
-unsafe fn draw_bird(hdc: HDC, cx: i32, cy: i32) {
-    let amber_brush = CreateSolidBrush(COLORREF(AMBER_COLOR));
-    let amber_pen = CreatePen(PS_SOLID, 2, COLORREF(AMBER_COLOR));
-    let white_brush = CreateSolidBrush(COLORREF(TEXT_COLOR));
-    let dark_brush = CreateSolidBrush(COLORREF(BG_COLOR));
-    let old_brush = SelectObject(hdc, amber_brush);
-    let old_pen = SelectObject(hdc, amber_pen);
+/// Embedded bird icon PNG (64x64, from the app's tray icon)
+const BIRD_PNG: &[u8] = include_bytes!("../../src-tauri/icons/64x64.png");
 
-    // Body - an ellipse
-    Ellipse(hdc, cx - 28, cy - 20, cx + 28, cy + 24);
+/// Draw the real bird icon from the embedded PNG
+unsafe fn draw_bird_png(hdc: HDC, cx: i32, cy: i32) {
+    // Decode PNG
+    let decoder = png::Decoder::new(std::io::Cursor::new(BIRD_PNG));
+    let mut reader = match decoder.read_info() {
+        Ok(r) => r,
+        Err(_) => return,
+    };
+    let mut buf = vec![0u8; reader.output_buffer_size()];
+    let info = match reader.next_frame(&mut buf) {
+        Ok(i) => i,
+        Err(_) => return,
+    };
+    let w = info.width as i32;
+    let h = info.height as i32;
 
-    // Head - a circle on top-right
-    Ellipse(hdc, cx + 5, cy - 38, cx + 35, cy - 8);
-
-    // Eye - white circle with dark pupil
-    SelectObject(hdc, white_brush);
-    let white_pen = CreatePen(PS_SOLID, 1, COLORREF(TEXT_COLOR));
-    SelectObject(hdc, white_pen);
-    Ellipse(hdc, cx + 16, cy - 30, cx + 26, cy - 20);
-
-    SelectObject(hdc, dark_brush);
-    let dark_pen = CreatePen(PS_SOLID, 1, COLORREF(BG_COLOR));
-    SelectObject(hdc, dark_pen);
-    Ellipse(hdc, cx + 19, cy - 28, cx + 25, cy - 22);
-
-    // Beak - small triangle (drawn as a polygon)
-    let beak_color = COLORREF(0x001090D0); // darker orange-amber BGR
-    let beak_brush = CreateSolidBrush(beak_color);
-    let beak_pen = CreatePen(PS_SOLID, 1, beak_color);
-    SelectObject(hdc, beak_brush);
-    SelectObject(hdc, beak_pen);
-
-    let beak_pts = [
-        POINT {
-            x: cx + 34,
-            y: cy - 24,
+    // Create a DIB section for alpha-aware rendering
+    let bmi = BITMAPINFO {
+        bmiHeader: BITMAPINFOHEADER {
+            biSize: std::mem::size_of::<BITMAPINFOHEADER>() as u32,
+            biWidth: w,
+            biHeight: -h, // top-down
+            biPlanes: 1,
+            biBitCount: 32,
+            biCompression: 0, // BI_RGB
+            ..Default::default()
         },
-        POINT {
-            x: cx + 46,
-            y: cy - 20,
-        },
-        POINT {
-            x: cx + 34,
-            y: cy - 16,
-        },
-    ];
-    Polygon(hdc, &beak_pts);
+        ..Default::default()
+    };
 
-    // Wing - a curved shape on the body (small ellipse, slightly different shade)
-    let wing_color = COLORREF(0x001AA5D8);
-    let wing_brush = CreateSolidBrush(wing_color);
-    let wing_pen = CreatePen(PS_SOLID, 1, wing_color);
-    SelectObject(hdc, wing_brush);
-    SelectObject(hdc, wing_pen);
-    Ellipse(hdc, cx - 20, cy - 8, cx + 10, cy + 12);
+    let mut bits_ptr: *mut std::ffi::c_void = std::ptr::null_mut();
+    let dib = CreateDIBSection(hdc, &bmi, DIB_RGB_COLORS, &mut bits_ptr, None, 0);
+    if dib.is_err() || bits_ptr.is_null() {
+        return;
+    }
+    let dib = dib.unwrap();
 
-    // Tail feathers - small triangle on the left
-    SelectObject(hdc, amber_brush);
-    SelectObject(hdc, amber_pen);
-    let tail_pts = [
-        POINT {
-            x: cx - 28,
-            y: cy + 5,
-        },
-        POINT {
-            x: cx - 48,
-            y: cy - 10,
-        },
-        POINT {
-            x: cx - 28,
-            y: cy - 5,
-        },
-    ];
-    Polygon(hdc, &tail_pts);
+    // Fill DIB with BGRA pixel data, alpha-blending against our dark background
+    let pixels = std::slice::from_raw_parts_mut(bits_ptr as *mut u8, (w * h * 4) as usize);
+    let bg_r = 0x1au8;
+    let bg_g = 0x19u8;
+    let bg_b = 0x17u8;
 
-    // Legs
-    let leg_pen = CreatePen(PS_SOLID, 2, COLORREF(0x001090D0));
-    SelectObject(hdc, leg_pen);
-    MoveToEx(hdc, cx - 8, cy + 22, None);
-    LineTo(hdc, cx - 10, cy + 36);
-    MoveToEx(hdc, cx + 8, cy + 22, None);
-    LineTo(hdc, cx + 6, cy + 36);
+    for y in 0..h as usize {
+        for x in 0..w as usize {
+            let src_idx = (y * w as usize + x) * 4; // RGBA from PNG
+            let dst_idx = (y * w as usize + x) * 4; // BGRA for DIB
 
-    // Cleanup all GDI objects
-    SelectObject(hdc, old_brush);
-    SelectObject(hdc, old_pen);
-    DeleteObject(amber_brush);
-    DeleteObject(amber_pen);
-    DeleteObject(white_brush);
-    DeleteObject(dark_brush);
-    DeleteObject(white_pen);
-    DeleteObject(dark_pen);
-    DeleteObject(beak_brush);
-    DeleteObject(beak_pen);
-    DeleteObject(wing_brush);
-    DeleteObject(wing_pen);
-    DeleteObject(leg_pen);
+            if src_idx + 3 < buf.len() {
+                let r = buf[src_idx];
+                let g = buf[src_idx + 1];
+                let b = buf[src_idx + 2];
+                let a = buf[src_idx + 3] as u16;
+
+                // Alpha blend against dark background
+                let blended_r = ((r as u16 * a + bg_r as u16 * (255 - a)) / 255) as u8;
+                let blended_g = ((g as u16 * a + bg_g as u16 * (255 - a)) / 255) as u8;
+                let blended_b = ((b as u16 * a + bg_b as u16 * (255 - a)) / 255) as u8;
+
+                pixels[dst_idx] = blended_b;     // B
+                pixels[dst_idx + 1] = blended_g; // G
+                pixels[dst_idx + 2] = blended_r; // R
+                pixels[dst_idx + 3] = 0xFF;      // A (opaque after blending)
+            }
+        }
+    }
+
+    // Blit the DIB to the target DC
+    let mem_dc2 = CreateCompatibleDC(hdc);
+    let old = SelectObject(mem_dc2, dib);
+    let dest_x = cx - w / 2;
+    let dest_y = cy - h / 2;
+    BitBlt(hdc, dest_x, dest_y, w, h, mem_dc2, 0, 0, SRCCOPY);
+    SelectObject(mem_dc2, old);
+    DeleteObject(dib);
+    DeleteDC(mem_dc2);
 }
 
 fn calculate_progress(elapsed: f64, phase: u32) -> f64 {

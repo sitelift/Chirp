@@ -15,6 +15,9 @@ features = [
     "Win32_UI_Shell",
 ]
 
+[dependencies]
+png = "0.17"
+
 [profile.release]
 opt-level = "z"
 lto = true
