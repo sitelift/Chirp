@@ -112,6 +112,16 @@ jobs:
           prerelease: false
           args: --target aarch64-apple-darwin
 
+      - name: Upload macOS release asset with stable name
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG=$(ls src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Chirp_*_aarch64.dmg)
+          cp "$DMG" "Chirp.dmg"
+          gh release create "v${VERSION}" --draft --title "Chirp v${VERSION}" --generate-notes 2>/dev/null || true
+          gh release upload "v${VERSION}" "Chirp.dmg" --clobber
+
       - name: Cleanup keychain
         if: always()
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
