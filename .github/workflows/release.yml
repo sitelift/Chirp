@@ -94,3 +94,129 @@ jobs:
       - name: Cleanup keychain
         if: always()
         run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install trusted-signing-cli
+        run: cargo install trusted-signing-cli
+
+      - name: Install frontend deps
+        run: npm ci
+
+      - name: Download sherpa-onnx Windows DLLs
+        shell: bash
+        run: |
+          SHERPA_VERSION="1.12.29"
+          ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-win-x64-shared"
+          curl -fSL "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${ARCHIVE}.tar.bz2" -o sherpa.tar.bz2
+          tar -xjf sherpa.tar.bz2
+          cp ${ARCHIVE}/lib/*.dll src-tauri/sherpa-onnx-lib/
+          cp ${ARCHIVE}/lib/*.lib src-tauri/sherpa-onnx-lib/
+          cp ${ARCHIVE}/lib/*.dll src-tauri/
+          rm -rf sherpa.tar.bz2 ${ARCHIVE}
+
+      - name: Build Tauri app (Azure code-signed)
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: npx tauri build
+
+      - name: Sign NSIS installer with Azure Artifact Signing
+        shell: bash
+        env:
+          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
+          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        run: |
+          NSIS_EXE=$(ls src-tauri/target/release/bundle/nsis/Chirp_*_x64-setup.exe)
+          trusted-signing-cli -e "https://eus.codesigning.azure.net" -a "chirp" -c "chirp-codesigning" -d "Chirp" "$NSIS_EXE"
+
+      - name: Sign NSIS installer with Tauri updater key
+        shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          NSIS_EXE=$(ls src-tauri/target/release/bundle/nsis/Chirp_*_x64-setup.exe)
+          npx tauri signer sign "$NSIS_EXE"
+
+      - name: Build splash installer wrapper
+        shell: bash
+        run: |
+          cd installer-wrapper
+          cargo build --release --features embed
+
+      - name: Prepare release assets
+        id: prep
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          NSIS_EXE="src-tauri/target/release/bundle/nsis/Chirp_${VERSION}_x64-setup.exe"
+          SIG_FILE="${NSIS_EXE}.sig"
+          SIGNATURE=$(cat "$SIG_FILE")
+
+          # Create latest.json for Tauri updater
+          cat > latest.json << EOJSON
+          {
+            "version": "${VERSION}",
+            "notes": "See https://github.com/sitelift/Chirp/releases/tag/v${VERSION}",
+            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
+            "platforms": {
+              "windows-x86_64": {
+                "signature": "${SIGNATURE}",
+                "url": "https://github.com/sitelift/Chirp/releases/download/v${VERSION}/Chirp_${VERSION}_x64-setup.exe"
+              }
+            }
+          }
+          EOJSON
+
+          cp installer-wrapper/target/release/installer-wrapper.exe "Chirp-Setup.exe"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "nsis_exe=${NSIS_EXE}" >> "$GITHUB_OUTPUT"
+
+      - name: Upload Windows release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VERSION="${{ steps.prep.outputs.version }}"
+          NSIS_EXE="${{ steps.prep.outputs.nsis_exe }}"
+
+          # Create release if it doesn't exist (macOS job may have created it)
+          gh release create "v${VERSION}" --draft --title "Chirp v${VERSION}" --generate-notes 2>/dev/null || true
+
+          # Upload Windows assets
+          gh release upload "v${VERSION}" "$NSIS_EXE" "Chirp-Setup.exe" "latest.json" --clobber
+
+  publish-release:
+    needs: [build-macos, build-windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish release (remove draft)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          gh release edit "v${VERSION}" --draft=false

@@ -65,6 +65,7 @@
       "icons/icon.ico"
     ],
     "windows": {
+      "signCommand": "trusted-signing-cli -e https://eus.codesigning.azure.net -a chirp -c chirp-codesigning -d Chirp %1",
       "nsis": {
         "headerImage": "installer/chirp-header.bmp",
         "sidebarImage": "installer/chirp-sidebar.bmp",
