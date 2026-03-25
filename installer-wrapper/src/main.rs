@@ -32,8 +32,15 @@ const TIMER_ID: usize = 1;
 const TIMER_MS: u32 = 16; // ~60fps
 
 // Installer config
-const NSIS_INSTALLER: &str = "Chirp_setup.exe";
 const INSTALLED_EXE: &str = "chirp.exe";
+
+// Embed the NSIS installer directly into this binary.
+// Build the NSIS installer first, then build this wrapper.
+// If the file doesn't exist at compile time, we'll fall back to looking next to the exe.
+#[cfg(feature = "embed")]
+const EMBEDDED_INSTALLER: &[u8] = include_bytes!("../../src-tauri/target/release/bundle/nsis/Chirp_1.1.1_x64-setup.exe");
+#[cfg(not(feature = "embed"))]
+const EMBEDDED_INSTALLER: &[u8] = &[];
 
 /// Shared state between the window proc and the installer thread.
 struct AppState {
@@ -71,27 +78,32 @@ fn main() -> Result<()> {
 fn run_installer() {
     let state = state();
 
-    // Look for the NSIS installer next to our exe
-    let exe_dir = std::env::current_exe()
-        .ok()
-        .and_then(|p| p.parent().map(|d| d.to_path_buf()))
-        .unwrap_or_else(|| std::env::current_dir().unwrap());
-
-    let installer_path = exe_dir.join(NSIS_INSTALLER);
-
-    if !installer_path.exists() {
-        // If installer not found, simulate a 3-second install for demo/testing
+    if EMBEDDED_INSTALLER.is_empty() {
+        // No embedded installer — demo mode, simulate 3-second install
         std::thread::sleep(std::time::Duration::from_secs(3));
     } else {
-        // Run NSIS silently
-        let install_dir = std::env::var("LOCALAPPDATA")
-            .unwrap_or_else(|_| String::from("C:\\Users\\Default\\AppData\\Local"));
-        let install_dir = format!("{}\\com.chirp.app", install_dir);
+        // Extract embedded NSIS installer to temp dir
+        let temp_dir = std::env::temp_dir().join("chirp-installer");
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let installer_path = temp_dir.join("Chirp_setup.exe");
+        if let Err(e) = std::fs::write(&installer_path, EMBEDDED_INSTALLER) {
+            eprintln!("Failed to extract installer: {e}");
+            std::thread::sleep(std::time::Duration::from_secs(2));
+        } else {
+            // Run NSIS silently
+            let install_dir = std::env::var("LOCALAPPDATA")
+                .unwrap_or_else(|_| String::from("C:\\Users\\Default\\AppData\\Local"));
+            let install_dir = format!("{}\\com.chirp.app", install_dir);
 
-        let _result = std::process::Command::new(&installer_path)
-            .arg("/S")
-            .arg(format!("/D={}", install_dir))
-            .status();
+            let _result = std::process::Command::new(&installer_path)
+                .arg("/S")
+                .arg(format!("/D={}", install_dir))
+                .status();
+
+            // Clean up temp files
+            let _ = std::fs::remove_file(&installer_path);
+            let _ = std::fs::remove_dir(&temp_dir);
+        }
     }
 
     // Mark done

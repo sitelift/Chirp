@@ -15,6 +15,9 @@ features = [
     "Win32_UI_Shell",
 ]
 
+[features]
+embed = []
+
 [dependencies]
 png = "0.17"
 
