@@ -69,25 +69,25 @@ export function Settings() {
             chirp
           </span>
         </div>
-        <div className="flex items-center">
-        <button
-          onClick={() => getCurrentWindow().minimize()}
-          className="w-[46px] h-full flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
-        >
-          <Minus size={16} />
-        </button>
-        <button
-          onClick={() => getCurrentWindow().toggleMaximize()}
-          className="w-[46px] h-full flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
-        >
-          <Square size={12} />
-        </button>
-        <button
-          onClick={() => getCurrentWindow().close()}
-          className="w-[46px] h-full flex items-center justify-center text-white/40 hover:bg-red-500 hover:text-white transition-colors"
-        >
-          <X size={16} />
-        </button>
+        <div className="flex items-stretch h-full">
+          <button
+            onClick={() => getCurrentWindow().minimize()}
+            className="w-[46px] flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
+          >
+            <Minus size={16} />
+          </button>
+          <button
+            onClick={() => getCurrentWindow().toggleMaximize()}
+            className="w-[46px] flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
+          >
+            <Square size={12} />
+          </button>
+          <button
+            onClick={() => getCurrentWindow().close()}
+            className="w-[46px] flex items-center justify-center text-white/40 hover:bg-red-500 hover:text-white transition-colors"
+          >
+            <X size={16} />
+          </button>
         </div>
       </div>
 
