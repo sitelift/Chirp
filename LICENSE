@@ -1,16 +1,21 @@
-MIT License
+Chirp Source Available License
 
 Copyright (c) 2025 Pieter de Bruijn
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+Permission is granted to view, read, and run this software for personal,
+non-commercial use, subject to the following conditions:
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. You may not redistribute, sublicense, or sell copies of this software
+   or any derivative works.
+
+2. You may not use this software, in whole or in part, to build or offer
+   a competing product or service.
+
+3. You may not remove or alter this license notice from any copy of the
+   source code.
+
+4. Contributions submitted to this repository (via pull request or
+   otherwise) are licensed under these same terms.
 
 THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
 IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
