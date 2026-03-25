@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getVersion } from '@tauri-apps/api/app'
+import { open } from '@tauri-apps/plugin-shell'
+import { Heart } from 'lucide-react'
 import { useTauri } from '../../hooks/useTauri'
 import { useAppStore } from '../../stores/appStore'
 import { BirdMark } from './BirdMark'
@@ -143,17 +145,32 @@ export function AboutModal() {
             </p>
           )}
 
+          {/* Support Chirp */}
+          <button
+            onClick={() => open('https://buymeacoffee.com/chirpapp')}
+            className="mt-4 inline-flex items-center gap-1.5 font-body text-[13px] text-chirp-stone-400 hover:text-chirp-amber-500 transition-colors"
+          >
+            <Heart size={14} strokeWidth={1.5} />
+            Support Chirp
+          </button>
+
           {/* Credits */}
-          <div className="mt-8 w-full rounded-xl bg-[#F5F4F0] p-4">
+          <div className="mt-6 w-full rounded-xl bg-[#F5F4F0] p-4">
             <div className="flex flex-col items-center gap-1.5">
               <p className="font-body text-[13px] text-[#888]">
                 Made by Pieter de Bruijn
               </p>
               <p className="font-body text-[13px] text-[#888]">
-                Speech recognition: Parakeet TDT (sherpa-onnx)
+                Speech recognition: Parakeet TDT — NVIDIA (sherpa-onnx)
+              </p>
+              <p className="font-body text-[13px] text-[#888]">
+                Smart Cleanup: Qwen 2.5 — Alibaba
               </p>
               <p className="font-body text-[13px] text-[#888]">
                 Built with Tauri + React
+              </p>
+              <p className="font-body text-[12px] text-[#aaa] mt-2 text-center">
+                All processing happens on your device. Your voice and text never leave your machine.
               </p>
             </div>
           </div>

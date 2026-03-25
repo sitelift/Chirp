@@ -644,6 +644,7 @@ export function SettingsPage() {
                 <span className="text-[11px] text-[#aaa]">{LLM_MODEL.friendlySize}</span>
               </div>
               <div className="text-[11px] text-[#aaa] mt-0.5">Polishes grammar and sentences locally</div>
+              <div className="text-[10px] text-chirp-stone-400 mt-0.5">{LLM_MODEL.attribution}</div>
               {store.llmDownloadProgress !== null && (
                 <div className="mt-2">
                   <div className="flex items-center gap-2">

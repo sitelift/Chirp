@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { getVersion } from '@tauri-apps/api/app'
-import { Home, BookOpen, Zap, Settings as SettingsIcon, Check, Minus, Square, X } from 'lucide-react'
+import { open } from '@tauri-apps/plugin-shell'
+import { Home, BookOpen, Zap, Settings as SettingsIcon, Check, Minus, Square, X, Heart } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { BirdMark } from '../shared/BirdMark'
@@ -133,6 +134,15 @@ export function Settings() {
             )}
             <SettingsIcon size={16} strokeWidth={1.5} />
             Settings
+          </button>
+
+          {/* Support Chirp */}
+          <button
+            onClick={() => open('https://buymeacoffee.com/chirpapp')}
+            className="flex items-center gap-[10px] w-full px-[14px] py-[10px] rounded-lg text-[13px] text-white/30 hover:text-white/50 hover:bg-white/[0.04] transition-all duration-200 mb-3"
+          >
+            <Heart size={16} strokeWidth={1.5} />
+            Support Chirp
           </button>
 
           {/* Hotkey card */}

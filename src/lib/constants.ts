@@ -17,19 +17,20 @@ export const DEFAULT_SETTINGS = {
 
 export const TONE_MODES = [
   { id: 'message', label: 'Message', description: 'Natural conversational tone' },
-  { id: 'email', label: 'Email', description: 'Formatted with greeting and sign-off' },
+  { id: 'email', label: 'Email', description: 'Professional email formatting' },
 ] as const
 
 export const STT_MODELS = [
-  { id: 'parakeet-tdt-0.6b' as const, name: 'Parakeet TDT 0.6B', size: '465 MB', description: 'Best accuracy · 25 languages · fast on any PC', recommended: true },
+  { id: 'parakeet-tdt-0.6b' as const, name: 'Parakeet TDT — NVIDIA', size: '465 MB', description: 'Best accuracy · 25 languages · fast on any PC', recommended: true },
 ]
 
 export const LLM_MODEL = {
-  name: 'Qwen 2.5 3B',
+  name: 'Qwen 2.5 — Alibaba',
   displayName: 'Smart Cleanup',
   size: '2.1 GB',
   friendlySize: 'About 2 GB',
   description: 'Multilingual grammar correction (29 languages).',
+  attribution: 'Powered by Qwen 2.5 — Alibaba',
 }
 
 export const CLEANUP_EXAMPLE = {
