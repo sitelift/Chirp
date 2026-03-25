@@ -26,6 +26,8 @@
     "autostart:default",
     "dialog:default",
     "aptabase:default",
-    "sentry:default"
+    "sentry:default",
+    "updater:default",
+    "process:default"
   ]
 }
