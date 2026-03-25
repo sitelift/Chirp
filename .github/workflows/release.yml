@@ -175,7 +175,6 @@ jobs:
           npx tauri signer sign "$NSIS_EXE"
 
       - name: Build splash installer wrapper
-        shell: bash
         run: |
           cd installer-wrapper
           cargo build --release --features embed
