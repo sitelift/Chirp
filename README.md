@@ -7,7 +7,9 @@
 **Free, local voice-to-text for Windows & macOS.**  
 No cloud. No account. No subscription.
 
-
+<p align="center">
+  <img src="docs/images/hero.png" width="720" alt="Chirp app screenshot" />
+</p>
 
 
 
