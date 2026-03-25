@@ -1,0 +1,23 @@
+[package]
+name = "installer-wrapper"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies.windows]
+version = "0.58"
+features = [
+    "Win32_Foundation",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_Graphics_Gdi",
+    "Win32_System_LibraryLoader",
+    "Win32_Graphics_Dwm",
+    "Win32_System_Threading",
+    "Win32_UI_Shell",
+]
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1
