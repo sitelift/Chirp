@@ -64,6 +64,15 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
+    "windows": {
+      "nsis": {
+        "headerImage": "installer/chirp-header.bmp",
+        "sidebarImage": "installer/chirp-sidebar.bmp",
+        "installerIcon": "icons/icon.ico",
+        "installMode": "currentUser",
+        "compression": "lzma"
+      }
+    },
     "macOS": {
       "entitlements": "entitlements.plist",
       "signingIdentity": "-",
