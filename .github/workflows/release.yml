@@ -133,6 +133,18 @@ jobs:
           cp ${ARCHIVE}/lib/*.dll src-tauri/
           rm -rf sherpa.tar.bz2 ${ARCHIVE}
 
+      - name: Generate onnxruntime import library
+        shell: cmd
+        run: lib /DEF:src-tauri\sherpa-onnx-lib\onnxruntime.def /OUT:src-tauri\sherpa-onnx-lib\onnxruntime.lib /MACHINE:X64
+
+      - name: Verify sherpa-onnx libraries
+        shell: bash
+        run: |
+          echo "=== sherpa-onnx-lib/ ==="
+          ls -la src-tauri/sherpa-onnx-lib/
+          echo "=== src-tauri/ DLLs ==="
+          ls -la src-tauri/*.dll
+
       - name: Build Tauri app (Azure code-signed)
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
