@@ -4,10 +4,12 @@ import { useAppStore } from '../../stores/appStore'
 import { BirdMark } from '../shared/BirdMark'
 import { Welcome } from './Welcome'
 import { SetupStep } from './SetupStep'
+import { PermissionsStep } from './PermissionsStep'
 import { ModelDownload } from './ModelDownload'
 import { HelpImprove } from './HelpImprove'
 
-const STEPS = 4
+const IS_MAC = navigator.platform.includes('Mac')
+const STEPS = IS_MAC ? 5 : 4
 
 export function Onboarding() {
   const [step, setStep] = useState(0)
@@ -17,6 +19,9 @@ export function Onboarding() {
     trackEvent('onboarding_completed', { steps_completed: String(STEPS) })
     setOnboardingComplete(true)
   }
+
+  const modelStep = IS_MAC ? 3 : 2
+  const helpStep = IS_MAC ? 4 : 3
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -57,8 +62,9 @@ export function Onboarding() {
         <div className="max-w-[480px] w-full">
           {step === 0 && <Welcome onNext={() => setStep(1)} />}
           {step === 1 && <SetupStep onNext={() => setStep(2)} />}
-          {step === 2 && <ModelDownload onFinish={() => setStep(3)} />}
-          {step === 3 && <HelpImprove onNext={handleFinish} />}
+          {IS_MAC && step === 2 && <PermissionsStep onNext={() => setStep(3)} />}
+          {step === modelStep && <ModelDownload onFinish={() => setStep(helpStep)} />}
+          {step === helpStep && <HelpImprove onNext={handleFinish} />}
         </div>
       </div>
     </div>
