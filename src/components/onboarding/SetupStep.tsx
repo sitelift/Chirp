@@ -1,5 +1,3 @@
-import { useState } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import { useAppStore } from '../../stores/appStore'
 import { useHotkeyRecorder } from '../../hooks/useHotkeyRecorder'
 import { formatHotkey } from '../../lib/utils'
@@ -12,22 +10,12 @@ interface SetupStepProps {
 
 export function SetupStep({ onNext }: SetupStepProps) {
   const store = useAppStore()
-  const { capturing, pendingHotkey, previewLabels, canConfirm, startCapture, confirmCapture, cancelCapture, clearPending } = useHotkeyRecorder()
-  const [requestingMic, setRequestingMic] = useState(false)
+  const { capturing, pendingHotkey, previewLabels, canConfirm, isModifierOnly, showSystemHint, systemCapturing, startCapture, startSystemCapture, confirmCapture, cancelCapture, clearPending } = useHotkeyRecorder()
 
   const confirmed = Boolean(store.hotkey)
   const currentHotkeyLabels = formatHotkey(store.hotkey)
 
-  const handleContinue = async () => {
-    // Trigger macOS mic permission dialog before advancing.
-    // On Windows this returns immediately (permissions granted by default).
-    setRequestingMic(true)
-    try {
-      await invoke('request_mic_permission')
-    } catch {
-      // Non-fatal — user can grant permission later
-    }
-    setRequestingMic(false)
+  const handleContinue = () => {
     onNext()
   }
 
@@ -111,6 +99,28 @@ export function SetupStep({ onNext }: SetupStepProps) {
         )}
       </div>
 
+      {/* System capture hint */}
+      {capturing && showSystemHint && !systemCapturing && (
+        <button
+          onClick={startSystemCapture}
+          className="mt-2 font-body text-xs text-chirp-amber-500 hover:underline"
+        >
+          Key not detected? Capture via system
+        </button>
+      )}
+      {capturing && systemCapturing && (
+        <div className="mt-2 font-body text-xs text-chirp-stone-400 animate-pulse">
+          Press any key on your keyboard...
+        </div>
+      )}
+
+      {/* Modifier-only warning */}
+      {canConfirm && isModifierOnly && (
+        <div className="mt-2 font-body text-xs text-chirp-amber-600">
+          Using a modifier key alone may conflict with keyboard shortcuts in other apps.
+        </div>
+      )}
+
       {/* Actions */}
       <div className="mt-4 flex items-center gap-3">
         {capturing ? (
@@ -162,17 +172,11 @@ export function SetupStep({ onNext }: SetupStepProps) {
                   size="onboarding"
                   className="min-w-[140px] text-base"
                   onClick={handleContinue}
-                  disabled={requestingMic}
                 >
-                  {requestingMic ? 'Checking mic...' : 'Continue'}
+                  Continue
                 </Button>
               )}
             </div>
-            {requestingMic && (
-              <p className="mt-2 font-body text-xs text-chirp-stone-500">
-                Chirp needs microphone access to hear you.
-              </p>
-            )}
           </>
         )}
       </div>

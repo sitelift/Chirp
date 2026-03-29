@@ -117,7 +117,7 @@ function FeedbackSection() {
 export function SettingsPage() {
   const store = useAppStore()
   const tauri = useTauri()
-  const { capturing, pendingHotkey, previewLabels, canConfirm, startCapture, confirmCapture, cancelCapture, clearPending } = useHotkeyRecorder()
+  const { capturing, pendingHotkey, previewLabels, canConfirm, isModifierOnly, showSystemHint, systemCapturing, startCapture, startSystemCapture, confirmCapture, cancelCapture, clearPending } = useHotkeyRecorder()
 
   // Audio state
   const [devices, setDevices] = useState<AudioDevice[]>([])
@@ -216,7 +216,11 @@ export function SettingsPage() {
         URL.revokeObjectURL(url)
         audioRef.current = null
       }
-      audio.play()
+      audio.play().catch(() => {
+        setTestState('idle')
+        URL.revokeObjectURL(url)
+        audioRef.current = null
+      })
     } catch {
       if (testIntervalRef.current) clearInterval(testIntervalRef.current)
       testIntervalRef.current = null
@@ -314,6 +318,28 @@ export function SettingsPage() {
                   <span className="text-sm text-chirp-stone-400 animate-pulse">Press any key or combo...</span>
                 )}
               </div>
+
+              {/* System capture hint */}
+              {showSystemHint && !systemCapturing && (
+                <button
+                  onClick={startSystemCapture}
+                  className="mt-1 text-[11px] text-chirp-amber-500 hover:underline"
+                >
+                  Key not detected? Capture via system
+                </button>
+              )}
+              {systemCapturing && (
+                <div className="mt-1 text-[11px] text-chirp-stone-400 animate-pulse">
+                  Press any key on your keyboard...
+                </div>
+              )}
+
+              {/* Modifier-only warning */}
+              {canConfirm && isModifierOnly && (
+                <div className="mt-1 text-[11px] text-chirp-amber-600">
+                  Using a modifier key alone may conflict with other shortcuts.
+                </div>
+              )}
 
               {/* Confirm button */}
               {canConfirm && (
