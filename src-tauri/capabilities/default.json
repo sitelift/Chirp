@@ -22,7 +22,6 @@
     "core:event:allow-emit",
     "core:event:allow-listen",
     "log:default",
-    "global-shortcut:default",
     "autostart:default",
     "dialog:default",
     "aptabase:default",

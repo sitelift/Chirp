@@ -29,7 +29,11 @@
       "Bash(wmic process:*)",
       "Bash(tasklist:*)",
       "Bash(\"/c/Program Files \\(x86\\)/Microsoft Visual Studio/2022/BuildTools/VC/Tools/MSVC/14.44.35207/bin/HostX64/x64/lib.exe\" /DEF:onnxruntime.def /OUT:onnxruntime.lib /MACHINE:X64)",
-      "Bash(cargo build:*)"
+      "Bash(cargo build:*)",
+      "Bash(find /c/Users/dutch/chirp/src -type f \\\\\\(-name *.tsx -o -name *.ts \\\\\\))",
+      "Bash(git fetch:*)",
+      "Bash(git pull:*)",
+      "Bash(git stash:*)"
     ]
   }
 }
