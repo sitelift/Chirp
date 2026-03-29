@@ -1,6 +1,6 @@
 [package]
 name = "chirp"
-version = "1.2.3"
+version = "1.2.4"
 description = "Free, local voice-to-text for everyone"
 authors = ["Pieter de Bruijn"]
 license = "MIT"
