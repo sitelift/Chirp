@@ -1,8 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
+import { invoke } from '@tauri-apps/api/core'
 import {
   addKeyToCapture,
+  addSystemKeyToCapture,
   buildHotkeyString,
   captureIsValid,
+  captureIsModifierOnly,
   createStickyCapture,
   getCaptureLabels,
   type CapturedHotkey,
@@ -12,11 +15,20 @@ import {
 export function useHotkeyRecorder() {
   const [capturing, setCapturing] = useState(false)
   const [pendingHotkey, setPendingHotkey] = useState<CapturedHotkey | null>(null)
-  const captureRef = useRef<StickyCapture>(createStickyCapture())
   const [previewLabels, setPreviewLabels] = useState<string[]>([])
+  const [systemCapturing, setSystemCapturing] = useState(false)
+  const [showSystemHint, setShowSystemHint] = useState(false)
+  const captureRef = useRef<StickyCapture>(createStickyCapture())
+  const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   useEffect(() => {
     if (!capturing) return
+
+    hintTimerRef.current = setTimeout(() => {
+      if (captureRef.current.keys.size === 0) {
+        setShowSystemHint(true)
+      }
+    }, 3000)
 
     const handleKeyDown = (event: KeyboardEvent) => {
       event.preventDefault()
@@ -26,18 +38,22 @@ export function useHotkeyRecorder() {
         setCapturing(false)
         setPreviewLabels([])
         setPendingHotkey(null)
+        setShowSystemHint(false)
         captureRef.current = createStickyCapture()
         return
       }
 
-      const next = addKeyToCapture(captureRef.current, event)
-      if (!next) return
+      if (hintTimerRef.current) {
+        clearTimeout(hintTimerRef.current)
+        hintTimerRef.current = null
+      }
+      setShowSystemHint(false)
 
+      const next = addKeyToCapture(captureRef.current, event)
       captureRef.current = next
       setPreviewLabels(getCaptureLabels(next))
     }
 
-    // Swallow keyup to prevent other handlers from firing
     const handleKeyUp = (event: KeyboardEvent) => {
       event.preventDefault()
       event.stopPropagation()
@@ -49,6 +65,10 @@ export function useHotkeyRecorder() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown, true)
       window.removeEventListener('keyup', handleKeyUp, true)
+      if (hintTimerRef.current) {
+        clearTimeout(hintTimerRef.current)
+        hintTimerRef.current = null
+      }
     }
   }, [capturing])
 
@@ -60,6 +80,21 @@ export function useHotkeyRecorder() {
     setCapturing(true)
     setPreviewLabels([])
     setPendingHotkey(null)
+    setShowSystemHint(false)
+  }
+
+  const startSystemCapture = async () => {
+    setSystemCapturing(true)
+    setShowSystemHint(false)
+    try {
+      const result = await invoke<{ code: string; label: string }>('capture_next_key')
+      const next = addSystemKeyToCapture(captureRef.current, result.code)
+      captureRef.current = next
+      setPreviewLabels(getCaptureLabels(next))
+    } catch {
+      // Timeout or error — just go back to normal capture
+    }
+    setSystemCapturing(false)
   }
 
   const confirmCapture = (): CapturedHotkey | null => {
@@ -68,6 +103,7 @@ export function useHotkeyRecorder() {
       setPendingHotkey(result)
     }
     setCapturing(false)
+    setShowSystemHint(false)
     return result
   }
 
@@ -75,6 +111,7 @@ export function useHotkeyRecorder() {
     setCapturing(false)
     setPreviewLabels([])
     setPendingHotkey(null)
+    setShowSystemHint(false)
     captureRef.current = createStickyCapture()
   }
 
@@ -82,17 +119,23 @@ export function useHotkeyRecorder() {
     setCapturing(false)
     setPreviewLabels([])
     setPendingHotkey(null)
+    setShowSystemHint(false)
     captureRef.current = createStickyCapture()
   }
 
   const canConfirm = captureIsValid(captureRef.current)
+  const isModifierOnly = captureIsModifierOnly(captureRef.current)
 
   return {
     capturing,
     pendingHotkey,
     previewLabels,
     canConfirm,
+    isModifierOnly,
+    showSystemHint,
+    systemCapturing,
     startCapture,
+    startSystemCapture,
     confirmCapture,
     cancelCapture,
     clearPending,
