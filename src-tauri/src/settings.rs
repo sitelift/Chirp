@@ -1,6 +1,59 @@
 use crate::state::{DictionaryEntry, Settings, SnippetEntry};
 use std::path::PathBuf;
 
+/// Migrate old Tauri shortcut format (e.g., "CmdOrCtrl+Shift+Space") to new
+/// event.code-based format (e.g., "MetaLeft+ShiftLeft+Space").
+fn migrate_hotkey(hotkey: &str) -> String {
+    // Quick check: if it already uses new-style identifiers, return as-is
+    let has_new_style = hotkey.contains("Left") || hotkey.contains("Right")
+        || hotkey.contains("Key") || hotkey.contains("Digit") || hotkey == "Fn";
+    let has_old_style = hotkey.contains("CmdOrCtrl") || hotkey.contains("Cmd")
+        || (hotkey.contains("Ctrl") && !hotkey.contains("Control"))
+        || (hotkey.contains("Shift") && !hotkey.contains("ShiftLeft") && !hotkey.contains("ShiftRight"))
+        || (hotkey.contains("Alt") && !hotkey.contains("AltGr"));
+
+    if has_new_style && !has_old_style {
+        return hotkey.to_string();
+    }
+    if !has_old_style {
+        return hotkey.to_string();
+    }
+
+    let parts: Vec<&str> = hotkey.split('+').collect();
+    let mut new_parts: Vec<String> = Vec::new();
+
+    for part in parts {
+        let migrated = match part.trim() {
+            "CmdOrCtrl" => {
+                if cfg!(target_os = "macos") { "MetaLeft" } else { "ControlLeft" }
+            }
+            "Ctrl" | "Control" => "ControlLeft",
+            "Cmd" | "Command" | "Meta" | "Super" => "MetaLeft",
+            "Shift" => "ShiftLeft",
+            "Alt" | "Option" => "Alt",
+            "Space" => "Space",
+            "Tab" => "Tab",
+            "Backspace" => "Backspace",
+            "Delete" => "Delete",
+            "Enter" | "Return" => "Enter",
+            "Escape" | "Esc" => "Escape",
+            "Up" => "ArrowUp",
+            "Down" => "ArrowDown",
+            "Left" => "ArrowLeft",
+            "Right" => "ArrowRight",
+            s if s.len() == 1 && s.chars().next().unwrap().is_ascii_alphabetic() => {
+                new_parts.push(format!("Key{}", s.to_uppercase()));
+                continue;
+            }
+            s if s.starts_with('F') && s[1..].parse::<u32>().is_ok() => s,
+            other => other,
+        };
+        new_parts.push(migrated.to_string());
+    }
+
+    new_parts.join("+")
+}
+
 /// Get the app config directory (%APPDATA%/com.chirp.app/)
 pub fn config_dir() -> PathBuf {
     let base = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
@@ -37,6 +90,14 @@ pub fn load_settings() -> Settings {
             settings.model = "parakeet-tdt-0.6b".into();
         }
         _ => {}
+    }
+
+    // Migrate old Tauri shortcut format to new event.code-based format
+    let migrated = migrate_hotkey(&settings.hotkey);
+    if migrated != settings.hotkey {
+        log::info!("Migrated hotkey '{}' → '{}'", settings.hotkey, migrated);
+        settings.hotkey = migrated;
+        let _ = save_settings(&settings);
     }
 
     settings
