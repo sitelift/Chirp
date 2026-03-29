@@ -1,63 +1,43 @@
 const IS_MAC = navigator.platform.includes('Mac')
 
-const MODIFIER_EVENTS = new Set(['Control', 'Shift', 'Alt', 'Meta'])
+const MODIFIER_CODES = new Set([
+  'ControlLeft', 'ControlRight',
+  'ShiftLeft', 'ShiftRight',
+  'AltLeft', 'AltRight',
+  'MetaLeft', 'MetaRight',
+])
 
-/** Normalize a DOM key name into a display label */
-function keyToLabel(key: string): string | null {
-  if (MODIFIER_EVENTS.has(key)) {
-    switch (key) {
-      case 'Control': return IS_MAC ? '\u2318' : 'Ctrl'
-      case 'Meta': return IS_MAC ? '\u2318' : 'Ctrl'
-      case 'Alt': return IS_MAC ? 'Option' : 'Alt'
-      case 'Shift': return 'Shift'
-    }
-  }
+const MODIFIER_ORDER = [
+  'ControlLeft', 'ControlRight',
+  'AltLeft', 'AltRight',
+  'ShiftLeft', 'ShiftRight',
+  'MetaLeft', 'MetaRight',
+]
 
-  if (key.length === 1) {
-    if (key === ' ') return 'Space'
-    return key.toUpperCase()
-  }
-
-  switch (key) {
-    case ' ':
-    case 'Spacebar':
-      return 'Space'
-    case 'ArrowUp': return 'Up'
-    case 'ArrowDown': return 'Down'
-    case 'ArrowLeft': return 'Left'
-    case 'ArrowRight': return 'Right'
-    case 'Escape':
-    case 'Enter':
-    case 'Tab':
-    case 'Backspace':
-    case 'Delete':
-    case 'Insert':
-    case 'Home':
-    case 'End':
-    case 'PageUp':
-    case 'PageDown':
-      return key
-    default:
-      if (/^F\d{1,2}$/i.test(key)) {
-        return key.toUpperCase()
-      }
-      return null
-  }
-}
-
-/** Normalize a DOM key name into a Tauri shortcut string part */
-function keyToShortcutPart(key: string): string | null {
-  if (MODIFIER_EVENTS.has(key)) {
-    switch (key) {
-      case 'Control': return 'CmdOrCtrl'
-      case 'Meta': return 'CmdOrCtrl'
-      case 'Alt': return 'Alt'
-      case 'Shift': return 'Shift'
-    }
-  }
-
-  // Non-modifier — same normalization as labels
-  return keyToLabel(key)
+export function codeToLabel(code: string): string {
+  if (code === 'ControlLeft' || code === 'ControlRight') return 'Ctrl'
+  if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift'
+  if (code === 'AltLeft' || code === 'AltRight') return IS_MAC ? 'Option' : 'Alt'
+  if (code === 'MetaLeft' || code === 'MetaRight') return IS_MAC ? '\u2318' : 'Win'
+  if (code === 'Fn') return 'fn'
+  if (code.startsWith('Key') && code.length === 4) return code[3]
+  if (code.startsWith('Digit') && code.length === 6) return code[5]
+  if (code === 'ArrowUp') return 'Up'
+  if (code === 'ArrowDown') return 'Down'
+  if (code === 'ArrowLeft') return 'Left'
+  if (code === 'ArrowRight') return 'Right'
+  if (code === 'Backquote') return '`'
+  if (code === 'Minus') return '-'
+  if (code === 'Equal') return '='
+  if (code === 'BracketLeft') return '['
+  if (code === 'BracketRight') return ']'
+  if (code === 'Semicolon') return ';'
+  if (code === 'Quote') return "'"
+  if (code === 'Backslash' || code === 'IntlBackslash') return '\\'
+  if (code === 'Comma') return ','
+  if (code === 'Period') return '.'
+  if (code === 'Slash') return '/'
+  return code
 }
 
 export interface CapturedHotkey {
@@ -65,95 +45,75 @@ export interface CapturedHotkey {
   labels: string[]
 }
 
-/** Ordering: modifiers first (Ctrl, Alt, Shift), then regular key */
-const MODIFIER_ORDER = ['CmdOrCtrl', 'Alt', 'Shift'] as const
-
-/**
- * Accumulated key state for sticky capture.
- * Keys are added on press and stay until confirmed or cancelled.
- */
 export interface StickyCapture {
-  /** Modifier shortcut parts accumulated (e.g., 'CmdOrCtrl', 'Shift') */
-  modifiers: Set<string>
-  /** Display labels for modifiers */
-  modifierLabels: Map<string, string>
-  /** The main (non-modifier) key shortcut part, if pressed */
-  mainKey: string | null
-  /** Display label for the main key */
-  mainKeyLabel: string | null
+  keys: Set<string>
 }
 
 export function createStickyCapture(): StickyCapture {
-  return {
-    modifiers: new Set(),
-    modifierLabels: new Map(),
-    mainKey: null,
-    mainKeyLabel: null,
-  }
+  return { keys: new Set() }
 }
 
-/** Add a keydown event to the sticky capture. Returns false if key is unrecognized. */
-export function addKeyToCapture(capture: StickyCapture, event: KeyboardEvent): StickyCapture | null {
-  const key = event.key
-
-  if (MODIFIER_EVENTS.has(key)) {
-    const part = keyToShortcutPart(key)
-    const label = keyToLabel(key)
-    if (!part || !label) return null
-
-    const next = {
-      ...capture,
-      modifiers: new Set(capture.modifiers),
-      modifierLabels: new Map(capture.modifierLabels),
-    }
-    next.modifiers.add(part)
-    next.modifierLabels.set(part, label)
-    return next
-  }
-
-  // Non-modifier key
-  const part = keyToShortcutPart(key)
-  const label = keyToLabel(key)
-  if (!part || !label) return null
-
-  return {
-    ...capture,
-    mainKey: part,
-    mainKeyLabel: label,
-  }
+export function addKeyToCapture(capture: StickyCapture, event: KeyboardEvent): StickyCapture {
+  const code = event.code
+  if (!code) return capture
+  const next = { keys: new Set(capture.keys) }
+  next.keys.add(code)
+  return next
 }
 
-/** Get ordered display labels from a sticky capture */
+export function addSystemKeyToCapture(capture: StickyCapture, code: string): StickyCapture {
+  const next = { keys: new Set(capture.keys) }
+  next.keys.add(code)
+  return next
+}
+
 export function getCaptureLabels(capture: StickyCapture): string[] {
-  const labels: string[] = []
-  for (const mod of MODIFIER_ORDER) {
-    const label = capture.modifierLabels.get(mod)
-    if (label) labels.push(label)
+  const mods: string[] = []
+  const rest: string[] = []
+  for (const code of capture.keys) {
+    if (MODIFIER_CODES.has(code)) {
+      mods.push(code)
+    } else {
+      rest.push(code)
+    }
   }
-  if (capture.mainKeyLabel) {
-    labels.push(capture.mainKeyLabel)
-  }
-  return labels
+  mods.sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b))
+  rest.sort()
+  return [...mods, ...rest].map(codeToLabel)
 }
 
-/** Build the Tauri shortcut string from a sticky capture, or null if incomplete.
- *  Requires at least one non-modifier key (modifier-only combos are not supported). */
+function getOrderedCodes(capture: StickyCapture): string[] {
+  const mods: string[] = []
+  const rest: string[] = []
+  for (const code of capture.keys) {
+    if (MODIFIER_CODES.has(code)) {
+      mods.push(code)
+    } else {
+      rest.push(code)
+    }
+  }
+  mods.sort((a, b) => MODIFIER_ORDER.indexOf(a) - MODIFIER_ORDER.indexOf(b))
+  rest.sort()
+  return [...mods, ...rest]
+}
+
 export function buildHotkeyString(capture: StickyCapture): CapturedHotkey | null {
-  if (!capture.mainKey) return null
-
-  const parts: string[] = []
-  for (const mod of MODIFIER_ORDER) {
-    if (capture.modifiers.has(mod)) parts.push(mod)
-  }
-  parts.push(capture.mainKey)
-
+  if (capture.keys.size === 0) return null
+  const codes = getOrderedCodes(capture)
   return {
-    hotkey: parts.join('+'),
-    labels: getCaptureLabels(capture),
+    hotkey: codes.join('+'),
+    labels: codes.map(codeToLabel),
   }
 }
 
-/** Check if the capture has a valid (confirmable) shortcut — requires a non-modifier key */
 export function captureIsValid(capture: StickyCapture): boolean {
-  return capture.mainKey !== null
+  return capture.keys.size > 0
+}
+
+export function captureIsModifierOnly(capture: StickyCapture): boolean {
+  if (capture.keys.size === 0) return false
+  for (const code of capture.keys) {
+    if (!MODIFIER_CODES.has(code)) return false
+  }
+  return true
 }

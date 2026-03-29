@@ -73,7 +73,7 @@ fn default_tone_mode() -> String {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            hotkey: "CmdOrCtrl+Shift+Space".into(),
+            hotkey: if cfg!(target_os = "macos") { "MetaLeft+ShiftLeft+Space" } else { "ControlLeft+ShiftLeft+Space" }.into(),
             launch_at_login: true,
             play_sound_on_complete: false,
             auto_dismiss_overlay: true,
