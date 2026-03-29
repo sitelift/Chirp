@@ -8,6 +8,8 @@ mod history;
 mod inject;
 mod llm;
 mod hotkey;
+#[cfg(target_os = "macos")]
+mod native_hotkey;
 mod settings;
 mod snippets;
 mod state;
