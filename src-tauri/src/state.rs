@@ -28,6 +28,7 @@ pub enum HotkeyStatus {
     Retrying,
     Active,
     Failed,
+    AccessibilityRequired,
 }
 
 /// User-facing app settings, persisted as JSON

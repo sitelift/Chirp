@@ -90,33 +90,19 @@ pub async fn update_settings(
         let _ = autostart.disable();
     }
 
-    // Re-register global shortcut if hotkey changed
+    // Re-register hotkey if changed
     if s.settings.hotkey != old_hotkey {
         let new_hotkey = s.settings.hotkey.clone();
-        drop(s); // Release lock before accessing shortcut plugin
-
-        use tauri_plugin_global_shortcut::GlobalShortcutExt;
-        let gs = app_handle.global_shortcut();
-        let _ = gs.unregister_all();
-
-        if let Ok(shortcut) = new_hotkey.parse::<tauri_plugin_global_shortcut::Shortcut>() {
-            let _ = gs.on_shortcut(shortcut, move |app, _shortcut, event| {
-                match event.state {
-                    tauri_plugin_global_shortcut::ShortcutState::Pressed => {
-                        log::info!("Hotkey pressed → start recording");
-                        let _ = app.emit("hotkey-pressed", ());
-                    }
-                    tauri_plugin_global_shortcut::ShortcutState::Released => {
-                        log::info!("Hotkey released → stop recording");
-                        let _ = app.emit("hotkey-released", ());
-                    }
-                }
-            });
-            log::info!("Re-registered global hotkey: {new_hotkey}");
-            let _ = app_handle.emit("hotkey-status", "active");
-        } else {
-            log::error!("Failed to parse new hotkey: {new_hotkey}");
-            let _ = app_handle.emit("hotkey-status", "failed");
+        drop(s);
+        match crate::hotkey::update(&new_hotkey, app_handle.clone()) {
+            Ok(()) => {
+                log::info!("Re-registered hotkey: {new_hotkey}");
+                let _ = app_handle.emit("hotkey-status", "active");
+            }
+            Err(e) => {
+                log::error!("Failed to update hotkey: {e}");
+                let _ = app_handle.emit("hotkey-status", "failed");
+            }
         }
     } else {
         drop(s);
@@ -816,6 +802,7 @@ pub async fn get_hotkey_status(
         crate::state::HotkeyStatus::Retrying => "retrying",
         crate::state::HotkeyStatus::Active => "active",
         crate::state::HotkeyStatus::Failed => "failed",
+        crate::state::HotkeyStatus::AccessibilityRequired => "accessibility_required",
     };
     Ok(status.to_string())
 }
@@ -866,5 +853,66 @@ pub async fn send_feedback(
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
     crate::feedback::send_feedback_command(text, state.inner()).await
+}
+
+// ── Accessibility permission (macOS) ──────────────────────────────────
+
+#[tauri::command]
+pub async fn check_accessibility_permission() -> Result<bool, String> {
+    #[cfg(target_os = "macos")]
+    {
+        extern "C" {
+            fn AXIsProcessTrusted() -> bool;
+        }
+        Ok(unsafe { AXIsProcessTrusted() })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(true)
+    }
+}
+
+#[tauri::command]
+pub async fn request_accessibility_permission() -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        use cocoa::base::nil;
+        use cocoa::foundation::{NSDictionary, NSString};
+        use objc::msg_send;
+        use objc::sel;
+        use objc::sel_impl;
+        use objc::class;
+        use objc::runtime::Object;
+        extern "C" {
+            fn AXIsProcessTrustedWithOptions(options: *const Object) -> bool;
+        }
+        unsafe {
+            let key = NSString::alloc(nil).init_str("AXTrustedCheckOptionPrompt");
+            let value: *mut Object = msg_send![class!(NSNumber), numberWithBool: true];
+            let options = NSDictionary::dictionaryWithObject_forKey_(nil, value, key);
+            AXIsProcessTrustedWithOptions(options as *const Object);
+        }
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Ok(())
+    }
+}
+
+// ── System-level key capture ──────────────────────────────────────────
+
+#[tauri::command]
+pub async fn capture_next_key(
+    state: State<'_, crate::state::SharedState>,
+    app_handle: AppHandle,
+) -> Result<crate::hotkey::CapturedKey, String> {
+    let result = crate::hotkey::capture_next_key().await;
+    // Resume the main hotkey grab after capture
+    let s = state.lock().await;
+    let hotkey_str = s.settings.hotkey.clone();
+    drop(s);
+    let _ = crate::hotkey::start(&hotkey_str, app_handle);
+    result
 }
 

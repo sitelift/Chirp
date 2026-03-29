@@ -7,6 +7,7 @@ mod feedback;
 mod history;
 mod inject;
 mod llm;
+mod hotkey;
 mod settings;
 mod snippets;
 mod state;
@@ -79,42 +80,12 @@ pub fn run() {
     let initial_snippets = settings::load_snippets();
     let mut initial_history = history::load_history();
     history::prune_history(&mut initial_history, initial_settings.history_retention_days);
-    let hotkey_str = initial_settings.hotkey.clone();
-
-    // Build the global shortcut plugin with the configured hotkey
-    let shortcut_plugin = {
-        let shortcut: tauri_plugin_global_shortcut::Shortcut = hotkey_str
-            .parse()
-            .unwrap_or_else(|_| {
-                log::warn!("Failed to parse hotkey '{hotkey_str}', falling back to CmdOrCtrl+Shift+Space");
-                "CmdOrCtrl+Shift+Space".parse().unwrap()
-            });
-        log::info!("Registering global hotkey: {hotkey_str}");
-        tauri_plugin_global_shortcut::Builder::new()
-            .with_shortcut(shortcut)
-            .expect("Failed to configure shortcut")
-            .with_handler(|app, _shortcut, event| {
-                match event.state {
-                    tauri_plugin_global_shortcut::ShortcutState::Pressed => {
-                        log::info!("Hotkey pressed → start recording");
-                        let _ = app.emit("hotkey-pressed", ());
-                    }
-                    tauri_plugin_global_shortcut::ShortcutState::Released => {
-                        log::info!("Hotkey released → stop recording");
-                        let _ = app.emit("hotkey-released", ());
-                    }
-                }
-            })
-            .build()
-    };
-
     let mut builder = tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
                 .build(),
         )
-        .plugin(shortcut_plugin)
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // Focus existing settings window when second instance tries to launch
@@ -185,6 +156,9 @@ pub fn run() {
             commands::dismiss_announcement,
             commands::send_feedback,
             commands::request_mic_permission,
+            commands::check_accessibility_permission,
+            commands::request_accessibility_permission,
+            commands::capture_next_key,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -339,6 +313,36 @@ pub fn run() {
                     _ => {}
                 })
                 .build(app)?;
+
+            // macOS: make overlay float above fullscreen apps
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(overlay) = app.get_webview_window("overlay") {
+                    use cocoa::appkit::NSWindow;
+                    use cocoa::appkit::NSWindowCollectionBehavior;
+                    let ns_win = overlay.ns_window().unwrap() as cocoa::base::id;
+                    unsafe {
+                        // Level 25 = CGShieldingWindowLevel - 1, above fullscreen spaces
+                        ns_win.setLevel_(25);
+                        ns_win.setCollectionBehavior_(
+                            NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
+                            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
+                        );
+                    }
+                }
+            }
+
+            // Start the global hotkey listener
+            {
+                let hotkey_handle = handle.clone();
+                let state = handle.state::<SharedState>();
+                let s = state.blocking_lock();
+                let hotkey_str = s.settings.hotkey.clone();
+                drop(s);
+                if let Err(e) = hotkey::start(&hotkey_str, hotkey_handle) {
+                    log::error!("Failed to start hotkey listener: {e}");
+                }
+            }
 
             // Show settings window unless launched with --minimized (autostart)
             let minimized = std::env::args().any(|a| a == "--minimized");
