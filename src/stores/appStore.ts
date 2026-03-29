@@ -77,7 +77,7 @@ export interface AppState {
   helpImprove: boolean
 
   // Hotkey status
-  hotkeyStatus: 'idle' | 'retrying' | 'active' | 'failed'
+  hotkeyStatus: 'idle' | 'retrying' | 'active' | 'failed' | 'accessibility_required'
 
   // Settings saved indicator
   settingsSaved: boolean
@@ -111,7 +111,7 @@ export interface AppState {
   setHistory: (history: TranscriptionEntry[]) => void
   removeHistoryEntry: (timestamp: string) => void
   setSettingsPage: (page: string) => void
-  setHotkeyStatus: (status: 'idle' | 'retrying' | 'active' | 'failed') => void
+  setHotkeyStatus: (status: 'idle' | 'retrying' | 'active' | 'failed' | 'accessibility_required') => void
   setOnboardingComplete: (complete: boolean) => void
   setSettingsSaved: (saved: boolean) => void
   setAboutModalOpen: (open: boolean) => void

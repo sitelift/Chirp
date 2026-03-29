@@ -355,6 +355,26 @@ export function SettingsPage() {
             </div>
           ) : (
             /* ── IDLE / PENDING STATE: compact row ── */
+            <>
+            {store.hotkeyStatus === 'accessibility_required' && (
+              <div className="mb-3 flex items-center justify-between rounded-xl border border-chirp-amber-300 bg-chirp-amber-50/50 px-4 py-3">
+                <div>
+                  <div className="text-[13px] font-medium text-chirp-amber-700">Accessibility permission required</div>
+                  <div className="text-[11px] text-chirp-stone-500">Chirp needs Accessibility access to detect your hotkey.</div>
+                </div>
+                <button
+                  onClick={async () => {
+                    const { invoke } = await import('@tauri-apps/api/core')
+                    const { open } = await import('@tauri-apps/plugin-shell')
+                    await invoke('request_accessibility_permission').catch(() => {})
+                    await open('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')
+                  }}
+                  className="rounded-lg bg-[#1a1a1a] px-3 py-1.5 text-[11px] font-medium text-white hover:bg-[#333] transition-colors whitespace-nowrap ml-3"
+                >
+                  Open System Settings
+                </button>
+              </div>
+            )}
             <Row last>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -416,6 +436,7 @@ export function SettingsPage() {
                 )}
               </div>
             </Row>
+            </>
           )}
         </Card>
       </div>
