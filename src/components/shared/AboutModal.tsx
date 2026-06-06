@@ -73,13 +73,13 @@ export function AboutModal() {
       onClick={() => setAboutModalOpen(false)}
     >
       <div
-        className="relative bg-white rounded-2xl shadow-xl max-w-md w-full mx-4 p-8"
+        className="relative bg-card rounded-2xl shadow-xl max-w-md w-full mx-4 p-8"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Close button */}
         <button
           onClick={() => setAboutModalOpen(false)}
-          className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-lg text-[#888] hover:text-[#555] hover:bg-[#F5F4F0] transition-colors"
+          className="absolute top-4 right-4 w-8 h-8 flex items-center justify-center rounded-lg text-dm-muted hover:text-dm-primary hover:bg-card-hover transition-colors"
         >
           <svg width="14" height="14" viewBox="0 0 14 14" fill="none" xmlns="http://www.w3.org/2000/svg">
             <path d="M1 1L13 13M1 13L13 1" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
@@ -89,13 +89,13 @@ export function AboutModal() {
         <div className="flex flex-col items-center">
           <BirdMark size={64} />
 
-          <h2 className="mt-3 font-display font-extrabold text-[28px] text-[#1a1a1a]">
+          <h2 className="mt-3 font-display font-extrabold text-[28px] text-dm-primary">
             chirp
           </h2>
 
-          <span className="mt-1 font-mono text-[13px] text-[#888]">v{appVersion}</span>
+          <span className="mt-1 font-mono text-[13px] text-dm-muted">v{appVersion}</span>
 
-          <p className="mt-3 font-body text-sm text-[#888] italic text-center">
+          <p className="mt-3 font-body text-sm text-dm-muted italic text-center">
             Free, local voice-to-text{'\n'}for everyone.
           </p>
 
@@ -129,7 +129,7 @@ export function AboutModal() {
           </div>
 
           {updateStatus === 'available' && (
-            <p className="mt-2 font-body text-sm text-[#1a1a1a]">
+            <p className="mt-2 font-body text-sm text-dm-primary">
               Update available!{' '}
               <span className="font-mono text-[13px]">v{updateVersion}</span>
             </p>
@@ -141,7 +141,7 @@ export function AboutModal() {
           )}
           {updateStatus === 'error' && (
             <div className="mt-2 text-center">
-              <p className="font-body text-sm text-[#888]">
+              <p className="font-body text-sm text-dm-muted">
                 Couldn't check for updates.
               </p>
               {navigator.platform.includes('Mac') && (
@@ -164,7 +164,7 @@ export function AboutModal() {
             Support Chirp
           </button>
 
-          <p className="mt-6 font-body text-[12px] text-[#aaa]">
+          <p className="mt-6 font-body text-[12px] text-dm-secondary">
             Made by Pieter de Bruijn
           </p>
         </div>

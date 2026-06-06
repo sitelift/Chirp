@@ -1,6 +1,6 @@
-import { useState, useMemo, useCallback } from 'react'
+import { useState, useMemo } from 'react'
 import { trackEvent } from '@aptabase/tauri'
-import { Search, Download, Trash2, Copy, BookOpen, Zap, ChevronDown, Clock, Mic, Type, Hash, AlertTriangle, Check } from 'lucide-react'
+import { Search, Download, Trash2, Copy, BookText, Zap, ChevronDown, Clock, Mic, Type, Hash, AlertTriangle, Check } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { useCleanupToggle } from '../../hooks/useCleanupToggle'
@@ -32,9 +32,8 @@ export function HomePage() {
   const [copiedTimestamp, setCopiedTimestamp] = useState<string | null>(null)
   const [expandedTimestamp, setExpandedTimestamp] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
-  const [quickAddTab, setQuickAddTab] = useState<'dictionary' | 'snippets'>('dictionary')
-  const [qaFrom, setQaFrom] = useState('')
-  const [qaTo, setQaTo] = useState('')
+  const [quickAddTab, setQuickAddTab] = useState<'vocabulary' | 'snippets'>('vocabulary')
+  const [qaWord, setQaWord] = useState('')
   const [qaTrigger, setQaTrigger] = useState('')
   const [qaExpansion, setQaExpansion] = useState('')
   const [qaAdded, setQaAdded] = useState(false)
@@ -94,13 +93,11 @@ export function HomePage() {
     day: 'numeric',
   })
 
-  const handleQuickAddDict = () => {
-    const from = qaFrom.trim()
-    const to = qaTo.trim()
-    if (!from || !to) return
-    store.addDictionaryEntry(from, to)
-    setQaFrom('')
-    setQaTo('')
+  const handleQuickAddVocab = () => {
+    const word = qaWord.trim()
+    if (!word) return
+    store.addVocabularyEntry(word)
+    setQaWord('')
     setQaAdded(true)
     setTimeout(() => setQaAdded(false), 1200)
   }
@@ -152,11 +149,11 @@ export function HomePage() {
   const [showClearConfirm, setShowClearConfirm] = useState(false)
   const [showExportSuccess, setShowExportSuccess] = useState(false)
 
-  const handleClearHistory = useCallback(async () => {
+  const handleClearHistory = async () => {
     setShowClearConfirm(false)
     await tauri.clearHistory()
     store.setHistory([])
-  }, [tauri, store])
+  }
 
   const updateAvailable = store.updateAvailable
   const setAboutModalOpen = useAppStore((s) => s.setAboutModalOpen)
@@ -284,21 +281,21 @@ export function HomePage() {
       {/* Contextual Cards Row */}
       <div className="flex gap-[10px]">
         {/* Smart Cleanup controls */}
-        <div className="flex-1 rounded-card border border-card-border bg-white p-4 hover-lift">
+        <div className="flex-1 rounded-card border border-card-border bg-card p-4 hover-lift">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
-              <span className="text-[13px] font-semibold text-[#1a1a1a]">Smart Cleanup</span>
+              <span className="text-[13px] font-semibold text-dm-primary">Smart Cleanup</span>
               {store.aiCleanup && (
                 <span className="flex items-center gap-1">
                   {cleanupStarting ? (
                     <>
                       <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
-                      <span className="text-[11px] text-[#aaa]">Starting...</span>
+                      <span className="text-[11px] text-dm-secondary">Starting...</span>
                     </>
                   ) : store.llmReady ? (
                     <>
                       <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                      <span className="text-[11px] text-[#aaa]">Active</span>
+                      <span className="text-[11px] text-dm-secondary">Active</span>
                     </>
                   ) : !llmDownloaded ? (
                     <>
@@ -315,10 +312,10 @@ export function HomePage() {
               disabled={cleanupStarting}
             />
           </div>
-          <p className="text-[11px] text-[#aaa] mb-3">Polish grammar and filler words with local AI</p>
+          <p className="text-[11px] text-dm-secondary mb-3">Polish grammar and filler words with local AI</p>
           {store.aiCleanup && (
-            <div className="flex items-center justify-between pt-3 border-t border-[#F5F4F0]">
-              <span className="text-[12px] text-[#888]">Tone</span>
+            <div className="flex items-center justify-between pt-3 border-t border-dm-row-sep">
+              <span className="text-[12px] text-dm-muted">Tone</span>
               <div className="w-[140px]">
                 <Select
                   options={TONE_MODES.map(m => ({ value: m.id, label: m.label }))}
@@ -330,30 +327,30 @@ export function HomePage() {
           )}
         </div>
 
-        {/* Quick-add dictionary/snippets */}
-        <div className="flex-1 rounded-card border border-card-border bg-white p-4 hover-lift">
+        {/* Quick-add vocabulary/snippets */}
+        <div className="flex-1 rounded-card border border-card-border bg-card p-4 hover-lift">
           {/* Tab header */}
           <div className="flex items-center gap-3 mb-3">
             <button
-              onClick={() => setQuickAddTab('dictionary')}
+              onClick={() => setQuickAddTab('vocabulary')}
               className={`flex items-center gap-1.5 text-[13px] font-semibold transition-colors ${
-                quickAddTab === 'dictionary' ? 'text-[#1a1a1a]' : 'text-[#ccc] hover:text-[#888]'
+                quickAddTab === 'vocabulary' ? 'text-dm-primary' : 'text-dm-tertiary hover:text-dm-muted'
               }`}
             >
-              <BookOpen size={14} />
-              Dictionary
-              <span className="text-[10px] font-normal text-[#bbb]">{store.dictionary.length}</span>
+              <BookText size={14} />
+              Vocabulary
+              <span className="text-[10px] font-normal text-dm-secondary">{store.vocabulary.length}</span>
             </button>
-            <span className="text-[#e5e5e5]">|</span>
+            <span className="text-dm-row-sep">|</span>
             <button
               onClick={() => setQuickAddTab('snippets')}
               className={`flex items-center gap-1.5 text-[13px] font-semibold transition-colors ${
-                quickAddTab === 'snippets' ? 'text-[#1a1a1a]' : 'text-[#ccc] hover:text-[#888]'
+                quickAddTab === 'snippets' ? 'text-dm-primary' : 'text-dm-tertiary hover:text-dm-muted'
               }`}
             >
               <Zap size={14} />
               Snippets
-              <span className="text-[10px] font-normal text-[#bbb]">{store.snippets.length}</span>
+              <span className="text-[10px] font-normal text-dm-secondary">{store.snippets.length}</span>
             </button>
           </div>
 
@@ -361,28 +358,20 @@ export function HomePage() {
             <div className="flex items-center justify-center py-4 text-[12px] text-chirp-success font-medium animate-fade-in">
               Added
             </div>
-          ) : quickAddTab === 'dictionary' ? (
+          ) : quickAddTab === 'vocabulary' ? (
             <div className="flex gap-2">
               <input
                 type="text"
-                value={qaFrom}
-                onChange={(e) => setQaFrom(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleQuickAddDict()}
-                placeholder="Heard..."
-                className="flex-1 h-[34px] rounded-lg border border-card-border bg-[#FAFAF8] px-2.5 text-[12px] text-[#333] placeholder:text-[#ccc] focus:border-chirp-yellow focus:outline-none transition-colors"
-              />
-              <input
-                type="text"
-                value={qaTo}
-                onChange={(e) => setQaTo(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleQuickAddDict()}
-                placeholder="Replace with..."
-                className="flex-1 h-[34px] rounded-lg border border-card-border bg-[#FAFAF8] px-2.5 text-[12px] text-[#333] placeholder:text-[#ccc] focus:border-chirp-yellow focus:outline-none transition-colors"
+                value={qaWord}
+                onChange={(e) => setQaWord(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleQuickAddVocab()}
+                placeholder="Add a word or name..."
+                className="flex-1 h-[34px] rounded-lg border border-card-border bg-card-hover px-2.5 text-[12px] text-dm-primary placeholder:text-dm-tertiary focus:border-chirp-yellow focus:outline-none transition-colors"
               />
               <button
-                onClick={handleQuickAddDict}
-                disabled={!qaFrom.trim() || !qaTo.trim()}
-                className="h-[34px] px-3 rounded-lg bg-[#1a1a1a] text-white text-[12px] font-medium disabled:bg-[#ccc] transition-colors"
+                onClick={handleQuickAddVocab}
+                disabled={!qaWord.trim()}
+                className="h-[34px] px-3 rounded-lg bg-dm-btn-bg text-dm-btn-text text-[12px] font-medium disabled:bg-dm-btn-disabled-bg transition-colors"
               >
                 Add
               </button>
@@ -394,7 +383,7 @@ export function HomePage() {
                 value={qaTrigger}
                 onChange={(e) => setQaTrigger(e.target.value)}
                 placeholder="Trigger phrase..."
-                className="h-[34px] rounded-lg border border-card-border bg-[#FAFAF8] px-2.5 text-[12px] text-[#333] placeholder:text-[#ccc] focus:border-chirp-yellow focus:outline-none transition-colors"
+                className="h-[34px] rounded-lg border border-card-border bg-card-hover px-2.5 text-[12px] text-dm-primary placeholder:text-dm-tertiary focus:border-chirp-yellow focus:outline-none transition-colors"
               />
               <div className="flex gap-2">
                 <input
@@ -403,12 +392,12 @@ export function HomePage() {
                   onChange={(e) => setQaExpansion(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleQuickAddSnippet()}
                   placeholder="Expands to..."
-                  className="flex-1 h-[34px] rounded-lg border border-card-border bg-[#FAFAF8] px-2.5 text-[12px] text-[#333] placeholder:text-[#ccc] focus:border-chirp-yellow focus:outline-none transition-colors"
+                  className="flex-1 h-[34px] rounded-lg border border-card-border bg-card-hover px-2.5 text-[12px] text-dm-primary placeholder:text-dm-tertiary focus:border-chirp-yellow focus:outline-none transition-colors"
                 />
                 <button
                   onClick={handleQuickAddSnippet}
                   disabled={!qaTrigger.trim() || !qaExpansion.trim()}
-                  className="h-[34px] px-3 rounded-lg bg-[#1a1a1a] text-white text-[12px] font-medium disabled:bg-[#ccc] transition-colors"
+                  className="h-[34px] px-3 rounded-lg bg-dm-btn-bg text-dm-btn-text text-[12px] font-medium disabled:bg-dm-btn-disabled-bg transition-colors"
                 >
                   Add
                 </button>
@@ -422,29 +411,29 @@ export function HomePage() {
       <div className="mt-2">
         {/* Search + Export bar */}
         <div className="flex items-center gap-3 mb-4">
-          <h2 className="font-display font-bold text-[15px] text-[#1a1a1a] flex-shrink-0">History</h2>
+          <h2 className="font-display font-bold text-[15px] text-dm-primary flex-shrink-0">History</h2>
           <div className="flex-1 relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-[#bbb] pointer-events-none" />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-dm-secondary pointer-events-none" />
             <input
               type="text"
               placeholder="Search transcriptions..."
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full h-[36px] rounded-[10px] border border-card-border bg-white pl-8 pr-3 font-body text-[13px] text-[#333] placeholder:text-[#bbb] focus:border-chirp-yellow focus:shadow-[0_0_0_3px_rgba(240,183,35,0.1)] focus:outline-none transition-all duration-150"
+              className="w-full h-[36px] rounded-[10px] border border-card-border bg-dm-input pl-8 pr-3 font-body text-[13px] text-dm-primary placeholder:text-dm-secondary focus:border-chirp-yellow focus:shadow-[0_0_0_3px_rgba(240,183,35,0.1)] focus:outline-none transition-all duration-150"
             />
           </div>
           {store.history.length > 0 && (
             <>
               <button
                 onClick={() => setShowClearConfirm(true)}
-                className="h-[36px] px-3 rounded-[10px] border border-card-border bg-white font-body text-[12px] text-[#888] flex items-center gap-1.5 hover:bg-red-50 hover:text-red-400 hover:border-red-200 transition-colors flex-shrink-0"
+                className="h-[36px] px-3 rounded-[10px] border border-card-border bg-card font-body text-[12px] text-dm-muted flex items-center gap-1.5 hover:bg-red-50 hover:text-red-400 hover:border-red-200 transition-colors flex-shrink-0"
               >
                 <Trash2 size={13} />
                 Clear
               </button>
               <button
                 onClick={handleExport}
-                className="h-[36px] px-3 rounded-[10px] border border-card-border bg-white font-body text-[12px] text-[#888] flex items-center gap-1.5 hover:bg-[#FAFAF8] transition-colors flex-shrink-0"
+                className="h-[36px] px-3 rounded-[10px] border border-card-border bg-card font-body text-[12px] text-dm-muted flex items-center gap-1.5 hover:bg-card-hover transition-colors flex-shrink-0"
               >
                 <Download size={13} />
                 Export
@@ -455,14 +444,14 @@ export function HomePage() {
 
         {/* Day-grouped history */}
         {store.history.length === 0 ? (
-          <div className="flex items-center justify-center rounded-card border border-card-border bg-white px-6 py-12">
-            <p className="font-body text-sm text-[#bbb] text-center">
+          <div className="flex items-center justify-center rounded-card border border-card-border bg-card px-6 py-12">
+            <p className="font-body text-sm text-dm-secondary text-center">
               Your transcriptions will appear here
             </p>
           </div>
         ) : filteredHistory.length === 0 ? (
-          <div className="flex items-center justify-center rounded-card border border-card-border bg-white px-6 py-12">
-            <p className="font-body text-sm text-[#bbb] text-center">
+          <div className="flex items-center justify-center rounded-card border border-card-border bg-card px-6 py-12">
+            <p className="font-body text-sm text-dm-secondary text-center">
               No transcriptions match &ldquo;{searchQuery}&rdquo;
             </p>
           </div>
@@ -476,10 +465,10 @@ export function HomePage() {
                 <div key={dayKey}>
                   {/* Day header */}
                   <div className="flex items-center justify-between mb-3">
-                    <h3 className="font-display font-bold text-[13px] text-[#888] uppercase tracking-wide">
+                    <h3 className="font-display font-bold text-[13px] text-dm-muted uppercase tracking-wide">
                       {formatDayLabel(dayKey)}
                     </h3>
-                    <span className="text-[11px] text-[#bbb] font-body">
+                    <span className="text-[11px] text-dm-secondary font-body">
                       {dayWords.toLocaleString()} words &middot; {daySessions} session{daySessions !== 1 ? 's' : ''}
                     </span>
                   </div>
@@ -496,30 +485,30 @@ export function HomePage() {
                         <div
                           key={entry.timestamp}
                           onClick={() => setExpandedTimestamp(isExpanded ? null : entry.timestamp)}
-                          className={`p-[14px_16px] bg-white rounded-card border border-card-border flex items-start gap-3 cursor-pointer group transition-all duration-200 ${isExpanded ? 'shadow-[0_2px_12px_rgba(0,0,0,0.06)]' : 'hover-lift'}`}
+                          className={`p-[14px_16px] bg-card rounded-card border border-card-border flex items-start gap-3 cursor-pointer group transition-all duration-200 ${isExpanded ? 'shadow-[0_2px_12px_rgba(0,0,0,0.06)]' : 'hover-lift'}`}
                         >
                           {/* Left indicator bar */}
                           <div className={`w-1 min-h-[36px] self-stretch rounded-sm flex-shrink-0 mt-0.5 ${
-                            entry.wasCleanedUp ? 'bg-gradient-to-b from-chirp-yellow to-[#F7D86C]' : 'bg-[#e5e5e5]'
+                            entry.wasCleanedUp ? 'bg-gradient-to-b from-chirp-yellow to-[#F7D86C]' : 'bg-card-border'
                           }`} />
 
                           {/* Content */}
                           <div className="flex-1 min-w-0">
-                            <div className={`text-[13px] text-[#333] leading-relaxed ${isExpanded ? '' : 'line-clamp-3'}`}>{entry.text}</div>
+                            <div className={`text-[13px] text-dm-primary leading-relaxed ${isExpanded ? '' : 'line-clamp-3'}`}>{entry.text}</div>
 
                             {/* Collapsed metadata */}
                             {!isExpanded && (
                               <div className="flex gap-2 mt-[6px] items-center flex-wrap">
-                                <span className="text-[11px] text-[#bbb]">{entry.wordCount} words</span>
-                                <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
-                                <span className="text-[11px] text-[#bbb]">{(entry.speechDurationMs / 1000).toFixed(0)}s</span>
+                                <span className="text-[11px] text-dm-secondary">{entry.wordCount} words</span>
+                                <span className="text-[11px] text-dm-row-sep">&middot;</span>
+                                <span className="text-[11px] text-dm-secondary">{(entry.speechDurationMs / 1000).toFixed(0)}s</span>
                                 {wpm && <>
-                                  <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
-                                  <span className="text-[10px] text-[#888] font-medium bg-[#F5F4F0] px-2 py-[1px] rounded">{wpm} WPM</span>
+                                  <span className="text-[11px] text-dm-row-sep">&middot;</span>
+                                  <span className="text-[10px] text-dm-secondary font-medium bg-card-hover px-2 py-[1px] rounded">{wpm} WPM</span>
                                 </>}
                                 {entry.wasCleanedUp && <>
-                                  <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
-                                  <span className="text-[10px] text-[#D4A020] font-semibold bg-gradient-to-r from-[#FFF9E5] to-[#FEF3C7] px-2 py-[1px] rounded">Polished</span>
+                                  <span className="text-[11px] text-dm-row-sep">&middot;</span>
+                                  <span className="text-[10px] text-chirp-amber-500 font-semibold bg-chirp-amber-400/15 px-2 py-[1px] rounded">Polished</span>
                                 </>}
                               </div>
                             )}
@@ -527,42 +516,42 @@ export function HomePage() {
                             {/* Expanded stats */}
                             {isExpanded && (
                               <div className="mt-3 animate-fade-in">
-                                <div className="flex items-center gap-4 p-3 bg-[#FAFAF8] rounded-[10px] border border-card-border">
+                                <div className="flex items-center gap-4 p-3 bg-card-hover rounded-[10px] border border-card-border">
                                   <div className="flex items-center gap-2">
-                                    <Mic size={12} className="text-[#ccc]" />
+                                    <Mic size={12} className="text-dm-tertiary" />
                                     <div>
-                                      <div className="text-[10px] text-[#999] uppercase tracking-wide">Speech</div>
-                                      <div className="text-[13px] text-[#555] font-medium">{(entry.speechDurationMs / 1000).toFixed(1)}s</div>
+                                      <div className="text-[10px] text-dm-muted uppercase tracking-wide">Speech</div>
+                                      <div className="text-[13px] text-dm-primary font-medium">{(entry.speechDurationMs / 1000).toFixed(1)}s</div>
                                     </div>
                                   </div>
                                   <div className="flex items-center gap-2">
-                                    <Clock size={12} className="text-[#ccc]" />
+                                    <Clock size={12} className="text-dm-tertiary" />
                                     <div>
-                                      <div className="text-[10px] text-[#999] uppercase tracking-wide">Processing</div>
-                                      <div className="text-[13px] text-[#555] font-medium">{(entry.durationMs / 1000).toFixed(1)}s</div>
+                                      <div className="text-[10px] text-dm-muted uppercase tracking-wide">Processing</div>
+                                      <div className="text-[13px] text-dm-primary font-medium">{(entry.durationMs / 1000).toFixed(1)}s</div>
                                     </div>
                                   </div>
                                   {wpm && (
                                     <div className="flex items-center gap-2">
-                                      <Type size={12} className="text-[#ccc]" />
+                                      <Type size={12} className="text-dm-tertiary" />
                                       <div>
-                                        <div className="text-[10px] text-[#999] uppercase tracking-wide">Speed</div>
-                                        <div className="text-[13px] text-[#555] font-medium">{wpm} WPM</div>
+                                        <div className="text-[10px] text-dm-muted uppercase tracking-wide">Speed</div>
+                                        <div className="text-[13px] text-dm-primary font-medium">{wpm} WPM</div>
                                       </div>
                                     </div>
                                   )}
                                   <div className="flex items-center gap-2">
-                                    <Hash size={12} className="text-[#ccc]" />
+                                    <Hash size={12} className="text-dm-tertiary" />
                                     <div>
-                                      <div className="text-[10px] text-[#999] uppercase tracking-wide">Words</div>
-                                      <div className="text-[13px] text-[#555] font-medium">{entry.wordCount}</div>
+                                      <div className="text-[10px] text-dm-muted uppercase tracking-wide">Words</div>
+                                      <div className="text-[13px] text-dm-primary font-medium">{entry.wordCount}</div>
                                     </div>
                                   </div>
                                 </div>
 
                                 {/* Expanded actions + full timestamp */}
                                 <div className="flex items-center justify-between mt-3">
-                                  <span className="text-[11px] text-[#999]">
+                                  <span className="text-[11px] text-dm-muted">
                                     {new Date(entry.timestamp).toLocaleString(undefined, {
                                       weekday: 'short', month: 'short', day: 'numeric',
                                       year: 'numeric', hour: 'numeric', minute: '2-digit'
@@ -574,7 +563,7 @@ export function HomePage() {
                                         e.stopPropagation()
                                         handleCopy(entry.text, entry.timestamp)
                                       }}
-                                      className="h-[28px] px-2.5 rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center gap-1.5 text-[#aaa] hover:bg-[#eee] hover:text-[#555] transition-all text-[11px]"
+                                      className="h-[28px] px-2.5 rounded-[7px] bg-surface border border-card-border flex items-center gap-1.5 text-dm-secondary hover:bg-card-hover hover:text-dm-primary transition-all text-[11px]"
                                     >
                                       {isCopied ? (
                                         <span className="text-chirp-success font-semibold">Copied</span>
@@ -587,7 +576,7 @@ export function HomePage() {
                                         e.stopPropagation()
                                         handleDelete(entry.timestamp)
                                       }}
-                                      className="h-[28px] px-2.5 rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center gap-1.5 text-[#aaa] hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all text-[11px]"
+                                      className="h-[28px] px-2.5 rounded-[7px] bg-surface border border-card-border flex items-center gap-1.5 text-dm-secondary hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all text-[11px]"
                                     >
                                       <Trash2 size={12} /> Delete
                                     </button>
@@ -605,7 +594,7 @@ export function HomePage() {
                                   e.stopPropagation()
                                   handleCopy(entry.text, entry.timestamp)
                                 }}
-                                className="w-[30px] h-[30px] rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center justify-center text-[#aaa] hover:bg-[#eee] hover:text-[#555] transition-all"
+                                className="w-[30px] h-[30px] rounded-[7px] bg-surface border border-card-border flex items-center justify-center text-dm-secondary hover:bg-card-hover hover:text-dm-primary transition-all"
                                 title="Copy"
                               >
                                 {isCopied ? (
@@ -619,7 +608,7 @@ export function HomePage() {
                                   e.stopPropagation()
                                   handleDelete(entry.timestamp)
                                 }}
-                                className="w-[30px] h-[30px] rounded-[7px] bg-[#F5F4F0] border border-card-border flex items-center justify-center text-[#aaa] hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all"
+                                className="w-[30px] h-[30px] rounded-[7px] bg-surface border border-card-border flex items-center justify-center text-dm-secondary hover:bg-red-50 hover:border-red-200 hover:text-red-400 transition-all"
                                 title="Delete"
                               >
                                 <Trash2 size={13} />
@@ -629,10 +618,10 @@ export function HomePage() {
 
                           {/* Chevron + Time */}
                           <div className="flex flex-col items-end gap-1 flex-shrink-0">
-                            <div className="text-[11px] text-[#ccc] whitespace-nowrap">
+                            <div className="text-[11px] text-dm-tertiary whitespace-nowrap">
                               {formatRelativeTime(entry.timestamp)}
                             </div>
-                            <ChevronDown size={14} className={`text-[#ccc] transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+                            <ChevronDown size={14} className={`text-dm-tertiary transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
                           </div>
                         </div>
                       )
@@ -660,15 +649,15 @@ export function HomePage() {
               <div className="w-12 h-12 rounded-full bg-red-50 flex items-center justify-center mb-3">
                 <AlertTriangle size={24} className="text-red-400" />
               </div>
-              <h3 className="font-display font-bold text-[15px] text-[#1a1a1a] mb-1">Clear all history</h3>
-              <p className="font-body text-[13px] text-[#888]">
+              <h3 className="font-display font-bold text-[15px] text-dm-primary mb-1">Clear all history</h3>
+              <p className="font-body text-[13px] text-dm-muted">
                 This will permanently delete all your transcription history. This cannot be undone.
               </p>
             </div>
             <div className="flex gap-2">
               <button
                 onClick={() => setShowClearConfirm(false)}
-                className="flex-1 h-[38px] rounded-[10px] border border-card-border bg-white font-body text-[13px] text-[#666] hover:bg-[#FAFAF8] transition-colors"
+                className="flex-1 h-[38px] rounded-[10px] border border-card-border bg-card font-body text-[13px] text-dm-primary hover:bg-card-hover transition-colors"
               >
                 Cancel
               </button>
@@ -697,14 +686,14 @@ export function HomePage() {
               <div className="w-12 h-12 rounded-full bg-green-50 flex items-center justify-center mb-3">
                 <Check size={24} className="text-green-500" />
               </div>
-              <h3 className="font-display font-bold text-[15px] text-[#1a1a1a] mb-1">History exported</h3>
-              <p className="font-body text-[13px] text-[#888]">
+              <h3 className="font-display font-bold text-[15px] text-dm-primary mb-1">History exported</h3>
+              <p className="font-body text-[13px] text-dm-muted">
                 {store.history.length} {store.history.length === 1 ? 'entry' : 'entries'} saved to your downloads folder.
               </p>
             </div>
             <button
               onClick={() => setShowExportSuccess(false)}
-              className="w-full h-[38px] rounded-[10px] bg-[#1a1a1a] font-body text-[13px] text-white hover:bg-[#333] transition-colors"
+              className="w-full h-[38px] rounded-[10px] bg-dm-btn-bg font-body text-[13px] text-dm-btn-text hover:bg-dm-btn-hover transition-colors"
             >
               Done
             </button>

@@ -10,13 +10,13 @@ interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary:
-    'bg-[#1a1a1a] text-white font-display font-bold text-sm hover:bg-[#333] active:bg-[#000] disabled:bg-[#ccc] disabled:text-[#888] disabled:cursor-not-allowed',
+    'bg-dm-btn-bg text-dm-btn-text font-display font-bold text-sm hover:bg-dm-btn-hover active:bg-[#000] disabled:bg-dm-btn-disabled-bg disabled:text-dm-btn-disabled-text disabled:cursor-not-allowed',
   secondary:
-    'bg-chirp-white border border-chirp-stone-200 text-chirp-stone-700 font-body font-medium text-sm hover:bg-chirp-stone-100 active:bg-chirp-stone-200',
+    'bg-card border border-card-border text-dm-primary font-body font-medium text-sm hover:bg-card-hover active:bg-card-hover',
   ghost:
-    'bg-transparent text-chirp-stone-500 font-body font-medium text-[13px] hover:text-chirp-stone-700',
+    'bg-transparent text-dm-secondary font-body font-medium text-[13px] hover:text-dm-primary',
   icon:
-    'w-8 h-8 bg-transparent hover:bg-chirp-stone-100 flex items-center justify-center text-chirp-stone-500 hover:text-chirp-stone-700',
+    'w-8 h-8 bg-transparent hover:bg-card-hover flex items-center justify-center text-dm-secondary hover:text-dm-primary',
 }
 
 export function Button({

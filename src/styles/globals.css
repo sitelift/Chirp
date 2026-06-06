@@ -1,11 +1,60 @@
-@import url('https://fonts.googleapis.com/css2?family=Nunito:wght@600;700;800;900&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
   --spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
+
+  /* Semantic color tokens — light mode */
+  --color-surface: #F5F4F0;
+  --color-card: #FFFFFF;
+  --color-card-border: #EDECE8;
+  --color-card-hover: #FAFAF8;
+  --color-text-primary: #1a1a1a;
+  --color-text-secondary: #aaaaaa;
+  --color-text-tertiary: #cccccc;
+  --color-text-muted: #888888;
+  --color-input-bg: #FFFFFF;
+  --color-row-separator: #F5F4F0;
+  --color-toggle-off: #dddddd;
+  --color-toggle-on: #1a1a1a;
+  --color-btn-primary-bg: #1a1a1a;
+  --color-btn-primary-text: #FFFFFF;
+  --color-btn-primary-hover: #333333;
+  --color-btn-disabled-bg: #cccccc;
+  --color-btn-disabled-text: #888888;
+  --color-segmented-bg: #F5F4F0;
+  --color-segmented-active: #FFFFFF;
+  --color-keybadge-bg: #F5F4F0;
+  --color-keybadge-text: #555555;
+  --color-scrollbar: #D6D3D1;
+  --color-scrollbar-hover: #78716C;
+}
+
+.dark {
+  --color-surface: #252320;
+  --color-card: #302d2a;
+  --color-card-border: #433f3b;
+  --color-card-hover: #3a3734;
+  --color-text-primary: #f0eee9;
+  --color-text-secondary: #9e9890;
+  --color-text-tertiary: #65605a;
+  --color-text-muted: #7d7870;
+  --color-input-bg: #2a2825;
+  --color-row-separator: #3a3734;
+  --color-toggle-off: #504c48;
+  --color-toggle-on: #F0B723;
+  --color-btn-primary-bg: #f0eee9;
+  --color-btn-primary-text: #1a1a1a;
+  --color-btn-primary-hover: #dddbd6;
+  --color-btn-disabled-bg: #504c48;
+  --color-btn-disabled-text: #7d7870;
+  --color-segmented-bg: #252320;
+  --color-segmented-active: #302d2a;
+  --color-keybadge-bg: #3a3734;
+  --color-keybadge-text: #c0bbb5;
+  --color-scrollbar: #504c48;
+  --color-scrollbar-hover: #7d7870;
 }
 
 @layer base {
@@ -47,11 +96,11 @@
     background: transparent;
   }
   ::-webkit-scrollbar-thumb {
-    background: #D6D3D1;
+    background: var(--color-scrollbar);
     border-radius: 3px;
   }
   ::-webkit-scrollbar-thumb:hover {
-    background: #78716C;
+    background: var(--color-scrollbar-hover);
   }
 }
 
@@ -94,6 +143,9 @@
   .hover-lift:hover {
     transform: translateY(-2px);
     box-shadow: 0 8px 24px rgba(0,0,0,0.08);
+  }
+  .dark .hover-lift:hover {
+    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
   }
 
   /* Gradient text utility */

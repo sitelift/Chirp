@@ -29,12 +29,12 @@ export function AnnouncementBanner() {
   const announcement = announcements[0]
 
   return (
-    <div className="rounded-lg border border-chirp-amber-200 bg-chirp-amber-50 p-3 mb-4">
+    <div className="rounded-lg border border-chirp-amber-400/20 bg-chirp-amber-400/10 p-3 mb-4">
       <div className="flex items-start gap-2">
         <Info size={16} className="text-chirp-amber-500 mt-0.5 shrink-0" />
         <div className="flex-1 min-w-0">
-          <div className="text-[13px] font-medium text-chirp-stone-900">{announcement.title}</div>
-          <div className="text-[12px] text-chirp-stone-500 mt-0.5">{announcement.body}</div>
+          <div className="text-[13px] font-medium text-dm-primary">{announcement.title}</div>
+          <div className="text-[12px] text-dm-secondary mt-0.5">{announcement.body}</div>
         </div>
         <button
           onClick={() => dismiss(announcement.id)}

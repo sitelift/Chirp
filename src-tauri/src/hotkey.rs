@@ -1,14 +1,40 @@
+#[cfg(any(target_os = "macos", all(not(target_os = "macos"), not(target_os = "windows"))))]
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
-use tauri::{AppHandle, Emitter};
+#[cfg(target_os = "windows")]
+use std::sync::Arc;
+use tauri::AppHandle;
+#[cfg(any(target_os = "macos", all(not(target_os = "macos"), not(target_os = "windows"))))]
+use tauri::Emitter;
 
 #[cfg(target_os = "macos")]
 use crate::native_hotkey::{self, KeyAction};
 
 #[cfg(not(target_os = "macos"))]
 use rdev::{Event, EventType, Key};
+
+// ---------------------------------------------------------------------------
+// ActiveCombo — shared flag between Raw Input (detection) and LL hook
+// (suppression) on Windows. Raw Input writes; LL hook reads to decide whether
+// to swallow a key.
+// ---------------------------------------------------------------------------
+
+#[derive(Default)]
+pub struct ActiveCombo(AtomicBool);
+
+impl ActiveCombo {
+    pub fn new() -> Self {
+        Self(AtomicBool::new(false))
+    }
+    pub fn store(&self, v: bool) {
+        self.0.store(v, Ordering::SeqCst);
+    }
+    pub fn load(&self) -> bool {
+        self.0.load(Ordering::SeqCst)
+    }
+}
 
 // ---------------------------------------------------------------------------
 // CapturedKey — returned by capture_next_key()
@@ -331,10 +357,47 @@ pub fn start(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
 }
 
 // ===========================================================================
-// Non-macOS: use rdev (unchanged)
+// Windows: Raw Input detection + LL hook suppression (split architecture)
 // ===========================================================================
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(target_os = "windows")]
+pub fn start(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
+    stop();
+    SHUTDOWN.store(false, Ordering::SeqCst);
+
+    let combo = parse_hotkey(hotkey);
+    let modifier_only = is_modifier_only_combo(&combo);
+    let active_combo = Arc::new(ActiveCombo::new());
+
+    // Compute the VK set the LL hook should suppress. Modifier-only combos
+    // never suppress (would break Ctrl+C, etc.).
+    let vk_set: HashSet<u16> = if modifier_only {
+        HashSet::new()
+    } else {
+        combo.iter().filter_map(|id| crate::hotkey_raw_input::id_to_vk(id)).collect()
+    };
+
+    crate::hotkey_raw_input::start(
+        combo.clone(),
+        modifier_only,
+        app_handle,
+        active_combo.clone(),
+    )?;
+
+    if !modifier_only {
+        if let Err(e) = crate::hotkey_ll_suppress::start(vk_set, active_combo) {
+            log::warn!("LL suppression hook failed to start: {e} — detection still active, but keys will leak through to focused app");
+        }
+    }
+
+    Ok(())
+}
+
+// ===========================================================================
+// Linux (and any other non-macOS, non-Windows target): use rdev
+// ===========================================================================
+
+#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
 pub fn start(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
     stop();
     SHUTDOWN.store(false, Ordering::SeqCst);
@@ -403,7 +466,14 @@ pub fn start(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
             });
 
             if let Err(e) = grab_result {
-                log::warn!("rdev::grab failed ({e:?}), falling back to rdev::listen()");
+                log::error!(
+                    "rdev::grab failed: {:?} — hotkey suppression DISABLED, hotkey will leak through to active app. Falling back to passive listen mode.",
+                    e
+                );
+                let _ = app.emit(
+                    "hotkey-grab-failed",
+                    serde_json::json!({ "reason": format!("{:?}", e) }),
+                );
                 let _ = app.emit("hotkey-status", "accessibility_required");
 
                 let combo_for_listen = combo;
@@ -460,6 +530,12 @@ pub fn stop() {
 
     #[cfg(target_os = "macos")]
     native_hotkey::stop_run_loop();
+
+    #[cfg(target_os = "windows")]
+    {
+        crate::hotkey_raw_input::stop();
+        crate::hotkey_ll_suppress::stop();
+    }
 
     if let Ok(mut guard) = GRAB_THREAD.lock() {
         *guard = None;
@@ -520,6 +596,14 @@ pub async fn capture_next_key() -> Result<CapturedKey, String> {
 #[cfg(not(target_os = "macos"))]
 pub async fn capture_next_key() -> Result<CapturedKey, String> {
     SHUTDOWN.store(true, Ordering::SeqCst);
+
+    // Release Windows-specific listeners so the key we're about to capture
+    // isn't suppressed and doesn't double-fire via Raw Input.
+    #[cfg(target_os = "windows")]
+    {
+        crate::hotkey_raw_input::stop();
+        crate::hotkey_ll_suppress::stop();
+    }
 
     let (tx, rx) = tokio::sync::oneshot::channel::<CapturedKey>();
 

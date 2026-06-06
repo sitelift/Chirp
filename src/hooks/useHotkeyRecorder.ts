@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { invoke } from '@tauri-apps/api/core'
 import {
   addKeyToCapture,
@@ -16,10 +16,23 @@ export function useHotkeyRecorder() {
   const [capturing, setCapturing] = useState(false)
   const [pendingHotkey, setPendingHotkey] = useState<CapturedHotkey | null>(null)
   const [previewLabels, setPreviewLabels] = useState<string[]>([])
+  const [canConfirm, setCanConfirm] = useState(false)
+  const [isModifierOnly, setIsModifierOnly] = useState(false)
   const [systemCapturing, setSystemCapturing] = useState(false)
   const [showSystemHint, setShowSystemHint] = useState(false)
   const captureRef = useRef<StickyCapture>(createStickyCapture())
   const hintTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const setCapture = useCallback((capture: StickyCapture) => {
+    captureRef.current = capture
+    setPreviewLabels(getCaptureLabels(capture))
+    setCanConfirm(captureIsValid(capture))
+    setIsModifierOnly(captureIsModifierOnly(capture))
+  }, [])
+
+  const resetCapture = useCallback(() => {
+    setCapture(createStickyCapture())
+  }, [setCapture])
 
   useEffect(() => {
     if (!capturing) return
@@ -36,10 +49,9 @@ export function useHotkeyRecorder() {
 
       if (event.key === 'Escape') {
         setCapturing(false)
-        setPreviewLabels([])
         setPendingHotkey(null)
         setShowSystemHint(false)
-        captureRef.current = createStickyCapture()
+        resetCapture()
         return
       }
 
@@ -50,8 +62,7 @@ export function useHotkeyRecorder() {
       setShowSystemHint(false)
 
       const next = addKeyToCapture(captureRef.current, event)
-      captureRef.current = next
-      setPreviewLabels(getCaptureLabels(next))
+      setCapture(next)
     }
 
     const handleKeyUp = (event: KeyboardEvent) => {
@@ -70,15 +81,14 @@ export function useHotkeyRecorder() {
         hintTimerRef.current = null
       }
     }
-  }, [capturing])
+  }, [capturing, resetCapture, setCapture])
 
   const startCapture = () => {
     if (document.activeElement instanceof HTMLElement) {
       document.activeElement.blur()
     }
-    captureRef.current = createStickyCapture()
+    resetCapture()
     setCapturing(true)
-    setPreviewLabels([])
     setPendingHotkey(null)
     setShowSystemHint(false)
   }
@@ -89,8 +99,7 @@ export function useHotkeyRecorder() {
     try {
       const result = await invoke<{ code: string; label: string }>('capture_next_key')
       const next = addSystemKeyToCapture(captureRef.current, result.code)
-      captureRef.current = next
-      setPreviewLabels(getCaptureLabels(next))
+      setCapture(next)
     } catch {
       // Timeout or error — just go back to normal capture
     }
@@ -109,22 +118,17 @@ export function useHotkeyRecorder() {
 
   const cancelCapture = () => {
     setCapturing(false)
-    setPreviewLabels([])
     setPendingHotkey(null)
     setShowSystemHint(false)
-    captureRef.current = createStickyCapture()
+    resetCapture()
   }
 
   const clearPending = () => {
     setCapturing(false)
-    setPreviewLabels([])
     setPendingHotkey(null)
     setShowSystemHint(false)
-    captureRef.current = createStickyCapture()
+    resetCapture()
   }
-
-  const canConfirm = captureIsValid(captureRef.current)
-  const isModifierOnly = captureIsModifierOnly(captureRef.current)
 
   return {
     capturing,

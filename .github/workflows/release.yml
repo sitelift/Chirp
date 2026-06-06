@@ -52,7 +52,7 @@ jobs:
 
       - name: Download sherpa-onnx macOS dylibs
         run: |
-          SHERPA_VERSION="1.12.29"
+          SHERPA_VERSION="1.12.36"
           ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-osx-universal2-shared.tar.bz2"
           URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${ARCHIVE}"
 
@@ -104,6 +104,12 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # sherpa-onnx-sys 1.12.36's build script defaults to a flat
+          # <manifest>/sherpa-onnx-lib lookup; our dylibs live in the
+          # macos/ subdir so the build script panics with "No shared
+          # runtime libraries found" without this override. Our own
+          # build.rs already handles the subdir layout.
+          SHERPA_ONNX_LIB_DIR: ${{ github.workspace }}/src-tauri/sherpa-onnx-lib/macos
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "Chirp ${{ github.ref_name }}"
@@ -209,9 +215,14 @@ jobs:
 
       - name: Download sherpa-onnx Windows DLLs
         shell: bash
+        # MT (static CRT) build, not MD — MD requires the VC++ Redistributable
+        # on the user's machine, which causes 0xc0000142 on launch for users
+        # who don't have it (issue #6, confirmed by sherpa-onnx maintainer).
+        # MT statically links the C/C++ runtime so the installer is
+        # self-contained.
         run: |
-          SHERPA_VERSION="1.12.29"
-          ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-win-x64-shared-MD-Release"
+          SHERPA_VERSION="1.12.36"
+          ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-win-x64-shared-MT-Release"
           curl -fSL "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${ARCHIVE}.tar.bz2" -o sherpa.tar.bz2
           tar -xjf sherpa.tar.bz2
           cp ${ARCHIVE}/lib/*.dll src-tauri/sherpa-onnx-lib/

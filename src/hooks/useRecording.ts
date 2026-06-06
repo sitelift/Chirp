@@ -6,7 +6,7 @@ import { useTauri } from './useTauri'
 import { playCompletionSound } from '../lib/sounds'
 
 /**
- * Hold-to-record: hotkey press starts recording, release stops and processes.
+ * Hotkey recording: hold mode records until release; tap mode toggles recording.
  * Also supports toggle via tray menu.
  * Only runs in the overlay window.
  */
@@ -18,6 +18,7 @@ export function useRecording() {
   const busyRef = useRef(false)
   const busyTimestampRef = useRef(0)
   const pendingStopRef = useRef(false)
+  const lastTapAtRef = useRef(0)
 
   useEffect(() => {
     // Only handle recording in the overlay window
@@ -42,9 +43,33 @@ export function useRecording() {
       busyTimestampRef.current = busy ? Date.now() : 0
     }
 
-    // --- Hold-to-record: press to start ---
+    // --- Hotkey press: start in hold mode, toggle in tap mode ---
     listen('hotkey-pressed', async () => {
       checkBusyStale()
+      if (useAppStore.getState().hotkeyMode === 'tap') {
+        const now = Date.now()
+        if (now - lastTapAtRef.current < 250) return
+        lastTapAtRef.current = now
+        if (busyRef.current) return
+
+        const status = useAppStore.getState().status
+        setBusy(true)
+        try {
+          if (status === 'idle' || status === 'error' || status === 'done') {
+            if (status === 'error' || status === 'done') setStatus('idle')
+            setStatus('listening')
+            await tauri.startRecording()
+          } else if (status === 'listening') {
+            await stopAndProcess()
+          }
+        } catch (e) {
+          handleStartError(e)
+        } finally {
+          setBusy(false)
+        }
+        return
+      }
+
       if (busyRef.current) return
       const status = useAppStore.getState().status
       // Allow restarting from error/done states (don't wait for auto-dismiss)
@@ -77,6 +102,8 @@ export function useRecording() {
 
     // --- Hold-to-record: release to stop ---
     listen('hotkey-released', async () => {
+      if (useAppStore.getState().hotkeyMode === 'tap') return
+
       // If start is still in progress, queue the stop for when it finishes
       if (busyRef.current) {
         pendingStopRef.current = true
@@ -126,6 +153,7 @@ export function useRecording() {
         }
       } catch (e) {
         const errMsg = String(e)
+        if (import.meta.env.DEV) console.error('stopAndProcess error:', errMsg)
         if (errMsg.includes('transcription_failed')) {
           setError('transcription_failed')
         } else if (errMsg.includes('injection_failed')) {
@@ -138,6 +166,7 @@ export function useRecording() {
 
     function handleStartError(e: unknown) {
       const errMsg = String(e)
+      if (import.meta.env.DEV) console.error('startRecording error:', errMsg)
       if (errMsg.includes('model_not_loaded')) {
         setError('model_not_loaded')
       } else if (errMsg.includes('mic_not_found')) {

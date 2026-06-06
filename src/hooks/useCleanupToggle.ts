@@ -14,6 +14,12 @@ export function useCleanupToggle() {
   const [cleanupStarting, setCleanupStarting] = useState(false)
 
   const handleCleanupToggle = async (enabled: boolean) => {
+    if (enabled && !llmDownloaded) {
+      // Model not downloaded — show upgrade modal to trigger download
+      store.setUpgradeModalOpen(true)
+      return
+    }
+
     store.updateSettings({ aiCleanup: enabled })
     if (enabled && llmDownloaded && !store.llmReady) {
       setCleanupStarting(true)
@@ -21,7 +27,7 @@ export function useCleanupToggle() {
         await tauri.startLlm()
         store.setLlmReady(true)
       } catch (e) {
-        console.error('Failed to start LLM:', e)
+        if (import.meta.env.DEV) console.error('Failed to start LLM:', e)
       }
       setCleanupStarting(false)
     } else if (!enabled && store.llmReady) {
@@ -29,7 +35,7 @@ export function useCleanupToggle() {
         await tauri.stopLlm()
         store.setLlmReady(false)
       } catch (e) {
-        console.error('Failed to stop LLM:', e)
+        if (import.meta.env.DEV) console.error('Failed to stop LLM:', e)
       }
     }
   }

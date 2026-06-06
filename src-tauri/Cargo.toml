@@ -1,6 +1,6 @@
 [package]
 name = "chirp"
-version = "1.2.5"
+version = "1.3.4"
 description = "Free, local voice-to-text for everyone"
 authors = ["Pieter de Bruijn"]
 license-file = "../LICENSE"
@@ -29,7 +29,7 @@ log = "0.4"
 cpal = "0.15"
 rubato = "0.15"
 hound = "3.5"
-sherpa-onnx = "0.1.10"
+sherpa-onnx = { version = "1.12.36", default-features = false, features = ["shared"] }
 enigo = "0.6.1"
 tokio = { version = "1", features = ["sync", "time", "fs", "process"] }
 reqwest = { version = "0.12", features = ["stream", "json"] }
@@ -38,8 +38,8 @@ dirs = "5"
 regex = "1"
 tar = "0.4"
 bzip2 = "0.5"
-arboard = "3.6.1"
 chrono = { version = "0.4", features = ["serde"] }
+crossbeam-channel = "0.5"
 zip = "2"
 flate2 = "1"
 rodio = "0.19"
@@ -54,6 +54,18 @@ semver = "1"
 cocoa = "0.26"
 core-graphics = "0.24"
 objc = "0.2"
+arboard = "3.6.1"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_System_DataExchange",
+    "Win32_Foundation",
+    "Win32_System_Memory",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_Input",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_WindowsAndMessaging",
+] }
 
 [profile.release]
 opt-level = 3

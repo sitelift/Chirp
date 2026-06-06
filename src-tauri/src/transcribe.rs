@@ -9,7 +9,7 @@ use tar::Archive;
 use tauri::{AppHandle, Emitter};
 
 use crate::settings::models_dir;
-use crate::state::SherpaRecognizer;
+use crate::state::{SherpaRecognizer, VocabEntry};
 
 /// Model metadata: (archive name, download url, extracted dir name, size in bytes)
 fn model_info(model: &str) -> (&'static str, &'static str, &'static str, u64) {
@@ -41,20 +41,27 @@ pub fn model_exists(model: &str) -> bool {
     dir.join("tokens.txt").exists()
 }
 
-/// Load a sherpa-onnx offline recognizer from disk
-pub fn load_model(model: &str, beam_search: bool) -> Result<SherpaRecognizer, String> {
+/// Load a sherpa-onnx offline recognizer from disk.
+///
+/// `vocabulary` is the user's hotword list — proper nouns, technical terms,
+/// or any rare words the ASR should bias toward. It's baked into the
+/// recognizer at construction time as an Aho-Corasick contextual biasing
+/// automaton. Vocabulary changes require this function to be called again
+/// (i.e., the recognizer must be reloaded).
+///
+/// Hotwords ONLY take effect with `modified_beam_search` decoding. With
+/// greedy decoding, sherpa-onnx silently ignores them — we log a warning
+/// when this combination is requested.
+pub fn load_model(
+    model: &str,
+    beam_search: bool,
+    vocabulary: &[VocabEntry],
+) -> Result<SherpaRecognizer, String> {
     let dir = model_dir(model);
     if !dir.exists() {
         return Err(format!("Model directory not found: {}", dir.display()));
     }
 
-    // Find model files — Parakeet TDT uses transducer (encoder/decoder/joiner)
-    let encoder = find_model_file(&dir, "encoder")
-        .ok_or_else(|| "Encoder model file not found".to_string())?;
-    let decoder = find_model_file(&dir, "decoder")
-        .ok_or_else(|| "Decoder model file not found".to_string())?;
-    let joiner = find_model_file(&dir, "joiner")
-        .ok_or_else(|| "Joiner model file not found".to_string())?;
     let tokens = dir.join("tokens.txt");
     if !tokens.exists() {
         return Err("tokens.txt not found".to_string());
@@ -67,37 +74,103 @@ pub fn load_model(model: &str, beam_search: bool) -> Result<SherpaRecognizer, St
         .map(|n| (n.get() / 2).clamp(2, 6) as i32)
         .unwrap_or(4);
 
-    let decoding_method = if beam_search {
-        "modified_beam_search"
-    } else {
-        "greedy_search"
-    };
+    // Parakeet TDT uses transducer (encoder/decoder/joiner)
+    let encoder = find_model_file(&dir, "encoder")
+        .ok_or_else(|| "Encoder model file not found".to_string())?;
+    let decoder = find_model_file(&dir, "decoder")
+        .ok_or_else(|| "Decoder model file not found".to_string())?;
+    let joiner = find_model_file(&dir, "joiner")
+        .ok_or_else(|| "Joiner model file not found".to_string())?;
+
+    // Hotwords contextual biasing setup. Per sherpa-onnx docs, four config
+    // items must all be set at construction time for hotwords to take effect:
+    //   1. modeling_unit (BPE for Parakeet)
+    //   2. bpe_vocab (the model's BPE vocab file)
+    //   3. hotwords_file (one phrase per line, optional ":score" suffix)
+    //   4. hotwords_score (global boost, overridden by per-line scores)
+    let bpe_vocab_path = dir.join("bpe.vocab");
+    let hotwords_path = dir.join("hotwords.txt");
+
+    let vocab_filtered: Vec<&str> = vocabulary
+        .iter()
+        .map(|e| e.term.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
+
+    // Hotwords biasing only works with modified_beam_search. Passing a
+    // hotwords_file while decoding_method = greedy_search crashes
+    // sherpa-onnx (STATUS_ACCESS_VIOLATION) rather than being ignored, so
+    // we must actively suppress hotwords when beam_search is off.
+    let mut hotwords_active = false;
+    if !vocab_filtered.is_empty() && beam_search {
+        let mut content = String::new();
+        for term in &vocab_filtered {
+            content.push_str(term);
+            content.push('\n');
+        }
+        if let Err(e) = std::fs::write(&hotwords_path, content) {
+            log::warn!("Failed to write hotwords file: {e}");
+        } else {
+            hotwords_active = true;
+        }
+    }
+    if !hotwords_active && hotwords_path.exists() {
+        let _ = std::fs::remove_file(&hotwords_path);
+    }
+
+    let decoding_method = if beam_search { "modified_beam_search" } else { "greedy_search" };
+
+    if !vocab_filtered.is_empty() && !beam_search {
+        log::warn!(
+            "Vocabulary has {} terms but beam search is OFF — hotwords biasing disabled (requires modified_beam_search)",
+            vocab_filtered.len()
+        );
+    }
 
     log::info!(
-        "Loading Parakeet TDT model from {} with {} threads, decoding={}",
+        "Loading Parakeet TDT model from {} with {} threads, decoding={}, hotwords={} ({} terms)",
         dir.display(),
         n_threads,
         decoding_method,
+        if hotwords_active { "on" } else { "off" },
+        vocab_filtered.len(),
     );
 
-    let config = OfflineRecognizerConfig {
-        model_config: OfflineModelConfig {
-            transducer: OfflineTransducerModelConfig {
-                encoder: Some(encoder.to_string_lossy().into_owned()),
-                decoder: Some(decoder.to_string_lossy().into_owned()),
-                joiner: Some(joiner.to_string_lossy().into_owned()),
-            },
-            tokens: Some(tokens.to_string_lossy().into_owned()),
-            num_threads: n_threads,
-            provider: Some("cpu".to_string()),
-            debug: false,
-            ..Default::default()
+    let mut mc = OfflineModelConfig {
+        transducer: OfflineTransducerModelConfig {
+            encoder: Some(encoder.to_string_lossy().into_owned()),
+            decoder: Some(decoder.to_string_lossy().into_owned()),
+            joiner: Some(joiner.to_string_lossy().into_owned()),
         },
-        decoding_method: Some(decoding_method.to_string()),
-        max_active_paths: if beam_search { 8 } else { 4 },
+        tokens: Some(tokens.to_string_lossy().into_owned()),
+        num_threads: n_threads,
+        provider: Some("cpu".to_string()),
+        debug: false,
         ..Default::default()
     };
 
+    if hotwords_active && bpe_vocab_path.exists() {
+        mc.modeling_unit = Some("bpe".to_string());
+        mc.bpe_vocab = Some(bpe_vocab_path.to_string_lossy().into_owned());
+    } else if hotwords_active {
+        log::warn!(
+            "Hotwords requested but bpe.vocab not found at {} — biasing will not work",
+            bpe_vocab_path.display()
+        );
+    }
+
+    let config = OfflineRecognizerConfig {
+        model_config: mc,
+        decoding_method: Some(decoding_method.to_string()),
+        max_active_paths: if beam_search { 8 } else { 4 },
+        hotwords_file: if hotwords_active {
+            Some(hotwords_path.to_string_lossy().into_owned())
+        } else {
+            None
+        },
+        hotwords_score: if hotwords_active { 1.5 } else { 0.0 },
+        ..Default::default()
+    };
     OfflineRecognizer::create(&config)
         .map(SherpaRecognizer)
         .ok_or_else(|| "Failed to create sherpa-onnx recognizer — check model files".to_string())
@@ -225,7 +298,9 @@ pub async fn download_model(model: &str, app_handle: AppHandle) -> Result<(), St
     Ok(())
 }
 
-/// Run transcription on audio samples using sherpa-onnx
+/// Run transcription on audio samples using sherpa-onnx. Hotwords biasing is
+/// configured at recognizer construction time (see `load_model`) — there is
+/// no per-call hotword override.
 pub fn transcribe(
     recognizer: &SherpaRecognizer,
     audio: &[f32],
