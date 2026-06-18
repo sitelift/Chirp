@@ -358,6 +358,14 @@ pub fn run() {
                 }
             }
 
+            // Windows: make overlay click-through so it doesn't intercept scroll events
+            #[cfg(target_os = "windows")]
+            {
+                if let Some(overlay) = app.get_webview_window("overlay") {
+                    let _ = overlay.set_ignore_cursor_events(true);
+                }
+            }
+
             // Start the global hotkey listener
             {
                 let hotkey_handle = handle.clone();
