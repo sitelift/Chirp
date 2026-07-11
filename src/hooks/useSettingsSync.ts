@@ -8,11 +8,9 @@ import { useTauri } from './useTauri'
 // Settings keys that should be synced to the backend
 const SYNCED_KEYS = [
   'hotkey', 'launchAtLogin', 'playSoundOnComplete',
-  'autoDismissOverlay', 'smartFormatting',
+  'autoDismissOverlay',
   'inputDevice', 'model', 'onboardingComplete',
-  'aiCleanup',
   'beamSearch',
-  'toneMode',
   'overlayPosition',
   'showPassiveOverlay',
   'historyRetentionDays',
@@ -80,13 +78,7 @@ export function useSettingsSync() {
       }).catch((e) => console.error('Failed to get model status:', e))
     }
 
-    // Initialize LLM ready state from backend
-    tauri.getLlmStatus().then((status) => {
-      if (status.serverRunning) {
-        useAppStore.getState().setLlmReady(true)
-      }
-    }).catch((e) => console.error('Failed to get LLM status:', e))
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps -- one-time init
+    }, []) // eslint-disable-line react-hooks/exhaustive-deps -- one-time init
 
   // Always-active: sync store changes back to backend + listen for events.
   useEffect(() => {

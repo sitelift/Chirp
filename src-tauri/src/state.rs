@@ -39,19 +39,14 @@ pub struct Settings {
     pub launch_at_login: bool,
     pub play_sound_on_complete: bool,
     pub auto_dismiss_overlay: bool,
-    pub smart_formatting: bool,
     pub input_device: String,
     #[serde(alias = "whisperModel")]
     pub model: String,
     pub onboarding_complete: bool,
-    #[serde(default)]
-    pub ai_cleanup: bool,
     #[serde(default = "default_overlay_position")]
     pub overlay_position: String,
     #[serde(default = "default_true")]
     pub show_passive_overlay: bool,
-    #[serde(default = "default_tone_mode")]
-    pub tone_mode: String,
     #[serde(default)]
     pub history_retention_days: i64,
     #[serde(default)]
@@ -68,10 +63,6 @@ fn default_true() -> bool {
     true
 }
 
-fn default_tone_mode() -> String {
-    "message".into()
-}
-
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -79,14 +70,11 @@ impl Default for Settings {
             launch_at_login: true,
             play_sound_on_complete: false,
             auto_dismiss_overlay: true,
-            smart_formatting: true,
             input_device: "default".into(),
             model: "parakeet-tdt-0.6b".into(),
             onboarding_complete: false,
-            ai_cleanup: true,
             overlay_position: "bottom".into(),
             show_passive_overlay: true,
-            tone_mode: "message".into(),
             history_retention_days: 0,
             help_improve: false,
             beam_search: false,
@@ -122,8 +110,6 @@ pub struct TranscriptionResult {
     pub text: String,
     pub word_count: usize,
     pub duration_ms: u64,
-    #[serde(default)]
-    pub was_cleaned_up: bool,
 }
 
 /// Persisted transcription history entry
@@ -136,8 +122,6 @@ pub struct TranscriptionEntry {
     pub duration_ms: u64,
     #[serde(default)]
     pub speech_duration_ms: u64,
-    #[serde(default)]
-    pub was_cleaned_up: bool,
 }
 
 /// Model download/presence status
@@ -167,8 +151,6 @@ pub struct AppState {
     /// Recognizer is in its own Arc so transcription can proceed without holding
     /// the main state lock. The sherpa C API is thread-safe (Send+Sync).
     pub recognizer: Option<Arc<SherpaRecognizer>>,
-    pub llm_process: Option<tokio::process::Child>,
-    pub llm_port: Option<u16>,
 }
 
 impl AppState {
@@ -182,8 +164,6 @@ impl AppState {
             recording_generation: 0,
             hotkey_status: HotkeyStatus::Idle,
             recognizer: None,
-            llm_process: None,
-            llm_port: None,
         }
     }
 }

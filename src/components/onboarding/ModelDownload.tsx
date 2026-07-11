@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { listen } from '@tauri-apps/api/event'
 import { CheckCircle } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
-import { STT_MODELS, LLM_MODEL } from '../../lib/constants'
+import { STT_MODELS } from '../../lib/constants'
 import { Button } from '../shared/Button'
 
 interface ModelDownloadProps {
@@ -16,7 +16,7 @@ function formatElapsed(seconds: number): string {
   return `${m}:${s.toString().padStart(2, '0')}`
 }
 
-type Phase = 'checking' | 'stt' | 'stt-done' | 'llm' | 'llm-starting' | 'complete' | 'error'
+type Phase = 'checking' | 'stt' | 'stt-done' | 'complete' | 'error'
 
 export function ModelDownload({ onFinish }: ModelDownloadProps) {
   const store = useAppStore()
@@ -32,7 +32,7 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
 
   // Elapsed time counter
   useEffect(() => {
-    if (phase === 'stt' || phase === 'llm' || phase === 'llm-starting') {
+    if (phase === 'stt') {
       if (!timerRef.current) {
         setElapsed(0)
         timerRef.current = setInterval(() => setElapsed((e) => e + 1), 1000)
@@ -56,45 +56,6 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
     }
   }, [phase, onFinish])
 
-  const startLlmDownload = useCallback(async () => {
-    setPhase('llm')
-    try {
-      // Listen for LLM download progress
-      const unlisten = await listen<number>('llm-download-progress', (event) => {
-        const llmProgress = event.payload
-        setUnifiedProgress(Math.round(18 + llmProgress * 0.82))
-      })
-
-      try {
-        await tauri.downloadLlm()
-      } finally {
-        unlisten()
-      }
-
-      // LLM downloaded, start server
-      setPhase('llm-starting')
-      setUnifiedProgress(100)
-      store.updateSettings({ aiCleanup: true })
-
-      try {
-        const startPromise = tauri.startLlm()
-        const timeoutPromise = new Promise<never>((_, reject) =>
-          setTimeout(() => reject(new Error('LLM start timed out')), 30000)
-        )
-        await Promise.race([startPromise, timeoutPromise])
-        store.setLlmReady(true)
-      } catch {
-        // Non-fatal: LLM can be started later
-        try { await tauri.stopLlm() } catch { /* ignore */ }
-      }
-
-      setPhase('complete')
-    } catch {
-      setError('Smart Cleanup download failed. You can retry or continue without it.')
-      setPhase('stt-done')
-    }
-  }, [tauri, store])
-
   // Main download flow
   useEffect(() => {
     if (startedRef.current) return
@@ -102,34 +63,19 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
 
     const run = async () => {
       try {
-        // Check STT model status
         const sttDownloaded = store.modelDownloaded[store.model]
 
-        // Check LLM status
-        const llmStatus = await tauri.getLlmStatus()
-        const llmReady = llmStatus.binaryDownloaded && llmStatus.modelDownloaded
-
-        if (sttDownloaded && llmReady) {
+        if (sttDownloaded) {
           setUnifiedProgress(100)
           setPhase('complete')
           return
         }
 
-        if (sttDownloaded) {
-          // Skip STT, go to LLM
-          setUnifiedProgress(18)
-          setPhase('stt-done')
-          await startLlmDownload()
-          return
-        }
-
-        // Download STT first
         setPhase('stt')
         setUnifiedProgress(0)
 
         const unlisten = await listen<number>('model-download-progress', (event) => {
-          const sttProgress = event.payload
-          setUnifiedProgress(Math.round(sttProgress * 0.18))
+          setUnifiedProgress(event.payload)
         })
 
         try {
@@ -142,11 +88,8 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
           modelDownloaded: { ...store.modelDownloaded, [store.model]: true },
         })
 
-        setUnifiedProgress(18)
-        setPhase('stt-done')
-
-        // Start LLM download immediately
-        await startLlmDownload()
+        setUnifiedProgress(100)
+        setPhase('complete')
       } catch {
         setError('Download failed. Please check your internet connection.')
         setPhase('error')
@@ -156,7 +99,7 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
     run()
   }, []) // eslint-disable-line react-hooks/exhaustive-deps -- one-time init
 
-  const canContinue = phase === 'stt-done' || phase === 'llm' || phase === 'llm-starting' || phase === 'complete'
+  const canContinue = phase === 'complete'
 
   return (
     <div className="flex flex-col animate-fade-in">
@@ -165,7 +108,7 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
           <div className="flex items-center gap-2">
             <CheckCircle size={20} className="text-chirp-success" strokeWidth={1.5} />
             <h1 className="font-display font-extrabold text-2xl text-chirp-stone-900">
-              All models ready
+              Model ready
             </h1>
           </div>
           <p className="mt-2 font-body text-sm text-chirp-stone-500">
@@ -193,21 +136,13 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
                 {currentModel?.size}
               </span>
             </div>
-            <div className="flex items-center justify-between mt-1">
-              <span className="font-mono text-sm font-medium text-chirp-stone-700">
-                {LLM_MODEL.displayName} ({LLM_MODEL.name})
-              </span>
-              <span className="font-body text-sm text-chirp-stone-400">
-                {LLM_MODEL.friendlySize}
-              </span>
-            </div>
           </div>
           <p className="font-body text-xs text-chirp-stone-400 mt-2 px-1">
             One-time download, everything runs on your device
           </p>
 
           {/* Progress bar */}
-          {(phase === 'checking' || phase === 'stt' || phase === 'stt-done' || phase === 'llm' || phase === 'llm-starting') && (
+          {(phase === 'checking' || phase === 'stt' || phase === 'stt-done') && (
             <div className="mt-5">
               <div className="h-2 rounded-full bg-chirp-stone-200 overflow-hidden">
                 <div
@@ -220,32 +155,23 @@ export function ModelDownload({ onFinish }: ModelDownloadProps) {
               <div className="flex justify-between mt-2">
                 <span className="font-body text-sm text-chirp-stone-500">
                   {phase === 'checking'
-                    ? 'Checking models...'
+                    ? 'Checking model...'
                     : phase === 'stt'
                       ? `Downloading speech model... ${unifiedProgress}%`
                       : phase === 'stt-done'
-                        ? 'Basic transcription is ready!'
-                        : phase === 'llm'
-                          ? `Downloading Smart Cleanup... ${unifiedProgress}%`
-                          : phase === 'llm-starting'
-                            ? 'Starting Smart Cleanup...'
-                            : `${unifiedProgress}%`}
+                        ? 'Speech model ready!'
+                        : `${unifiedProgress}%`}
                 </span>
-                {(phase === 'stt' || phase === 'llm' || phase === 'llm-starting') && (
+                {phase === 'stt' && (
                   <span className="font-mono text-sm text-chirp-stone-400">
                     {formatElapsed(elapsed)} elapsed
                   </span>
                 )}
               </div>
 
-              {/* Ready message + continue button after STT */}
+              {/* Continue button */}
               {canContinue && (
                 <div className="mt-4">
-                  {phase === 'stt-done' && (
-                    <p className="font-body text-sm text-chirp-success mb-3">
-                      Basic transcription is ready!
-                    </p>
-                  )}
                   <Button size="onboarding" className="min-w-[160px] text-base" onClick={onFinish}>
                     Start using Chirp
                   </Button>

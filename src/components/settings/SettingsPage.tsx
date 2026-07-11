@@ -4,9 +4,7 @@ import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { useHotkeyRecorder } from '../../hooks/useHotkeyRecorder'
 import type { AudioDevice } from '../../hooks/useTauri'
-import { useCleanupToggle } from '../../hooks/useCleanupToggle'
-import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
-import { TONE_MODES, STT_MODELS, LLM_MODEL } from '../../lib/constants'
+import { STT_MODELS } from '../../lib/constants'
 import { formatHotkey } from '../../lib/utils'
 import { Toggle } from '../shared/Toggle'
 import { Select } from '../shared/Select'
@@ -128,13 +126,8 @@ export function SettingsPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const testIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // AI / LLM state
-  const { handleCleanupToggle, cleanupStarting, llmDownloaded } = useCleanupToggle()
-  const [, setLlmDownloaded] = useLlmDownloaded()
-
   // Model download state
   const [downloadError, setDownloadError] = useState<string | null>(null)
-  const [llmDownloadError, setLlmDownloadError] = useState<string | null>(null)
 
   const currentModel = STT_MODELS.find((m) => m.id === store.model)
   const isDownloaded = store.modelDownloaded[store.model]
@@ -242,31 +235,6 @@ export function SettingsPage() {
       setDownloadError('Download failed. Check your internet connection and try again.')
     } finally {
       store.setModelDownloadProgress(null)
-    }
-  }
-
-  const handleLlmDownload = async () => {
-    setLlmDownloadError(null)
-    store.setLlmDownloadProgress(0)
-    try {
-      await tauri.downloadLlm((progress) => {
-        store.setLlmDownloadProgress(progress)
-      })
-      setLlmDownloaded(true)
-
-      if (store.aiCleanup) {
-        try {
-          await tauri.startLlm()
-          store.setLlmReady(true)
-        } catch (e) {
-          console.error('Failed to start LLM after download:', e)
-        }
-      }
-    } catch (e) {
-      console.error('LLM download failed:', e)
-      setLlmDownloadError('Download failed. Check your internet connection and try again.')
-    } finally {
-      store.setLlmDownloadProgress(null)
     }
   }
 
@@ -489,71 +457,8 @@ export function SettingsPage() {
 
       {/* ── AI & OUTPUT ────────────────────────────── */}
       <div className="animate-slide-up stagger-3">
-        <SectionLabel>AI &amp; Output</SectionLabel>
+        <SectionLabel>Recognition</SectionLabel>
         <Card>
-          <Row>
-            <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Smart formatting</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Automatically format lists, paragraphs, and structure</div>
-            </div>
-            <Toggle
-              checked={store.smartFormatting}
-              onChange={(v) => store.updateSettings({ smartFormatting: v })}
-            />
-          </Row>
-
-          <Row>
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="text-[13px] font-medium text-[#1a1a1a]">Smart Cleanup</div>
-                {store.aiCleanup && (
-                  <span className="flex items-center gap-1">
-                    {cleanupStarting ? (
-                      <>
-                        <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
-                        <span className="text-[11px] text-[#aaa]">Getting ready...</span>
-                      </>
-                    ) : store.llmReady ? (
-                      <>
-                        <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                        <span className="text-[11px] text-[#aaa]">Active</span>
-                      </>
-                    ) : !llmDownloaded ? (
-                      <>
-                        <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400" />
-                        <span className="text-[11px] text-chirp-amber-500">Model needed</span>
-                      </>
-                    ) : null}
-                  </span>
-                )}
-              </div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Polish grammar and filler words with local AI</div>
-            </div>
-            <Toggle
-              checked={store.aiCleanup}
-              onChange={handleCleanupToggle}
-              disabled={cleanupStarting}
-            />
-          </Row>
-
-          {store.aiCleanup && (
-            <Row>
-              <div>
-                <div className="text-[13px] font-medium text-[#1a1a1a]">Tone</div>
-                <div className="text-[11px] text-[#aaa] mt-0.5">
-                  {TONE_MODES.find(m => m.id === store.toneMode)?.description}
-                </div>
-              </div>
-              <div className="w-[180px]">
-                <Select
-                  options={TONE_MODES.map(m => ({ value: m.id, label: m.label }))}
-                  value={store.toneMode}
-                  onChange={(v) => store.updateSettings({ toneMode: String(v) })}
-                />
-              </div>
-            </Row>
-          )}
-
           <Row last>
             <div>
               <div className="text-[13px] font-medium text-[#1a1a1a]">Enhanced Recognition</div>
@@ -651,7 +556,7 @@ export function SettingsPage() {
         <SectionLabel>Models</SectionLabel>
         <Card>
           {/* Speech model */}
-          <Row>
+          <Row last>
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <div className="text-[13px] font-medium text-[#1a1a1a]">{currentModel?.name}</div>
@@ -689,45 +594,7 @@ export function SettingsPage() {
             </div>
           </Row>
 
-          {/* LLM model */}
-          <Row last>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <div className="text-[13px] font-medium text-[#1a1a1a]">{LLM_MODEL.displayName} engine</div>
-                <span className="text-[11px] text-[#aaa]">{LLM_MODEL.friendlySize}</span>
-              </div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Polishes grammar and sentences locally</div>
-              <div className="text-[10px] text-chirp-stone-400 mt-0.5">{LLM_MODEL.attribution}</div>
-              {store.llmDownloadProgress !== null && (
-                <div className="mt-2">
-                  <div className="flex items-center gap-2">
-                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-[#F5F4F0]">
-                      <div
-                        className="h-full rounded-full bg-chirp-amber-400 transition-all duration-200"
-                        style={{ width: `${store.llmDownloadProgress}%` }}
-                      />
-                    </div>
-                    <span className="text-[11px] text-[#aaa]">{store.llmDownloadProgress}%</span>
-                  </div>
-                </div>
-              )}
-              {llmDownloadError && (
-                <p className="mt-1 text-[11px] text-chirp-error">{llmDownloadError}</p>
-              )}
-            </div>
-            <div className="ml-4">
-              {llmDownloaded ? (
-                <div className="flex items-center gap-1.5">
-                  <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                  <span className="text-[12px] text-[#888]">Ready</span>
-                </div>
-              ) : (
-                <Button onClick={handleLlmDownload} disabled={store.llmDownloadProgress !== null}>
-                  Download
-                </Button>
-              )}
-            </div>
-          </Row>
+          
         </Card>
       </div>
 

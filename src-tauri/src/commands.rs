@@ -3,7 +3,6 @@ use crate::cleanup;
 use crate::dictionary;
 use crate::history;
 use crate::inject;
-use crate::llm;
 use crate::settings;
 use crate::snippets;
 use crate::state::*;
@@ -405,17 +404,13 @@ pub async fn stop_recording(
     // Grab what we need from state before entering blocking thread.
     // Clone the Arc<SherpaRecognizer> so we can release the state lock
     // before the expensive transcription step.
-    let (recognizer, smart_fmt, dict, snips, ai_cleanup, llm_port, tone_mode) = {
+    let (recognizer, dict, snips) = {
         let s = state.lock().await;
         let rec = s.recognizer.clone().ok_or("model_not_loaded".to_string())?;
         (
             rec,
-            s.settings.smart_formatting,
             s.dictionary.clone(),
             s.snippets.clone(),
-            s.settings.ai_cleanup,
-            s.llm_port,
-            s.settings.tone_mode.clone(),
         )
     };
 
@@ -455,10 +450,9 @@ pub async fn stop_recording(
         }
 
         // Cleanup/formatting
-        let formatted = cleanup::cleanup_text(&raw, smart_fmt);
+        let formatted = cleanup::cleanup_text(&raw, true);
 
-        // Apply dictionary and snippet expansions BEFORE AI cleanup so the
-        // LLM doesn't alter trigger phrases (e.g. "my email" → "My E-mail").
+        // Apply dictionary and snippet expansions
         let after_dict = dictionary::apply_dictionary(&formatted, &dict);
         let after_snips = snippets::apply_snippets(&after_dict, &snips);
 
@@ -478,28 +472,7 @@ pub async fn stop_recording(
         }
     };
 
-    // AI cleanup pass (if enabled and server is running)
-    let mut was_cleaned_up = false;
-    let after_llm = if ai_cleanup && llm_port.is_some() {
-        let port = llm_port.unwrap();
-        let _ = app_handle.emit("recording-state", "polishing");
-        log::info!("Running AI cleanup on text...");
-        match llm::cleanup_text(port, &formatted, &tone_mode).await {
-            Ok(cleaned) => {
-                log::info!("LLM cleanup: '{cleaned}'");
-                was_cleaned_up = true;
-                cleaned
-            }
-            Err(e) => {
-                log::warn!("AI cleanup failed, using regex-only result: {e}");
-                formatted.clone()
-            }
-        }
-    } else {
-        formatted.clone()
-    };
-
-    let result = after_llm;
+    let result = formatted;
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
     let word_count = result.split_whitespace().count();
@@ -538,7 +511,6 @@ pub async fn stop_recording(
         word_count,
         duration_ms,
         speech_duration_ms,
-        was_cleaned_up,
     });
     // Cap in-memory history to 1000 entries (matches save_history cap)
     if s.history.len() > 1000 {
@@ -555,7 +527,6 @@ pub async fn stop_recording(
         let _ = app_handle.track_event("dictation_completed", Some(serde_json::json!({
             "duration_seconds": (duration_ms as f64 / 1000.0),
             "word_count": word_count,
-            "used_ai_cleanup": was_cleaned_up,
             "used_dictionary": had_dictionary,
         })));
     }
@@ -576,7 +547,6 @@ pub async fn stop_recording(
         text: result,
         word_count,
         duration_ms,
-        was_cleaned_up,
     })
 }
 
@@ -721,88 +691,6 @@ pub async fn test_microphone(
     buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
 
     Ok(wav_bytes)
-}
-
-// ── LLM commands ──────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn get_llm_status(
-    state: State<'_, SharedState>,
-) -> Result<llm::LlmStatus, String> {
-    let s = state.lock().await;
-    Ok(llm::LlmStatus {
-        binary_downloaded: llm::binary_exists(),
-        model_downloaded: llm::model_exists(),
-        server_running: s.llm_port.is_some(),
-    })
-}
-
-#[tauri::command]
-pub async fn download_llm(
-    app_handle: AppHandle,
-) -> Result<(), String> {
-    llm::download_binary(&app_handle).await?;
-    llm::download_model(&app_handle).await?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn start_llm(
-    state: State<'_, SharedState>,
-) -> Result<(), String> {
-    {
-        let s = state.lock().await;
-        if s.llm_port.is_some() {
-            return Ok(()); // Already running
-        }
-    }
-
-    // Pick a random port in the ephemeral range
-    let port = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| format!("Failed to find free port: {e}"))?;
-        listener.local_addr()
-            .map_err(|e| format!("Failed to get local address: {e}"))?
-            .port()
-    };
-
-    let child = llm::start_server(port).await?;
-
-    let mut s = state.lock().await;
-    if let Some(pid) = child.id() {
-        llm::save_server_pid(pid);
-    }
-    s.llm_process = Some(child);
-    s.llm_port = Some(port);
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn stop_llm(
-    state: State<'_, SharedState>,
-) -> Result<(), String> {
-    let mut s = state.lock().await;
-    if let Some(ref mut child) = s.llm_process {
-        llm::stop_server(child).await;
-    }
-    s.llm_process = None;
-    s.llm_port = None;
-    llm::clear_server_pid();
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn test_llm_cleanup(
-    text: String,
-    mode: Option<String>,
-    state: State<'_, SharedState>,
-) -> Result<String, String> {
-    let port = {
-        let s = state.lock().await;
-        s.llm_port.ok_or("LLM server is not running")?
-    };
-    llm::cleanup_text(port, &text, &mode.unwrap_or_else(|| "message".to_string())).await
 }
 
 #[tauri::command]

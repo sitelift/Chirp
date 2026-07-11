@@ -3,9 +3,7 @@ import { trackEvent } from '@aptabase/tauri'
 import { Search, Download, Trash2, Copy, BookOpen, Zap, ChevronDown, Clock, Mic, Type, Hash, AlertTriangle, Check } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
-import { useCleanupToggle } from '../../hooks/useCleanupToggle'
 import { useCountUp } from '../../hooks/useCountUp'
-import { TONE_MODES } from '../../lib/constants'
 import {
   formatRelativeTime,
   getWeekBarChartData,
@@ -14,8 +12,6 @@ import {
   groupHistoryByDay,
   formatDayLabel,
 } from '../../lib/utils'
-import { Toggle } from '../shared/Toggle'
-import { Select } from '../shared/Select'
 import { AnnouncementBanner } from './AnnouncementBanner'
 
 function getGreeting(): string {
@@ -28,7 +24,6 @@ function getGreeting(): string {
 export function HomePage() {
   const store = useAppStore()
   const tauri = useTauri()
-  const { handleCleanupToggle, cleanupStarting, llmDownloaded } = useCleanupToggle()
   const [copiedTimestamp, setCopiedTimestamp] = useState<string | null>(null)
   const [expandedTimestamp, setExpandedTimestamp] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -283,53 +278,6 @@ export function HomePage() {
 
       {/* Contextual Cards Row */}
       <div className="flex gap-[10px]">
-        {/* Smart Cleanup controls */}
-        <div className="flex-1 rounded-card border border-card-border bg-white p-4 hover-lift">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-[13px] font-semibold text-[#1a1a1a]">Smart Cleanup</span>
-              {store.aiCleanup && (
-                <span className="flex items-center gap-1">
-                  {cleanupStarting ? (
-                    <>
-                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
-                      <span className="text-[11px] text-[#aaa]">Starting...</span>
-                    </>
-                  ) : store.llmReady ? (
-                    <>
-                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                      <span className="text-[11px] text-[#aaa]">Active</span>
-                    </>
-                  ) : !llmDownloaded ? (
-                    <>
-                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400" />
-                      <span className="text-[11px] text-chirp-amber-500">Model needed</span>
-                    </>
-                  ) : null}
-                </span>
-              )}
-            </div>
-            <Toggle
-              checked={store.aiCleanup}
-              onChange={handleCleanupToggle}
-              disabled={cleanupStarting}
-            />
-          </div>
-          <p className="text-[11px] text-[#aaa] mb-3">Polish grammar and filler words with local AI</p>
-          {store.aiCleanup && (
-            <div className="flex items-center justify-between pt-3 border-t border-[#F5F4F0]">
-              <span className="text-[12px] text-[#888]">Tone</span>
-              <div className="w-[140px]">
-                <Select
-                  options={TONE_MODES.map(m => ({ value: m.id, label: m.label }))}
-                  value={store.toneMode}
-                  onChange={(v) => store.updateSettings({ toneMode: String(v) })}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* Quick-add dictionary/snippets */}
         <div className="flex-1 rounded-card border border-card-border bg-white p-4 hover-lift">
           {/* Tab header */}
@@ -499,9 +447,7 @@ export function HomePage() {
                           className={`p-[14px_16px] bg-white rounded-card border border-card-border flex items-start gap-3 cursor-pointer group transition-all duration-200 ${isExpanded ? 'shadow-[0_2px_12px_rgba(0,0,0,0.06)]' : 'hover-lift'}`}
                         >
                           {/* Left indicator bar */}
-                          <div className={`w-1 min-h-[36px] self-stretch rounded-sm flex-shrink-0 mt-0.5 ${
-                            entry.wasCleanedUp ? 'bg-gradient-to-b from-chirp-yellow to-[#F7D86C]' : 'bg-[#e5e5e5]'
-                          }`} />
+                          <div className={`w-1 min-h-[36px] self-stretch rounded-sm flex-shrink-0 mt-0.5 bg-[#e5e5e5]`} />
 
                           {/* Content */}
                           <div className="flex-1 min-w-0">
@@ -516,10 +462,6 @@ export function HomePage() {
                                 {wpm && <>
                                   <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
                                   <span className="text-[10px] text-[#888] font-medium bg-[#F5F4F0] px-2 py-[1px] rounded">{wpm} WPM</span>
-                                </>}
-                                {entry.wasCleanedUp && <>
-                                  <span className="text-[11px] text-[#e5e5e5]">&middot;</span>
-                                  <span className="text-[10px] text-[#D4A020] font-semibold bg-gradient-to-r from-[#FFF9E5] to-[#FEF3C7] px-2 py-[1px] rounded">Polished</span>
                                 </>}
                               </div>
                             )}

@@ -8,7 +8,6 @@ import { useRecording } from '../../hooks/useRecording'
 import { BirdMark } from '../shared/BirdMark'
 import { Listening } from './Listening'
 import { Processing } from './Processing'
-import { Polishing } from './Polishing'
 import { Done } from './Done'
 import { Error } from './Error'
 
@@ -102,7 +101,6 @@ export function Overlay() {
           <div className="animate-fade-in flex items-center">
             {status === 'listening' && <Listening />}
             {status === 'processing' && <Processing />}
-            {status === 'polishing' && <Polishing />}
             {status === 'done' && <Done />}
             {status === 'error' && <Error />}
           </div>

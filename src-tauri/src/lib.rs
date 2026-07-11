@@ -6,7 +6,6 @@ mod dictionary;
 mod feedback;
 mod history;
 mod inject;
-mod llm;
 mod hotkey;
 #[cfg(target_os = "macos")]
 mod native_hotkey;
@@ -49,10 +48,7 @@ pub fn run() {
                 // Drop breadcrumbs that may contain transcription text
                 if let Some(msg) = &breadcrumb.message {
                     let skip = [
-                        "After regex",
                         "Parakeet chunk",
-                        "LLM cleanup:",
-                        "After AI cleanup",
                         "clipboard",
                         "dictionary",
                     ];
@@ -146,11 +142,6 @@ pub fn run() {
             commands::get_history,
             commands::clear_history,
             commands::delete_history_entry,
-            commands::get_llm_status,
-            commands::download_llm,
-            commands::start_llm,
-            commands::stop_llm,
-            commands::test_llm_cleanup,
             commands::test_microphone,
             commands::get_snippets,
             commands::update_snippets,
@@ -211,51 +202,6 @@ pub fn run() {
                     "version": env!("CARGO_PKG_VERSION"),
                     "model_loaded": model_loaded,
                 })));
-            }
-
-            // Kill any stale llama-server from a previous crash (C2 fix)
-            llm::kill_stale_server();
-
-            // Auto-start LLM server if AI cleanup is enabled and files exist
-            {
-                let state = handle.state::<SharedState>();
-                let s = state.blocking_lock();
-                let ai_cleanup = s.settings.ai_cleanup;
-                drop(s);
-
-                if ai_cleanup && llm::binary_exists() && llm::model_exists() {
-                    let state_clone = handle.state::<SharedState>().inner().clone();
-                    tauri::async_runtime::spawn(async move {
-                        let port = match std::net::TcpListener::bind("127.0.0.1:0") {
-                            Ok(listener) => match listener.local_addr() {
-                                Ok(addr) => addr.port(),
-                                Err(e) => {
-                                    log::warn!("Failed to get local address for LLM: {e}");
-                                    return;
-                                }
-                            },
-                            Err(e) => {
-                                log::warn!("Failed to find free port for LLM: {e}");
-                                return;
-                            }
-                        };
-
-                        match llm::start_server(port).await {
-                            Ok(child) => {
-                                let mut s = state_clone.lock().await;
-                                if let Some(pid) = child.id() {
-                                    llm::save_server_pid(pid);
-                                }
-                                s.llm_process = Some(child);
-                                s.llm_port = Some(port);
-                                log::info!("LLM server auto-started on port {port}");
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to auto-start LLM server: {e}");
-                            }
-                        }
-                    });
-                }
             }
 
             // Build system tray
@@ -401,9 +347,7 @@ pub fn run() {
             match event {
                 tauri::RunEvent::Exit => {
                     hotkey::stop();
-                    llm::kill_stale_server();
-                    llm::clear_server_pid();
-                    log::info!("App exiting — cleaned up hotkey and LLM process");
+                    log::info!("App exiting — cleaned up hotkey");
                 }
                 #[cfg(target_os = "macos")]
                 tauri::RunEvent::Reopen { has_visible_windows, .. } => {

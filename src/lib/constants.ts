@@ -3,41 +3,19 @@ export const DEFAULT_SETTINGS = {
   launchAtLogin: true,
   playSoundOnComplete: false,
   autoDismissOverlay: true,
-  smartFormatting: true,
   inputDevice: 'default',
   model: 'parakeet-tdt-0.6b' as const,
   onboardingComplete: false,
-  aiCleanup: true,
   overlayPosition: 'bottom' as 'bottom' | 'top',
   showPassiveOverlay: true,
-  toneMode: 'message',
   historyRetentionDays: 0,
   helpImprove: false,
   beamSearch: false,
 }
 
-export const TONE_MODES = [
-  { id: 'message', label: 'Message', description: 'Natural conversational tone' },
-  { id: 'email', label: 'Email', description: 'Professional email formatting' },
-] as const
-
 export const STT_MODELS = [
   { id: 'parakeet-tdt-0.6b' as const, name: 'Parakeet TDT — NVIDIA', size: '465 MB', description: 'Best accuracy · 25 languages · fast on any PC', recommended: true },
 ]
-
-export const LLM_MODEL = {
-  name: 'Qwen 2.5 — Alibaba',
-  displayName: 'Smart Cleanup',
-  size: '2.1 GB',
-  friendlySize: 'About 2 GB',
-  description: 'Multilingual grammar correction (29 languages).',
-  attribution: 'Powered by Qwen 2.5 — Alibaba',
-}
-
-export const CLEANUP_EXAMPLE = {
-  before: "so um basically I was thinking that we should like probably move the meeting to uh Thursday if that works",
-  after: "I was thinking we should probably move the meeting to Thursday, if that works.",
-}
 
 export const ERROR_MESSAGES = {
   mic_not_found: {

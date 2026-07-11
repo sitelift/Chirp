@@ -40,7 +40,6 @@ tar = "0.4"
 bzip2 = "0.5"
 arboard = "3.6.1"
 chrono = { version = "0.4", features = ["serde"] }
-zip = "2"
 flate2 = "1"
 rodio = "0.19"
 tauri-plugin-dialog = "2"

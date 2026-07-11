@@ -149,13 +149,6 @@ export function useRecording() {
       }
     }
 
-    // Listen for polishing state from backend
-    listen<string>('recording-state', (event) => {
-      if (event.payload === 'polishing') {
-        setStatus('polishing')
-      }
-    }).then((fn) => unlisteners.push(fn))
-
     // Escape key to cancel/dismiss
     const handleKeyDown = async (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
