@@ -1,0 +1,101 @@
+{
+  "version": 1,
+  "files": [
+    {
+      "name": "sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8.tar.bz2",
+      "size": 487170055,
+      "sha256": "5793d0fd397c5778d2cf2126994d58e9d56b1be7c04d13c7a15bb1b4eafb16bf",
+      "group": "cpu",
+      "kind": "model-tar"
+    },
+    {
+      "name": "silero_vad.onnx",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx",
+      "size": 643854,
+      "sha256": "9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6",
+      "group": "vad",
+      "kind": "file"
+    },
+    {
+      "name": "sherpa-onnx-v1.12.36-cuda-12.x-cudnn-9.x-win-x64-cuda.tar.bz2",
+      "url": "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.36/sherpa-onnx-v1.12.36-cuda-12.x-cudnn-9.x-win-x64-cuda.tar.bz2",
+      "size": 385257787,
+      "sha256": "b0d99de972c223056803c88e17b7d3ccd1ae14d0477f72e76e974c178a13c2ae",
+      "group": "cuda",
+      "kind": "runtime-tar"
+    },
+    {
+      "name": "nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/20/e2/fc9a0e985249d873150276d5afb02e39a66817fedbf1a385724393e505ed/nvidia_cublas_cu12-12.9.2.10-py3-none-win_amd64.whl",
+      "size": 553162896,
+      "sha256": "623f43027d40d44ceadf0043f002bd25cf353e8f13ce90b9a87057019f560661",
+      "group": "cuda",
+      "kind": "runtime-zip"
+    },
+    {
+      "name": "nvidia_cudnn_cu12-9.27.0.42-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/aa/38/f856579877f7c1c5066e61182e7de7bc27bf35a78c8d1b0fa592e6985bc4/nvidia_cudnn_cu12-9.27.0.42-py3-none-win_amd64.whl",
+      "size": 743068852,
+      "sha256": "06e9b0026f3bad97d2b58666330fabec04fe1672f776661ecb0ce0029c27f142",
+      "group": "cuda",
+      "kind": "runtime-zip"
+    },
+    {
+      "name": "nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/59/df/e7c3a360be4f7b93cee39271b792669baeb3846c58a4df6dfcf187a7ffab/nvidia_cuda_runtime_cu12-12.9.79-py3-none-win_amd64.whl",
+      "size": 3591604,
+      "sha256": "8e018af8fa02363876860388bd10ccb89eb9ab8fb0aa749aaf58430a9f7c4891",
+      "group": "cuda",
+      "kind": "runtime-zip"
+    },
+    {
+      "name": "nvidia_cufft_cu12-11.4.1.4-py3-none-win_amd64.whl",
+      "url": "https://files.pythonhosted.org/packages/20/ee/29955203338515b940bd4f60ffdbc073428f25ef9bfbce44c9a066aedc5c/nvidia_cufft_cu12-11.4.1.4-py3-none-win_amd64.whl",
+      "size": 200067309,
+      "sha256": "8e5bfaac795e93f80611f807d42844e8e27e340e0cde270dcb6c65386d795b80",
+      "group": "cuda",
+      "kind": "runtime-zip"
+    },
+    {
+      "name": "encoder.onnx",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/1a468a35cbba69418f126de829e75261dea4a4e4/encoder.onnx",
+      "size": 41766257,
+      "sha256": "3eed7ce424bf8339ad09233533c687e2dbd07e74ccf5027b5e7344019ea373b0",
+      "group": "fp32",
+      "kind": "file"
+    },
+    {
+      "name": "encoder.weights",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/1a468a35cbba69418f126de829e75261dea4a4e4/encoder.weights",
+      "size": 2435420160,
+      "sha256": "3af3f51af5f2d01dbbf5af47d42c7962a2c205f11004254bb4f2b979862f39a8",
+      "group": "fp32",
+      "kind": "file"
+    },
+    {
+      "name": "decoder.onnx",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/1a468a35cbba69418f126de829e75261dea4a4e4/decoder.onnx",
+      "size": 47233743,
+      "sha256": "d593cdb0e571f5a457ec2219af9968cbf6b0e8198e8f7839b40a8754593bf68c",
+      "group": "fp32",
+      "kind": "file"
+    },
+    {
+      "name": "joiner.onnx",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/1a468a35cbba69418f126de829e75261dea4a4e4/joiner.onnx",
+      "size": 25286330,
+      "sha256": "b9b0bcf88ac571902e69a6536223ed2d94885e981b85045410f1403d53121a63",
+      "group": "fp32",
+      "kind": "file"
+    },
+    {
+      "name": "tokens.txt",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3/resolve/1a468a35cbba69418f126de829e75261dea4a4e4/tokens.txt",
+      "size": 93939,
+      "sha256": "d58544679ea4bc6ac563d1f545eb7d474bd6cfa467f0a6e2c1dc1c7d37e3c35d",
+      "group": "fp32",
+      "kind": "file"
+    }
+  ]
+}

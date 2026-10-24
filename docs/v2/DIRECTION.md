@@ -232,4 +232,16 @@ What stays is the bird mark (white bird on amber `#F0B723`), the lowercase "chir
 
 ## Open questions
 
-- CPU fallback for contributors without an NVIDIA GPU: supported, best-effort, or unsupported?
+None currently. CPU support was decided on 2026-10-24 (see below).
+
+## Shipping decision: CPU is supported (2026-10-24)
+
+Users without an NVIDIA GPU get Parakeet v3 int8 on CPU, with up to six threads
+(measured synthetic ASR p50 317.2 ms). NVIDIA users get v3 FP32/CUDA (98.6 ms).
+CPU is supported, not best-effort. The base installer ships the CPU runtime;
+the app installs int8 and VAD without manual setup. After CPU is ready, a usable
+NVIDIA driver triggers background, resumable, hash-pinned CUDA runtime and FP32
+downloads. GPU activates on the next restart/model load: Windows cannot safely
+replace an already-loaded ONNX runtime. A child probes CUDA; initialization and
+warmup failures persist CPU fallback until manual retry. Engine/progress IPC
+is available for the UI. Release steps: [RELEASING.md](RELEASING.md).

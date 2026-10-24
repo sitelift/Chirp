@@ -10,5 +10,8 @@ fn main() {
     };
     println!("cargo:rustc-link-search=native={}", lib_dir.display());
 
+    // Select the verified CPU/CUDA runtime before the first native call.
+    println!("cargo:rustc-link-lib=delayimp");
+    println!("cargo:rustc-link-arg=/DELAYLOAD:sherpa-onnx-c-api.dll");
     tauri_build::build()
 }

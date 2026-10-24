@@ -1266,11 +1266,6 @@ pub async fn download_model(
 ) -> Result<(), String> {
     transcribe::download_model(&model, app_handle.clone()).await?;
 
-    // Download Silero VAD model alongside (small, ~2MB)
-    if let Err(e) = settings::download_vad_model().await {
-        log::warn!("VAD model download failed (non-fatal): {e}");
-    }
-
     // Load the recognizer into app state immediately so recording works
     // without requiring a restart.
     let mut s = state.lock().await;
@@ -1279,6 +1274,7 @@ pub async fn download_model(
         .map_err(|e| format!("Model downloaded but failed to load: {e}"))?;
     s.recognizer = Some(Arc::new(recognizer));
     log::info!("Recognizer loaded after model download");
+    crate::downloads::background(app_handle);
 
     Ok(())
 }

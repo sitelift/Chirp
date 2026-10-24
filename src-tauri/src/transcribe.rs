@@ -1,12 +1,9 @@
-use bzip2::read::BzDecoder;
-use futures_util::StreamExt;
 use sherpa_onnx::{
     OfflineModelConfig, OfflineRecognizer, OfflineRecognizerConfig,
     OfflineTransducerModelConfig,
 };
 use std::path::PathBuf;
-use tar::Archive;
-use tauri::{AppHandle, Emitter};
+use tauri::AppHandle;
 
 use crate::settings::models_dir;
 use crate::state::{SherpaRecognizer, VocabEntry};
@@ -37,8 +34,7 @@ pub fn model_dir(model: &str) -> PathBuf {
 
 /// Check if a model exists on disk
 pub fn model_exists(model: &str) -> bool {
-    let dir = model_dir(model);
-    dir.join("tokens.txt").exists()
+    model_files_exist(&model_dir(model))
 }
 
 /// Load a sherpa-onnx offline recognizer from disk.
@@ -59,25 +55,27 @@ pub fn load_model(
 ) -> Result<SherpaRecognizer, String> {
     let requested = std::env::var("CHIRP_ASR_PROVIDER").unwrap_or_else(|_| "auto".into());
     if !matches!(requested.as_str(), "auto" | "cpu" | "cuda") { return Err("CHIRP_ASR_PROVIDER must be auto, cpu or cuda".into()); }
-    let fp32 = models_dir().join("sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3");
-    let fp32_ready = ["encoder.onnx", "encoder.weights", "decoder.onnx", "joiner.onnx", "tokens.txt"].iter().all(|f| fp32.join(f).exists());
-    let provider = if requested == "auto" { if fp32_ready && cuda_runtime_available() { "cuda" } else { "cpu" } } else { requested.as_str() };
-    let default_threads = if provider == "cuda" { 4 } else { std::thread::available_parallelism().map(|n| (n.get()/2).clamp(2,6) as i32).unwrap_or(4) };
-    let threads = std::env::var("CHIRP_ASR_THREADS").ok().and_then(|s| s.parse().ok()).unwrap_or(default_threads);
-    let dir = std::env::var_os("CHIRP_ASR_MODEL_DIR").map(PathBuf::from).unwrap_or_else(|| if provider == "cuda" && fp32_ready { fp32 } else { model_dir(model) });
-    let load_start = std::time::Instant::now();
-    let (rec, effective_provider) = match load_model_config(&dir, beam_search, vocabulary, provider, threads, false) {
-        Ok(rec) => (rec, provider),
-        Err(e) if provider == "cuda" => {
-            log::warn!("CUDA load failed ({e}); falling back to CPU int8");
-            (load_model_config(&model_dir(model), beam_search, vocabulary, "cpu", threads, false)?, "cpu")
-        }
-        Err(e) => return Err(e),
+    let cpu_threads = std::thread::available_parallelism().map(|n| n.get().clamp(1,6) as i32).unwrap_or(4);
+    let cpu_threads = std::env::var("CHIRP_ASR_THREADS").ok().and_then(|s| s.parse::<i32>().ok()).filter(|n| *n > 0).unwrap_or(cpu_threads);
+    let load = |dir: &std::path::Path, provider, threads| {
+        let start = std::time::Instant::now();
+        let rec = load_model_config(dir, beam_search, vocabulary, provider, threads, false)?;
+        log::info!("ASR {provider} load: {:.1}ms", start.elapsed().as_secs_f64()*1000.0);
+        let start = std::time::Instant::now();
+        transcribe(&rec, &vec![0.0; 16000])?;
+        log::info!("ASR {provider} warmup: {:.1}ms", start.elapsed().as_secs_f64()*1000.0);
+        Ok::<_,String>(rec)
     };
-    log::info!("ASR model load: {:.1}ms (requested={requested}, selected={effective_provider})", load_start.elapsed().as_secs_f64()*1000.0);
-    let start = std::time::Instant::now();
-    transcribe(&rec, &vec![0.0; 16000])?;
-    log::info!("ASR warmup: {:.1}ms", start.elapsed().as_secs_f64() * 1000.0);
+    if requested != "cpu" && crate::engine::gpu_runtime() {
+        crate::engine::remember_failure("CUDA model load/warmup did not finish")?;
+        match load(&crate::downloads::fp32_dir(), "cuda", 4) {
+            Ok(rec) => { crate::engine::warmed_gpu(); let _ = crate::cleanup::cleanup_text("warm up", true); return Ok(rec); }
+            Err(e) => { crate::engine::disable_gpu(&e); log::warn!("CUDA failed: {e}; using CPU int8"); }
+        }
+    }
+    let dir = std::env::var_os("CHIRP_ASR_MODEL_DIR").map(PathBuf::from).unwrap_or_else(|| model_dir(model));
+    let rec = load(&dir, "cpu", cpu_threads)?;
+    crate::engine::set_active("cpu");
     let _ = crate::cleanup::cleanup_text("warm up the deterministic cleanup", true);
     Ok(rec)
 }
@@ -210,25 +208,19 @@ pub fn load_model_config(dir: &std::path::Path, beam_search: bool, vocabulary: &
 /// Catch absent driver/runtime DLLs before constructing ONNX sessions. A native
 /// inference crash cannot be caught by Rust; incompatible models remain opt-in.
 pub fn cuda_runtime_available() -> bool {
-    use windows_sys::Win32::System::LibraryLoader::{LoadLibraryW, GetModuleHandleW, GetProcAddress};
-    use windows_sys::Win32::Foundation::FreeLibrary;
-    // A CPU rebuild may leave old CUDA dependency files beside the executable.
-    // Check the loaded ORT core too (the pinned CPU build lacks this export).
-    let ort_name: Vec<u16> = "onnxruntime.dll".encode_utf16().chain(Some(0)).collect();
-    let ort = unsafe { GetModuleHandleW(ort_name.as_ptr()) };
-    if ort.is_null() || unsafe { GetProcAddress(ort, b"OrtSessionOptionsAppendExecutionProvider_CUDA\0".as_ptr()) }.is_none() { return false; }
-    // ORT must initialize its shared provider host before loading the CUDA
-    // provider itself. Loading that DLL as a preflight can fail even on a
-    // working runtime; inspect its presence and probe only standalone deps.
-    let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_owned())) else { return false; };
-    if !exe_dir.join("onnxruntime_providers_cuda.dll").is_file() { return false; }
-    for name in ["nvcuda.dll", "cublasLt64_12.dll", "cublas64_12.dll", "cufft64_11.dll", "cudart64_12.dll", "cudnn64_9.dll"] {
-        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
-        let module = unsafe { LoadLibraryW(name.as_ptr()) };
-        if module.is_null() { return false; }
-        unsafe { FreeLibrary(module); }
+    if crate::engine::gpu_runtime() { return true; }
+    // Benchmarks use isolated DLLs beside their executable.
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleHandleW, GetProcAddress, LoadLibraryExW, LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR, LOAD_LIBRARY_SEARCH_DEFAULT_DIRS};
+    let name: Vec<u16> = "onnxruntime.dll".encode_utf16().chain(Some(0)).collect();
+    let mut ort = unsafe { GetModuleHandleW(name.as_ptr()) };
+    if ort.is_null() {
+        if let Ok(exe) = std::env::current_exe() {
+            use std::os::windows::ffi::OsStrExt;
+            let path: Vec<u16> = exe.parent().unwrap().join("onnxruntime.dll").as_os_str().encode_wide().chain(Some(0)).collect();
+            ort = unsafe { LoadLibraryExW(path.as_ptr(), std::ptr::null_mut(), LOAD_LIBRARY_SEARCH_DLL_LOAD_DIR | LOAD_LIBRARY_SEARCH_DEFAULT_DIRS) };
+        }
     }
-    true
+    !ort.is_null() && unsafe { GetProcAddress(ort, b"OrtSessionOptionsAppendExecutionProvider_CUDA\0".as_ptr()) }.is_some() && crate::engine::nvidia_available()
 }
 
 /// Find a model file matching a prefix (e.g. "encoder") with .onnx extension
@@ -242,113 +234,12 @@ fn find_model_file(dir: &std::path::Path, prefix: &str) -> Option<PathBuf> {
     Some(first)
 }
 
-/// Download a model archive and extract it
-pub async fn download_model(model: &str, app_handle: AppHandle) -> Result<(), String> {
-    let (archive_name, url, _, _) = model_info(model);
-    let sherpa_dir = models_dir().join("sherpa");
+pub fn model_files_exist(dir: &std::path::Path) -> bool {
+    dir.join("tokens.txt").is_file() && ["encoder", "decoder", "joiner"].iter().all(|p| find_model_file(dir,p).is_some_and(|f| std::fs::metadata(f).is_ok_and(|m|m.len()>0)))
+}
 
-    tokio::fs::create_dir_all(&sherpa_dir)
-        .await
-        .map_err(|e| format!("Failed to create models dir: {e}"))?;
-
-    let tmp_path = sherpa_dir.join(format!("{archive_name}.tmp"));
-    let archive_path = sherpa_dir.join(archive_name);
-
-    let client = reqwest::Client::new();
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("Download request failed: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("Download failed with status: {}", response.status()));
-    }
-
-    let total_size = response.content_length().unwrap_or(model_size_bytes(model));
-    let mut downloaded: u64 = 0;
-
-    let mut file = tokio::fs::File::create(&tmp_path)
-        .await
-        .map_err(|e| format!("Failed to create file: {e}"))?;
-
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| format!("Download error: {e}"))?;
-        tokio::io::AsyncWriteExt::write_all(&mut file, &chunk)
-            .await
-            .map_err(|e| format!("Write error: {e}"))?;
-
-        downloaded += chunk.len() as u64;
-        // Reserve last 5% for extraction
-        let progress = ((downloaded as f64 / total_size as f64) * 95.0).min(95.0) as u32;
-        let _ = app_handle.emit("model-download-progress", progress);
-    }
-
-    drop(file);
-
-    tokio::fs::rename(&tmp_path, &archive_path)
-        .await
-        .map_err(|e| format!("Failed to finalize download: {e}"))?;
-
-    // Extract the tar.bz2 archive
-    let _ = app_handle.emit("model-download-progress", 96u32);
-
-    let extract_dir = sherpa_dir.clone();
-    let archive_path_clone = archive_path.clone();
-    tokio::task::spawn_blocking(move || {
-        let file = std::fs::File::open(&archive_path_clone)
-            .map_err(|e| format!("Failed to open archive: {e}"))?;
-        let decompressor = BzDecoder::new(file);
-        let mut archive = Archive::new(decompressor);
-
-        // Manually iterate entries to validate paths (prevent directory traversal)
-        for entry in archive.entries().map_err(|e| format!("Failed to read tar: {e}"))? {
-            let mut entry = entry.map_err(|e| format!("Failed to read tar entry: {e}"))?;
-            let path = entry.path()
-                .map_err(|e| format!("Invalid tar path: {e}"))?
-                .to_path_buf();
-
-            // Reject paths with ".." components
-            if path.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
-                log::warn!("Skipping suspicious archive path: {}", path.display());
-                continue;
-            }
-
-            let full_path = extract_dir.join(&path);
-
-            if entry.header().entry_type().is_dir() {
-                std::fs::create_dir_all(&full_path)
-                    .map_err(|e| format!("Failed to create dir {}: {e}", path.display()))?;
-            } else if entry.header().entry_type().is_file() {
-                if let Some(parent) = full_path.parent() {
-                    std::fs::create_dir_all(parent)
-                        .map_err(|e| format!("Failed to create parent dir: {e}"))?;
-                }
-                let mut out = std::fs::File::create(&full_path)
-                    .map_err(|e| format!("Failed to create {}: {e}", path.display()))?;
-                std::io::copy(&mut entry, &mut out)
-                    .map_err(|e| format!("Failed to extract {}: {e}", path.display()))?;
-            }
-        }
-        Ok::<(), String>(())
-    })
-    .await
-    .map_err(|e| format!("Extract task failed: {e}"))??;
-
-    // Clean up the archive file
-    if let Err(e) = tokio::fs::remove_file(&archive_path).await {
-        log::warn!("Failed to clean up model archive: {e}");
-    }
-
-    // Verify critical model files were extracted
-    let extracted_dir = model_dir(model);
-    if !extracted_dir.join("tokens.txt").exists() {
-        return Err("Model extraction incomplete: tokens.txt missing".to_string());
-    }
-
-    let _ = app_handle.emit("model-download-progress", 100u32);
-    Ok(())
+pub async fn download_model(_model: &str, app_handle: AppHandle) -> Result<(), String> {
+    crate::downloads::cpu(Some(&app_handle)).await
 }
 
 /// Run transcription on audio samples using sherpa-onnx. Hotwords biasing is
