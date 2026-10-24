@@ -97,7 +97,7 @@ pub async fn update_settings(
     state: State<'_, SharedState>,
 ) -> Result<(), String> {
     let mut s = state.lock().await;
-    let old_hotkey = s.settings.hotkey.clone();
+    let old_hotkey = (s.settings.hold_binding.clone(), s.settings.toggle_binding.clone());
 
     // Merge partial into current settings
     let mut settings_val = serde_json::to_value(&s.settings).unwrap();
@@ -106,8 +106,13 @@ pub async fn update_settings(
             base.insert(k.clone(), v.clone());
         }
     }
-    s.settings =
-        serde_json::from_value(settings_val).map_err(|e| format!("Invalid settings: {e}"))?;
+    let mut updated: Settings = serde_json::from_value(settings_val).map_err(|e| format!("Invalid settings: {e}"))?;
+    for binding in [&mut updated.hold_binding, &mut updated.toggle_binding].into_iter().flatten() {
+        *binding = crate::hotkey::Binding::new(binding.keys.clone(), binding.suppress);
+    }
+    if let Some(b) = &updated.hold_binding { crate::hotkey::conflict(b, updated.toggle_binding.as_ref())?; }
+    if let Some(b) = &updated.toggle_binding { crate::hotkey::conflict(b, updated.hold_binding.as_ref())?; }
+    s.settings = updated;
     settings::save_settings(&s.settings)?;
 
     // If history retention changed, prune immediately
@@ -117,16 +122,13 @@ pub async fn update_settings(
     }
 
     // Broadcast settings change to all windows (cross-window sync)
-    let _ = app_handle.emit("settings-changed", &partial);
+    let _ = app_handle.emit("settings-changed", &s.settings);
 
     // Notify frontend to refresh history if retention changed
     if partial.get("historyRetentionDays").is_some() {
         let _ = app_handle.emit("history-changed", ());
     }
 
-    if partial.get("hotkeyMode").is_some() {
-        log::info!("Hotkey mode updated: {:?}", s.settings.hotkey_mode);
-    }
 
     // Sync autostart
     let autostart = app_handle.autolaunch();
@@ -162,12 +164,12 @@ pub async fn update_settings(
     }
 
     // Re-register hotkey if changed
-    if s.settings.hotkey != old_hotkey {
-        let new_hotkey = s.settings.hotkey.clone();
+    if (s.settings.hold_binding.clone(), s.settings.toggle_binding.clone()) != old_hotkey {
+        let new_hotkey = s.settings.clone();
         drop(s);
         match crate::hotkey::update(&new_hotkey, app_handle.clone()) {
             Ok(()) => {
-                log::info!("Re-registered hotkey: {new_hotkey}");
+                log::info!("Updated hotkey bindings");
                 let _ = app_handle.emit("hotkey-status", "active");
             }
             Err(e) => {
@@ -275,6 +277,7 @@ pub async fn get_input_level(buffer: State<'_, AudioBuffer>) -> Result<f32, Stri
 
 #[tauri::command]
 pub async fn start_recording(
+    hold: Option<bool>,
     app_handle: AppHandle,
     state: State<'_, SharedState>,
     buffer: State<'_, AudioBuffer>,
@@ -348,7 +351,7 @@ pub async fn start_recording(
 
     let mut s = state.lock().await;
 
-    trace.set_hold(matches!(s.settings.hotkey_mode, crate::state::HotkeyMode::Hold));
+    trace.set_hold(hold.unwrap_or(false));
     // Check model is loaded
     if s.recognizer.is_none() {
         return Err("model_not_loaded".into());
@@ -1205,15 +1208,20 @@ pub async fn get_hotkey_status(state: State<'_, SharedState>) -> Result<String, 
 // ── System-level key capture ──────────────────────────────────────────
 
 #[tauri::command]
-pub async fn capture_next_key(
+pub async fn record_binding(
     state: State<'_, crate::state::SharedState>,
-    app_handle: AppHandle,
-) -> Result<crate::hotkey::CapturedKey, String> {
-    let result = crate::hotkey::capture_next_key().await;
-    // Resume the main hotkey grab after capture
-    let s = state.lock().await;
-    let hotkey_str = s.settings.hotkey.clone();
-    drop(s);
-    let _ = crate::hotkey::start(&hotkey_str, app_handle);
-    result
+    target: String,
+) -> Result<crate::hotkey::Binding, String> {
+    let other = {
+        let s = state.lock().await;
+        match target.as_str() {
+            "hold" => s.settings.toggle_binding.clone(),
+            "toggle" => s.settings.hold_binding.clone(),
+            _ => return Err("Unknown binding target".into()),
+        }
+    };
+    crate::hotkey::record_binding(other).await
 }
+
+#[tauri::command]
+pub fn cancel_record_binding() -> Result<(), String> { crate::hotkey::cancel_record_binding() }

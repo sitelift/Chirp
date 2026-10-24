@@ -6,8 +6,8 @@ mod commands;
 mod context;
 mod history;
 mod hotkey;
-mod hotkey_ll_suppress;
-mod hotkey_raw_input;
+mod hotkey_input;
+mod hotkey_migration;
 mod inject;
 pub mod llm;
 mod settings;
@@ -95,7 +95,8 @@ pub fn run() {
             commands::update_snippets,
             commands::play_completion_sound,
             commands::get_hotkey_status,
-            commands::capture_next_key,
+            commands::record_binding,
+            commands::cancel_record_binding,
             commands::show_settings,
             commands::quit_app,
         ])
@@ -225,7 +226,7 @@ pub fn run() {
                 let hotkey_handle = handle.clone();
                 let state = handle.state::<SharedState>();
                 let s = state.blocking_lock();
-                let hotkey_str = s.settings.hotkey.clone();
+                let hotkey_str = s.settings.clone();
                 drop(s);
                 if let Err(e) = hotkey::start(&hotkey_str, hotkey_handle) {
                     log::error!("Failed to start hotkey listener: {e}");

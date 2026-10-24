@@ -30,27 +30,14 @@ pub enum HotkeyStatus {
     Failed,
 }
 
-/// How the global hotkey controls recording.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum HotkeyMode {
-    Hold,
-    Tap,
-}
-
-impl Default for HotkeyMode {
-    fn default() -> Self {
-        Self::Hold
-    }
-}
-
 /// User-facing app settings, persisted as JSON
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
-    pub hotkey: String,
-    #[serde(default)]
-    pub hotkey_mode: HotkeyMode,
+    #[serde(default = "crate::hotkey::default_hold")]
+    pub hold_binding: Option<crate::hotkey::Binding>,
+    #[serde(default = "crate::hotkey::default_toggle")]
+    pub toggle_binding: Option<crate::hotkey::Binding>,
     pub launch_at_login: bool,
     pub play_sound_on_complete: bool,
     pub auto_dismiss_overlay: bool,
@@ -82,8 +69,8 @@ fn default_true() -> bool {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            hotkey: "ControlLeft+ShiftLeft+Space".into(),
-            hotkey_mode: HotkeyMode::Hold,
+            hold_binding: crate::hotkey::default_hold(),
+            toggle_binding: crate::hotkey::default_toggle(),
             launch_at_login: true,
             play_sound_on_complete: false,
             auto_dismiss_overlay: true,

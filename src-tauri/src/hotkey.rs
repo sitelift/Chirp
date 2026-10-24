@@ -1,306 +1,282 @@
-use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
-use tauri::AppHandle;
+//! Physical bindings and pure matching. All live input state belongs to hotkey_input.
+use serde::{Deserialize, Serialize};
+use windows_sys::Win32::UI::Input::KeyboardAndMouse::*;
 
-use rdev::{Event, EventType, Key};
-
-// ---------------------------------------------------------------------------
-// ActiveCombo — shared flag between Raw Input (detection) and LL hook
-// (suppression) on Windows. Raw Input writes; LL hook reads to decide whether
-// to swallow a key.
-// ---------------------------------------------------------------------------
-
-#[derive(Default)]
-pub struct ActiveCombo(AtomicBool);
-
-impl ActiveCombo {
-    pub fn new() -> Self {
-        Self(AtomicBool::new(false))
-    }
-    pub fn store(&self, v: bool) {
-        self.0.store(v, Ordering::SeqCst);
-    }
-    pub fn load(&self) -> bool {
-        self.0.load(Ordering::SeqCst)
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct Key {
+    pub scan: u16,
+    pub extended: bool,
+    pub vk: u16,
+}
+// VK is metadata, except for scan-less keys (media keys, mouse side buttons).
+impl PartialEq for Key {
+    fn eq(&self, other: &Self) -> bool {
+        self.scan == other.scan
+            && self.extended == other.extended
+            && (self.scan != 0 || self.vk == other.vk)
     }
 }
-
-// ---------------------------------------------------------------------------
-// CapturedKey — returned by capture_next_key()
-// ---------------------------------------------------------------------------
-
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct CapturedKey {
-    pub code: String,
-    pub label: String,
-}
-
-/// Modifier key identifiers — combos consisting entirely of these are never
-/// suppressed so that e.g. Ctrl alone as a hotkey doesn't break Ctrl+C.
-const MODIFIERS: &[&str] = &[
-    "ControlLeft",
-    "ControlRight",
-    "ShiftLeft",
-    "ShiftRight",
-    "Alt",
-    "AltGr",
-    "MetaLeft",
-    "MetaRight",
-    "Fn",
-];
-
-// ---------------------------------------------------------------------------
-// Key mapping (rdev Key -> string id, used by capture_next_key)
-// ---------------------------------------------------------------------------
-
-pub fn key_to_id(key: &Key) -> String {
-    match key {
-        Key::KeyA => "KeyA".into(),
-        Key::KeyB => "KeyB".into(),
-        Key::KeyC => "KeyC".into(),
-        Key::KeyD => "KeyD".into(),
-        Key::KeyE => "KeyE".into(),
-        Key::KeyF => "KeyF".into(),
-        Key::KeyG => "KeyG".into(),
-        Key::KeyH => "KeyH".into(),
-        Key::KeyI => "KeyI".into(),
-        Key::KeyJ => "KeyJ".into(),
-        Key::KeyK => "KeyK".into(),
-        Key::KeyL => "KeyL".into(),
-        Key::KeyM => "KeyM".into(),
-        Key::KeyN => "KeyN".into(),
-        Key::KeyO => "KeyO".into(),
-        Key::KeyP => "KeyP".into(),
-        Key::KeyQ => "KeyQ".into(),
-        Key::KeyR => "KeyR".into(),
-        Key::KeyS => "KeyS".into(),
-        Key::KeyT => "KeyT".into(),
-        Key::KeyU => "KeyU".into(),
-        Key::KeyV => "KeyV".into(),
-        Key::KeyW => "KeyW".into(),
-        Key::KeyX => "KeyX".into(),
-        Key::KeyY => "KeyY".into(),
-        Key::KeyZ => "KeyZ".into(),
-        Key::Num0 => "Digit0".into(),
-        Key::Num1 => "Digit1".into(),
-        Key::Num2 => "Digit2".into(),
-        Key::Num3 => "Digit3".into(),
-        Key::Num4 => "Digit4".into(),
-        Key::Num5 => "Digit5".into(),
-        Key::Num6 => "Digit6".into(),
-        Key::Num7 => "Digit7".into(),
-        Key::Num8 => "Digit8".into(),
-        Key::Num9 => "Digit9".into(),
-        Key::F1 => "F1".into(),
-        Key::F2 => "F2".into(),
-        Key::F3 => "F3".into(),
-        Key::F4 => "F4".into(),
-        Key::F5 => "F5".into(),
-        Key::F6 => "F6".into(),
-        Key::F7 => "F7".into(),
-        Key::F8 => "F8".into(),
-        Key::F9 => "F9".into(),
-        Key::F10 => "F10".into(),
-        Key::F11 => "F11".into(),
-        Key::F12 => "F12".into(),
-        Key::ControlLeft => "ControlLeft".into(),
-        Key::ControlRight => "ControlRight".into(),
-        Key::ShiftLeft => "ShiftLeft".into(),
-        Key::ShiftRight => "ShiftRight".into(),
-        Key::Alt => "Alt".into(),
-        Key::AltGr => "AltGr".into(),
-        Key::MetaLeft => "MetaLeft".into(),
-        Key::MetaRight => "MetaRight".into(),
-        Key::Function => "Fn".into(),
-        Key::UpArrow => "ArrowUp".into(),
-        Key::DownArrow => "ArrowDown".into(),
-        Key::LeftArrow => "ArrowLeft".into(),
-        Key::RightArrow => "ArrowRight".into(),
-        Key::Home => "Home".into(),
-        Key::End => "End".into(),
-        Key::PageUp => "PageUp".into(),
-        Key::PageDown => "PageDown".into(),
-        Key::Backspace => "Backspace".into(),
-        Key::Return => "Enter".into(),
-        Key::Space => "Space".into(),
-        Key::Tab => "Tab".into(),
-        Key::Escape => "Escape".into(),
-        Key::Delete => "Delete".into(),
-        Key::Insert => "Insert".into(),
-        Key::CapsLock => "CapsLock".into(),
-        Key::BackQuote => "Backquote".into(),
-        Key::Minus => "Minus".into(),
-        Key::Equal => "Equal".into(),
-        Key::LeftBracket => "BracketLeft".into(),
-        Key::RightBracket => "BracketRight".into(),
-        Key::SemiColon => "Semicolon".into(),
-        Key::Quote => "Quote".into(),
-        Key::BackSlash => "Backslash".into(),
-        Key::IntlBackslash => "IntlBackslash".into(),
-        Key::Comma => "Comma".into(),
-        Key::Dot => "Period".into(),
-        Key::Slash => "Slash".into(),
-        Key::PrintScreen => "PrintScreen".into(),
-        Key::ScrollLock => "ScrollLock".into(),
-        Key::Pause => "Pause".into(),
-        Key::NumLock => "NumLock".into(),
-        Key::Kp0 => "Numpad0".into(),
-        Key::Kp1 => "Numpad1".into(),
-        Key::Kp2 => "Numpad2".into(),
-        Key::Kp3 => "Numpad3".into(),
-        Key::Kp4 => "Numpad4".into(),
-        Key::Kp5 => "Numpad5".into(),
-        Key::Kp6 => "Numpad6".into(),
-        Key::Kp7 => "Numpad7".into(),
-        Key::Kp8 => "Numpad8".into(),
-        Key::Kp9 => "Numpad9".into(),
-        Key::KpReturn => "NumpadEnter".into(),
-        Key::KpMinus => "NumpadSubtract".into(),
-        Key::KpPlus => "NumpadAdd".into(),
-        Key::KpMultiply => "NumpadMultiply".into(),
-        Key::KpDivide => "NumpadDivide".into(),
-        Key::KpDelete => "NumpadDecimal".into(),
-        Key::Unknown(code) => format!("Unknown_{code}"),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Label mapping: identifier -> human-readable display label
-// ---------------------------------------------------------------------------
-
-pub fn id_to_label(id: &str) -> String {
-    match id {
-        "ControlLeft" | "ControlRight" => "Ctrl".into(),
-        "ShiftLeft" | "ShiftRight" => "Shift".into(),
-        "Alt" => "Alt".into(),
-        "AltGr" => "AltGr".into(),
-        "MetaLeft" | "MetaRight" => "Win".into(),
-        "Fn" => "fn".into(),
-        s if s.starts_with("Key") && s.len() == 4 => s[3..].into(),
-        s if s.starts_with("Digit") && s.len() == 6 => s[5..].into(),
-        "ArrowUp" => "Up".into(),
-        "ArrowDown" => "Down".into(),
-        "ArrowLeft" => "Left".into(),
-        "ArrowRight" => "Right".into(),
-        "Backquote" => "`".into(),
-        "Minus" => "-".into(),
-        "Equal" => "=".into(),
-        "BracketLeft" => "[".into(),
-        "BracketRight" => "]".into(),
-        "Semicolon" => ";".into(),
-        "Quote" => "'".into(),
-        "Backslash" => "\\".into(),
-        "IntlBackslash" => "\\".into(),
-        "Comma" => ",".into(),
-        "Period" => ".".into(),
-        "Slash" => "/".into(),
-        other => other.into(),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Parse a hotkey string like "ControlLeft+ShiftLeft+KeyA" into a set of ids.
-// ---------------------------------------------------------------------------
-
-fn parse_hotkey(hotkey: &str) -> HashSet<String> {
-    hotkey.split('+').map(|s| s.trim().to_string()).collect()
-}
-
-fn is_modifier_only_combo(combo: &HashSet<String>) -> bool {
-    combo.iter().all(|k| MODIFIERS.contains(&k.as_str()))
-}
-
-// ===========================================================================
-// start(): Raw Input detection + LL hook suppression (split architecture)
-// ===========================================================================
-
-pub fn start(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
-    stop();
-
-    let combo = parse_hotkey(hotkey);
-    let modifier_only = is_modifier_only_combo(&combo);
-    let active_combo = Arc::new(ActiveCombo::new());
-
-    // Compute the VK set the LL hook should suppress. Modifier-only combos
-    // never suppress (would break Ctrl+C, etc.).
-    let vk_set: HashSet<u16> = if modifier_only {
-        HashSet::new()
-    } else {
-        combo.iter().filter_map(|id| crate::hotkey_raw_input::id_to_vk(id)).collect()
-    };
-
-    crate::hotkey_raw_input::start(
-        combo.clone(),
-        modifier_only,
-        app_handle,
-        active_combo.clone(),
-    )?;
-
-    if !modifier_only {
-        if let Err(e) = crate::hotkey_ll_suppress::start(vk_set, active_combo) {
-            log::warn!("LL suppression hook failed to start: {e} — detection still active, but keys will leak through to focused app");
+impl Eq for Key {}
+impl Key {
+    pub fn from_vk(vk: u16) -> Self {
+        if vk == VK_PAUSE {
+            return Self {
+                scan: 0x45,
+                extended: false,
+                vk,
+            };
+        }
+        let scan = unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC_EX) };
+        Self {
+            scan: (scan & 0xff) as u16,
+            extended: scan & 0xff00 != 0,
+            vk,
         }
     }
+    pub fn modifier(self) -> bool {
+        matches!(
+            self.vk,
+            VK_LCONTROL
+                | VK_RCONTROL
+                | VK_LSHIFT
+                | VK_RSHIFT
+                | VK_LMENU
+                | VK_RMENU
+                | VK_LWIN
+                | VK_RWIN
+        )
+    }
+    pub fn label(self) -> String {
+        if self.scan == 0 && matches!(self.vk, VK_XBUTTON1 | VK_XBUTTON2) {
+            return format!("Mouse {}", if self.vk == VK_XBUTTON1 { 4 } else { 5 });
+        }
+        let mut buf = [0u16; 128];
+        let param = ((self.scan as i32) << 16) | ((self.extended as i32) << 24);
+        let len = unsafe { GetKeyNameTextW(param, buf.as_mut_ptr(), buf.len() as i32) };
+        let name = if len > 0 {
+            String::from_utf16_lossy(&buf[..len as usize])
+        } else {
+            format!("VK {:02X}", self.vk)
+        };
+        // GetKeyNameText does not distinguish both Shift keys on every layout.
+        match self.vk {
+            VK_LCONTROL | VK_LSHIFT | VK_LMENU | VK_LWIN => {
+                format!("Left {}", name.strip_prefix("Left ").unwrap_or(&name))
+            }
+            VK_RCONTROL | VK_RSHIFT | VK_RMENU | VK_RWIN => {
+                format!("Right {}", name.strip_prefix("Right ").unwrap_or(&name))
+            }
+            _ => name,
+        }
+    }
+}
 
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Binding {
+    pub keys: Vec<Key>,
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub suppress: bool,
+}
+impl Binding {
+    pub fn new(mut keys: Vec<Key>, suppress: bool) -> Self {
+        keys.sort_by_key(|k| (!k.modifier(), k.vk, k.scan, k.extended));
+        keys.dedup();
+        let label = keys
+            .iter()
+            .map(|k| k.label())
+            .collect::<Vec<_>>()
+            .join(" + ");
+        let suppress = suppress && !keys.iter().all(|k| k.modifier());
+        Self {
+            keys,
+            label,
+            suppress,
+        }
+    }
+    pub fn same_keys(&self, other: &Self) -> bool {
+        self.keys.len() == other.keys.len() && self.keys.iter().all(|k| other.keys.contains(k))
+    }
+    pub fn suppresses(&self) -> bool {
+        self.suppress && self.keys.iter().any(|k| !k.modifier())
+    }
+}
+pub fn matches(binding: &Binding, held: &[Key]) -> bool {
+    !binding.keys.is_empty()
+        && binding.keys.iter().all(|k| held.contains(k))
+        && held
+            .iter()
+            .filter(|k| k.modifier())
+            .all(|k| binding.keys.contains(k))
+}
+pub fn default_hold() -> Option<Binding> {
+    Some(Binding::new(vec![Key::from_vk(VK_RCONTROL)], false))
+}
+pub fn default_toggle() -> Option<Binding> {
+    Some(Binding::new(
+        vec![Key::from_vk(VK_LCONTROL), Key::from_vk(VK_LWIN)],
+        false,
+    ))
+}
+
+pub fn conflict(binding: &Binding, other: Option<&Binding>) -> Result<(), String> {
+    if binding
+        .keys
+        .iter()
+        .any(|k| k.vk == 0 || k.vk > 255 || k.scan > 255)
+    {
+        return Err("Invalid physical key".into());
+    }
+    if binding.keys.is_empty() || binding.keys.len() > 16 {
+        return Err("Choose between 1 and 16 keys".into());
+    }
+    if other.is_some_and(|b| b.same_keys(binding)) {
+        return Err("Already assigned to the other binding".into());
+    }
+    let has = |vk| binding.keys.iter().any(|k| k.vk == vk);
+    let win = has(VK_LWIN) || has(VK_RWIN);
+    let ctrl = has(VK_LCONTROL) || has(VK_RCONTROL);
+    let alt = has(VK_LMENU) || has(VK_RMENU);
+    let shift = has(VK_LSHIFT) || has(VK_RSHIFT);
+    if (win
+        && [
+            0x4c, 0x44, 0x45, 0x52, 0x49, VK_TAB, VK_SPACE, VK_UP, VK_DOWN, VK_LEFT, VK_RIGHT,
+        ]
+        .iter()
+        .any(|v| has(*v)))
+        || (alt && (has(VK_TAB) || has(VK_ESCAPE) || has(VK_F4)))
+        || (ctrl && alt && has(VK_DELETE))
+        || (ctrl && has(VK_ESCAPE))
+        || (ctrl && shift && has(VK_ESCAPE))
+    {
+        return Err("This combination is a reserved system shortcut".into());
+    }
     Ok(())
 }
+pub use crate::hotkey_input::{cancel_record_binding, record_binding, start, stop, update};
 
-// ---------------------------------------------------------------------------
-// stop()
-// ---------------------------------------------------------------------------
-
-pub fn stop() {
-
-    crate::hotkey_raw_input::stop();
-    crate::hotkey_ll_suppress::stop();
-}
-
-// ---------------------------------------------------------------------------
-// update()
-// ---------------------------------------------------------------------------
-
-pub fn update(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
-    stop();
-    std::thread::sleep(std::time::Duration::from_millis(100));
-    start(hotkey, app_handle)
-}
-
-// ---------------------------------------------------------------------------
-// capture_next_key() — rdev listen
-// ---------------------------------------------------------------------------
-
-pub async fn capture_next_key() -> Result<CapturedKey, String> {
-
-    // Release the Raw Input / LL hook listeners so the key we're about to
-    // capture isn't suppressed and doesn't double-fire.
-    crate::hotkey_raw_input::stop();
-    crate::hotkey_ll_suppress::stop();
-
-    let (tx, rx) = tokio::sync::oneshot::channel::<CapturedKey>();
-
-    std::thread::Builder::new()
-        .name("hotkey-capture".into())
-        .spawn(move || {
-            let tx = std::sync::Mutex::new(Some(tx));
-
-            let _ = rdev::listen(move |event: Event| {
-                if let EventType::KeyPress(k) = event.event_type {
-                    let id = key_to_id(&k);
-                    let label = id_to_label(&id);
-                    if let Ok(mut guard) = tx.lock() {
-                        if let Some(sender) = guard.take() {
-                            let _ = sender.send(CapturedKey { code: id, label });
-                        }
-                    }
-                }
-            });
-        })
-        .map_err(|e| format!("Failed to spawn capture thread: {e}"))?;
-
-    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
-        Ok(Ok(key)) => Ok(key),
-        Ok(Err(_)) => Err("Capture channel closed unexpectedly".into()),
-        Err(_) => Err("Hotkey capture timed out after 10 seconds".into()),
+#[cfg(test)]
+mod tests {
+    use super::*;
+    fn binding(vks: &[u16]) -> Binding {
+        Binding::new(vks.iter().copied().map(Key::from_vk).collect(), true)
+    }
+    #[test]
+    fn extra_non_modifiers_do_not_block_but_other_modifiers_do() {
+        let b = binding(&[VK_RCONTROL]);
+        assert!(matches(
+            &b,
+            &[Key::from_vk(VK_RCONTROL), Key::from_vk(0x41)]
+        ));
+        assert!(!matches(
+            &b,
+            &[Key::from_vk(VK_RCONTROL), Key::from_vk(VK_LSHIFT)]
+        ));
+        assert!(!matches(&b, &[Key::from_vk(VK_LCONTROL)]));
+        assert!(!matches(&b, &[]));
+    }
+    #[test]
+    fn combinations_require_every_key_independent_of_order() {
+        let b = binding(&[VK_LCONTROL, VK_LWIN]);
+        assert!(matches(
+            &b,
+            &[
+                Key::from_vk(VK_LWIN),
+                Key::from_vk(0x41),
+                Key::from_vk(VK_LCONTROL)
+            ]
+        ));
+        assert!(!matches(&b, &[Key::from_vk(VK_LCONTROL)]));
+        assert!(!matches(&Binding::new(vec![], true), &[]));
+    }
+    #[test]
+    fn vk_is_not_keyboard_identity_and_extended_is() {
+        let a = Key {
+            scan: 30,
+            extended: false,
+            vk: 0x41,
+        };
+        assert_eq!(a, Key { vk: 0x51, ..a });
+        assert_ne!(
+            a,
+            Key {
+                extended: true,
+                ..a
+            }
+        );
+        assert_ne!(
+            Key {
+                scan: 0,
+                vk: VK_XBUTTON1,
+                ..a
+            },
+            Key {
+                scan: 0,
+                vk: VK_XBUTTON2,
+                ..a
+            }
+        );
+    }
+    #[test]
+    fn modifier_only_never_suppresses_and_labels_are_side_specific() {
+        let left = binding(&[VK_LCONTROL]);
+        let right = binding(&[VK_RCONTROL]);
+        assert!(!left.suppresses());
+        assert!(!right.suppresses());
+        assert_ne!(left.label, right.label);
+        assert!(!left.label.is_empty());
+        assert!(binding(&[VK_LCONTROL, VK_SPACE]).suppresses());
+    }
+    #[test]
+    fn mouse_labels_and_extended_keys() {
+        assert_eq!(
+            Key {
+                scan: 0,
+                extended: false,
+                vk: VK_XBUTTON1
+            }
+            .label(),
+            "Mouse 4"
+        );
+        assert_eq!(
+            Key {
+                scan: 0,
+                extended: false,
+                vk: VK_XBUTTON2
+            }
+            .label(),
+            "Mouse 5"
+        );
+        let enter = Key::from_vk(VK_RETURN);
+        assert_ne!(
+            enter,
+            Key {
+                extended: true,
+                ..enter
+            }
+        );
+    }
+    #[test]
+    fn uncommon_keys_match_without_name_tables() {
+        for vk in [VK_F13, VK_F24, VK_MEDIA_PLAY_PAUSE, VK_OEM_102] {
+            let b = binding(&[vk]);
+            assert!(matches(&b, &b.keys));
+            assert!(!b.label.is_empty());
+        }
+    }
+    #[test]
+    fn conflicts_are_order_independent_and_system_shortcuts_are_rejected() {
+        let b = binding(&[VK_LCONTROL, VK_SPACE]);
+        assert!(conflict(&binding(&[VK_SPACE, VK_LCONTROL]), Some(&b)).is_err());
+        for keys in [
+            vec![VK_LWIN, 0x4c],
+            vec![VK_RWIN, 0x44],
+            vec![VK_LCONTROL, VK_RMENU, VK_DELETE],
+            vec![VK_RMENU, VK_TAB],
+        ] {
+            assert!(conflict(&binding(&keys), None).is_err());
+        }
+        assert!(conflict(&binding(&[VK_RCONTROL]), None).is_ok());
     }
 }
