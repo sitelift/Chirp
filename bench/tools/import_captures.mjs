@@ -22,6 +22,19 @@ function validateWav(bytes, source) {
   throw new Error(`Missing WAV format: ${source}`);
 }
 
+export function isCompleteCapture(dir) {
+  if (path.basename(dir).startsWith('.') && path.basename(dir).endsWith('.tmp')) return false;
+  try {
+    const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
+    // Legacy captures used meta.json as their commit marker. Require all audio too.
+    const files = ['audio.wav', ...(meta.asr_inputs ?? []).map(input => input.wav)];
+    return files.every(file => typeof file === 'string' && path.basename(file) === file && fs.statSync(path.join(dir, file)).isFile());
+  } catch (error) {
+    if (error instanceof SyntaxError || error.code === 'ENOENT') return false;
+    throw error;
+  }
+}
+
 export function importCaptures({ captures, root, manifest, baseManifest, wavDir }) {
   if (!captures.length) throw new Error('Select at least one capture directory. Nothing was imported.');
   manifest = path.resolve(manifest);
@@ -34,6 +47,7 @@ export function importCaptures({ captures, root, manifest, baseManifest, wavDir 
   const ids = new Set(entries.map(e => e.id)), pending = [], skipped = [];
   for (const selected of captures) {
     const dir = path.resolve(root, selected);
+    if (!isCompleteCapture(dir)) { skipped.push(selected); continue; }
     const meta = JSON.parse(fs.readFileSync(path.join(dir, 'meta.json'), 'utf8'));
     if (meta.status !== 'pasted' || typeof meta.pasted_text !== 'string' || typeof meta.raw_asr_text !== 'string') throw new Error(`Capture has no completed paste/reference draft: ${dir}`);
     const id = `human-${path.basename(dir).toLowerCase().replace(/[^a-z0-9_-]/g, '-')}`;
@@ -96,7 +110,7 @@ function main() {
   const root = options.root || path.join(process.env.APPDATA || '', 'com.chirp.app/captures');
   if (options.list) {
     if (!fs.existsSync(root)) return console.log('No local captures.');
-    for (const entry of fs.readdirSync(root, { withFileTypes: true })) if (entry.isDirectory() && fs.existsSync(path.join(root, entry.name, 'meta.json'))) console.log(entry.name);
+    for (const entry of fs.readdirSync(root, { withFileTypes: true })) if (entry.isDirectory() && isCompleteCapture(path.join(root, entry.name))) console.log(entry.name);
     return;
   }
   if (!selected.length) throw new Error('Usage: node bench/tools/import_captures.mjs --list\n       node bench/tools/import_captures.mjs <selected-folder> [...]');

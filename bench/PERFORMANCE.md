@@ -59,6 +59,38 @@ The quality track subsequently changed the prompt and added dictionary-aware
 cleanup. These are historical measured snapshots, not fresh latency claims for
 every subsequent prompt edit.
 
+## Speculation default and capture hygiene (2026-10-24)
+
+Speculative cleanup at VAD pauses is now **off by default**, including existing
+settings files. Opt in with `"speculativeCleanup": true` (Rust/load alias:
+`speculative_cleanup`). The paired result above improved p50 only with a quiet
+ending (779 ? 661 ms), worsened p95 (1430 ? 1609 ms), and had no hits with
+near-immediate release. With the setting off, no coordinator is created, no
+VAD prefix is prepared for cloud cleanup, and release uses the ordinary cleanup
+call without speculative waits. Normal press-time prewarm remains unchanged.
+The opt-in coordinator and its tests remain available for human-data evaluation.
+
+Capture retention runs in background work at startup (even when capture is off)
+and after each save. Settings `captureRetentionDays` (default 14) and
+`captureMaxBytes` (default 2147483648, 2 GiB) also accept snake-case names.
+Expired captures are removed first, then oldest folders until under the size cap;
+age/order use folder modification time. Zero days expires past captures and
+zero bytes removes nonempty captures. Cleanup errors only log and may leave the
+folder over budget until a later pass succeeds. Retention settings are frozen
+for each recording; restart applies edits made directly in settings.json.
+
+Each save writes into a sibling `.<capture-name>.tmp` directory, then atomically
+renames the completed folder into place. Startup removes stranded temp folders;
+background writes and maintenance are serialized, outside the dictation path.
+The importer skips temp folders and captures missing metadata or referenced
+audio, including interrupted captures made by older versions. Existing complete
+captures remain importable. No additional dictation latency benchmark was run
+for these lifecycle changes; live dogfooding remains necessary.
+
+Validation: `cargo test` passed 117 library tests and one benchmark test (one
+interactive context test ignored); `cargo build`, `npm.cmd run build`, and all
+four importer tests passed. Rust used `C:/tmp/chirp-target-hygiene`.
+
 ## Turn on real-world capture
 
 Default is off. In the shell launching the app:

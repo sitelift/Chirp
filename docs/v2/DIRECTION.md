@@ -124,12 +124,15 @@ It preserves full resampled float audio, exact ASR chunks, intermediate/final
 texts, context, dictionary terms and timing under the app-data captures folder.
 The importer appends selected examples to a gitignored local corpus manifest;
 raw-ASR and pasted-text references are drafts requiring manual correction.
-Capture adds no upload, telemetry or extra cloud request.
+Capture adds no upload, telemetry or extra cloud request. Background retention
+defaults to 14 days and 2 GiB, oldest first; completed capture directories are
+published by atomic rename and interrupted temporary folders are cleared at startup.
 
 Speculative cleanup is implemented at closed VAD segments, one request at a
 time, with exact-input reuse at release. The paired synthetic run improved the
 original-ending median (779 to 661 ms), but not p95; 50 ms trailing silence had
-zero hits. Keep the feature, measure real behavior, and defer further latency
+zero hits. Keep the feature **off by default** (`speculativeCleanup`, with
+missing settings migrated to false), measure real behavior when opted in, and defer further latency
 and hotword tuning. Browser context is captured at press and resolved once;
 the same dictionary term snapshot is used for prewarm and every cleanup call.
 See bench/PERFORMANCE.md for the measured scope and known open issues.

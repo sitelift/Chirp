@@ -288,3 +288,24 @@ pub fn save_vocabulary(entries: &[crate::state::VocabEntry]) -> Result<(), Strin
     std::fs::write(vocabulary_path(), data)
         .map_err(|e| format!("Failed to write vocabulary: {e}"))
 }
+
+#[cfg(test)]
+mod hygiene_settings_tests {
+    use super::*;
+    #[test]
+    fn old_settings_disable_speculation_and_bound_capture_retention() {
+        let mut old = serde_json::to_value(Settings::default()).unwrap();
+        for key in ["speculativeCleanup", "captureRetentionDays", "captureMaxBytes"] { old.as_object_mut().unwrap().remove(key); }
+        let migrated: Settings = serde_json::from_value(old.clone()).unwrap();
+        assert!(!migrated.speculative_cleanup);
+        assert_eq!(migrated.capture_retention_days, 14);
+        assert_eq!(migrated.capture_max_bytes, 2 * 1024 * 1024 * 1024);
+        old["speculative_cleanup"] = serde_json::json!(true);
+        old["capture_retention_days"] = serde_json::json!(7);
+        old["capture_max_bytes"] = serde_json::json!(1024);
+        let custom: Settings = serde_json::from_value(old).unwrap();
+        assert!(custom.speculative_cleanup);
+        assert_eq!(custom.capture_retention_days, 7);
+        assert_eq!(custom.capture_max_bytes, 1024);
+    }
+}

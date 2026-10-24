@@ -44,6 +44,12 @@ pub struct Settings {
     pub smart_formatting: bool,
     #[serde(default, alias = "capture_dictations")]
     pub capture_dictations: bool,
+    #[serde(default, alias = "speculative_cleanup")]
+    pub speculative_cleanup: bool,
+    #[serde(default = "default_capture_retention_days", alias = "capture_retention_days")]
+    pub capture_retention_days: u64,
+    #[serde(default = "default_capture_max_bytes", alias = "capture_max_bytes")]
+    pub capture_max_bytes: u64,
     pub input_device: String,
     #[serde(alias = "whisperModel")]
     pub model: String,
@@ -71,6 +77,9 @@ fn default_true() -> bool {
     true
 }
 
+pub fn default_capture_retention_days() -> u64 { 14 }
+pub fn default_capture_max_bytes() -> u64 { 2 * 1024 * 1024 * 1024 }
+
 impl Default for Settings {
     fn default() -> Self {
         Self {
@@ -81,6 +90,9 @@ impl Default for Settings {
             auto_dismiss_overlay: true,
             smart_formatting: true,
             capture_dictations: false,
+            speculative_cleanup: false,
+            capture_retention_days: default_capture_retention_days(),
+            capture_max_bytes: default_capture_max_bytes(),
             input_device: "default".into(),
             model: "parakeet-tdt-0.6b".into(),
             onboarding_complete: false,

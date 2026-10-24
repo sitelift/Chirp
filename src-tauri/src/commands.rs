@@ -339,9 +339,9 @@ pub async fn start_recording(
 ) -> Result<(), String> {
     let (capture_start, pending) = app_handle.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()).take().unwrap_or_else(|| (Instant::now(), crate::context::capture()));
     let context_app = pending.context().app.clone();
-    let (vocabulary_at_press, ai_on) = {
+    let (vocabulary_at_press, ai_on, speculation_on) = {
         let s = state.lock().await;
-        (s.vocabulary.clone(), s.settings.ai_cleanup)
+        (s.vocabulary.clone(), s.settings.ai_cleanup, s.settings.speculative_cleanup)
     };
     let dictionary_terms: Vec<String> = vocabulary_at_press.iter().map(|v|v.term.clone()).collect();
     let context = Arc::new(DictationContext { terms:dictionary_terms.clone(), pending: std::sync::Mutex::new(Some(pending)), resolved: std::sync::OnceLock::new() });
@@ -354,7 +354,7 @@ pub async fn start_recording(
     llm.prewarm_with(&dictionary_terms);
     let trace = crate::performance::Trace::start();
     let context_trace = trace.clone();
-    let speculation = crate::speculative::Speculation::new_deferred(
+    let speculation = speculation_on.then(|| crate::speculative::Speculation::new_deferred(
         llm, context_app, move || {
             let resolved = context.resolve();
             if let Some(capture) = context_trace.capture() {
@@ -365,8 +365,8 @@ pub async fn start_recording(
         },
         dictionary_terms.clone(),
         std::time::Duration::from_millis(2500),
-    );
-    if let Some(old) = app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()).replace(speculation.clone()) { old.cancel(); }
+    ));
+    if let Some(old) = std::mem::replace(&mut *app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()), speculation.clone()) { old.cancel(); }
     // Self-heal: if we're already in a Recording/Processing state, a prior
     // session got stuck (e.g. stop_recording never fired due to a press/release
     // race). Tear down the stale stream + buffer and proceed fresh rather than
@@ -431,9 +431,11 @@ pub async fn start_recording(
         let capture = crate::capture::Session::new(serde_json::json!({
             "model":s.settings.model,"beam_search":s.settings.beam_search,
             "smart_formatting":s.settings.smart_formatting,
+            "speculative_cleanup":s.settings.speculative_cleanup,
             "vocabulary":vocabulary_at_press,"snippets":s.snippets,
             "provider_requested":std::env::var("CHIRP_ASR_PROVIDER").unwrap_or_else(|_|"auto".into())
         }));
+        capture.retention(&s.settings);
         capture.set("dictionary_terms", &dictionary_terms);
         trace.set_capture(capture);
     }
@@ -565,11 +567,13 @@ pub async fn start_recording(
                             let text_so_far = {
                                 let mut segments = cleaned.lock().unwrap_or_else(|e| e.into_inner());
                                 segments.push(after_vocab);
-                                cleanup::join_cleaned_segments_with_formatting(&segments, smart_fmt_for_vad)
+                                speculation_for_vad.as_ref().map(|_| cleanup::join_cleaned_segments_with_formatting(&segments, smart_fmt_for_vad))
                             };
-                            let text_so_far = cleanup::repair_vad_boundary_artifacts(&text_so_far);
-                            let text_so_far = snippets::apply_snippets(&text_so_far, &snippets_for_vad);
-                            speculation_for_vad.offer(text_so_far);
+                            if let (Some(speculation), Some(text_so_far)) = (&speculation_for_vad, text_so_far) {
+                                let text_so_far = cleanup::repair_vad_boundary_artifacts(&text_so_far);
+                                let text_so_far = snippets::apply_snippets(&text_so_far, &snippets_for_vad);
+                                speculation.offer(text_so_far);
+                            }
                             seg_idx += 1;
                         }
                         log::info!("VAD receiver thread exiting after {seg_idx} segments");
