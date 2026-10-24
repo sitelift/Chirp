@@ -88,6 +88,8 @@ Each binding can be any single key or any combination of keys the keyboard can p
 - **Suppression is per binding and configurable.** Modifier-only bindings are never suppressed.
 - **Conflicts** between the two bindings, and with common system shortcuts, are detected at record time.
 
+Implementation and verification notes: [HOTKEYS.md](HOTKEYS.md). Defaults are Right Ctrl for hold and Left Ctrl + Left Win for toggle. Physical-key and live-dictation validation remain on the maintainer checklist.
+
 ### Prompt and safety
 
 - The system prompt is a style guide plus examples, kept stable so it caches.
