@@ -1,11 +1,18 @@
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use cpal::{SampleFormat, Stream};
+use crossbeam_channel::Sender;
 use rubato::{FftFixedIn, Resampler};
+use sherpa_onnx::{SileroVadModelConfig, VadModelConfig, VoiceActivityDetector};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 
 use crate::state::{AmplitudeData, AudioBuffer, AudioDevice};
+
+const VAD_THRESHOLD: f32 = 0.6;
+const VAD_MIN_SILENCE_SECS: f32 = 0.7;
+const VAD_MAX_SPEECH_SECS: f32 = 20.0;
+const VAD_FORCE_SPLIT_SECS: usize = 20;
 
 /// Holds resampler state so callers can flush remaining samples on stop.
 pub struct ResamplerState {
@@ -38,6 +45,113 @@ impl ResamplerState {
                 }
             }
         }
+    }
+}
+
+/// Holds VAD state for the audio callback. Fed 16kHz mono samples,
+/// detects speech segments, and sends completed segments over a channel.
+pub struct VadState {
+    vad: VoiceActivityDetector,
+    segment_tx: Sender<Vec<f32>>,
+    /// Accumulates samples to feed VAD in window_size chunks
+    vad_buf: Vec<f32>,
+    window_size: usize,
+    /// Track samples since last forced split (30s cap)
+    samples_since_split: usize,
+    max_samples_before_split: usize,
+}
+
+// SAFETY: VoiceActivityDetector wraps a raw pointer to sherpa-onnx's C API which
+// is internally thread-safe. We additionally protect all access behind a Mutex.
+unsafe impl Send for VadState {}
+unsafe impl Sync for VadState {}
+
+/// Create a VadState from a model path and channel sender.
+/// Returns None if the model fails to load (caller falls back to non-VAD).
+pub fn create_vad_state(model_path: &str, segment_tx: Sender<Vec<f32>>) -> Option<VadState> {
+    let config = VadModelConfig {
+        silero_vad: SileroVadModelConfig {
+            model: Some(model_path.to_string()),
+            threshold: VAD_THRESHOLD,
+            min_silence_duration: VAD_MIN_SILENCE_SECS,
+            min_speech_duration: 0.25,
+            window_size: 512,
+            max_speech_duration: VAD_MAX_SPEECH_SECS,
+        },
+        sample_rate: 16000,
+        num_threads: 1,
+        provider: Some("cpu".to_string()),
+        debug: false,
+        ..Default::default()
+    };
+
+    match VoiceActivityDetector::create(&config, 60.0) {
+        Some(vad) => {
+            log::info!(
+                "Silero VAD initialized (threshold={VAD_THRESHOLD}, min_silence={VAD_MIN_SILENCE_SECS}s, max_speech={VAD_MAX_SPEECH_SECS}s)"
+            );
+            Some(VadState {
+                vad,
+                segment_tx,
+                vad_buf: Vec::new(),
+                window_size: 512,
+                samples_since_split: 0,
+                max_samples_before_split: VAD_FORCE_SPLIT_SECS * 16000,
+            })
+        }
+        None => {
+            log::warn!("Failed to create VAD — falling back to non-streaming mode");
+            None
+        }
+    }
+}
+
+/// Feed resampled 16kHz samples to VAD. When a speech segment completes,
+/// sends the segment audio over the channel for background transcription.
+fn feed_vad(samples: &[f32], vad_state: &Arc<std::sync::Mutex<VadState>>) {
+    let mut vs = match vad_state.try_lock() {
+        Ok(guard) => guard,
+        Err(_) => return, // Skip if locked (shouldn't happen, but don't block callback)
+    };
+
+    vs.vad_buf.extend_from_slice(samples);
+    vs.samples_since_split += samples.len();
+
+    let win = vs.window_size;
+    while vs.vad_buf.len() >= win {
+        let chunk: Vec<f32> = vs.vad_buf.drain(..win).collect();
+        vs.vad.accept_waveform(&chunk);
+
+        // Force split during long continuous speech as a backstop for
+        // environments where VAD treats small thinking pauses as speech.
+        if vs.samples_since_split >= vs.max_samples_before_split {
+            vs.vad.flush();
+            vs.samples_since_split = 0;
+        }
+
+        // Drain completed segments
+        while let Some(segment) = vs.vad.front() {
+            let audio = segment.samples().to_vec();
+            if !audio.is_empty() {
+                let _ = vs.segment_tx.send(audio);
+            }
+            vs.vad.pop();
+            vs.samples_since_split = 0;
+        }
+    }
+}
+
+/// Flush the VAD to force-end any in-progress speech segment.
+/// Call this after recording stops to capture the final utterance.
+pub fn flush_vad(vad_state: &Arc<std::sync::Mutex<VadState>>) {
+    let vs = vad_state.lock().unwrap_or_else(|e| e.into_inner());
+    vs.vad.flush();
+    while let Some(segment) = vs.vad.front() {
+        let audio = segment.samples().to_vec();
+        if !audio.is_empty() {
+            let _ = vs.segment_tx.send(audio);
+        }
+        vs.vad.pop();
     }
 }
 
@@ -93,10 +207,12 @@ pub type StreamErrorFlag = Arc<AtomicBool>;
 pub type StreamActiveFlag = Arc<AtomicBool>;
 
 /// Start audio capture. Returns the stream handle, error flag, active flag, resampler state, and populates the buffer.
+/// If `vad_state` is provided, resampled 16kHz samples are also fed to VAD for streaming transcription.
 pub fn start_capture(
     device_id: &str,
     buffer: AudioBuffer,
     app_handle: AppHandle,
+    vad_state: Option<Arc<std::sync::Mutex<VadState>>>,
 ) -> Result<(Stream, StreamErrorFlag, StreamActiveFlag, ResamplerState), String> {
     let device = resolve_device(device_id)?;
     let config = device
@@ -157,6 +273,10 @@ pub fn start_capture(
     let active_i16 = stream_active.clone();
     let active_u16 = stream_active.clone();
 
+    let vad_f32 = vad_state.clone();
+    let vad_i16 = vad_state.clone();
+    let vad_u16 = vad_state;
+
     let stream = match sample_format {
         SampleFormat::F32 => device.build_input_stream(
             &stream_config,
@@ -172,6 +292,7 @@ pub fn start_capture(
                     &amp_counter,
                     amp_interval,
                     &app_handle,
+                    &vad_f32,
                 );
             },
             err_fn,
@@ -195,6 +316,7 @@ pub fn start_capture(
                     &amp_counter,
                     amp_interval,
                     &app_handle,
+                    &vad_i16,
                 );
             },
             err_fn,
@@ -218,6 +340,7 @@ pub fn start_capture(
                     &amp_counter,
                     amp_interval,
                     &app_handle,
+                    &vad_u16,
                 );
             },
             err_fn,
@@ -238,7 +361,7 @@ pub fn start_capture(
     Ok((stream, stream_error, stream_active, resampler_state))
 }
 
-/// Process incoming audio: downmix to mono, resample if needed, buffer, emit amplitude
+/// Process incoming audio: downmix to mono, resample if needed, feed VAD, buffer, emit amplitude
 fn process_audio(
     data: &[f32],
     channels: usize,
@@ -249,6 +372,7 @@ fn process_audio(
     amp_counter: &Arc<std::sync::Mutex<u32>>,
     amp_interval: u32,
     app_handle: &AppHandle,
+    vad_state: &Option<Arc<std::sync::Mutex<VadState>>>,
 ) {
     // Downmix to mono
     let mono: Vec<f32> = if channels > 1 {
@@ -270,12 +394,20 @@ fn process_audio(
             if let Ok(mut rs) = resampler.lock() {
                 if let Ok(resampled) = rs.process(&[chunk], None) {
                     if let Some(output) = resampled.first() {
+                        // Feed resampled 16kHz samples to VAD
+                        if let Some(vs) = vad_state {
+                            feed_vad(output, vs);
+                        }
                         buffer.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(output);
                     }
                 }
             }
         }
     } else {
+        // Already at 16kHz — feed to VAD directly
+        if let Some(vs) = vad_state {
+            feed_vad(&mono, vs);
+        }
         buffer.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(&mono);
     }
 

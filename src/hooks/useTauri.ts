@@ -7,7 +7,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { check } from '@tauri-apps/plugin-updater'
 import { relaunch } from '@tauri-apps/plugin-process'
-import type { TranscriptionEntry } from '../stores/appStore'
+import type { TranscriptionEntry, VocabEntry } from '../stores/appStore'
 
 export interface AudioDevice {
   name: string
@@ -89,10 +89,10 @@ function createTauriApi() {
     return await invoke<Record<string, unknown>>('get_settings')
   }
 
-  const updateDictionary = async (
-    entries: Array<{ from: string; to: string }>
+  const updateVocabulary = async (
+    entries: VocabEntry[]
   ): Promise<void> => {
-    await invoke('update_dictionary', { entries })
+    await invoke('update_vocabulary', { entries })
   }
 
   const getHistory = async (): Promise<TranscriptionEntry[]> => {
@@ -192,7 +192,7 @@ function createTauriApi() {
     getModelStatus,
     updateSettings,
     getSettings,
-    updateDictionary,
+    updateVocabulary,
     getHistory,
     clearHistory,
     deleteHistoryEntry,

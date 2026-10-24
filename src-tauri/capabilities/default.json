@@ -4,7 +4,8 @@
   "description": "enables the default permissions",
   "windows": [
     "overlay",
-    "settings"
+    "settings",
+    "tray-popup"
   ],
   "permissions": [
     "core:default",

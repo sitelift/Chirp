@@ -1,8 +1,8 @@
 # APP.md — Chirp Desktop Application Spec
 
 > **Complete specification for every screen, feature, and user interaction in the Chirp desktop app.**
-> Claude Code: reference this alongside CHIRP-SPEC.md (architecture) and STYLE.md (design tokens).
-> This document defines WHAT the app does. STYLE.md defines HOW it looks. CHIRP-SPEC.md defines HOW it's built.
+> Claude Code: reference this alongside STYLE.md (design tokens).
+> This document defines WHAT the app does. STYLE.md defines HOW it looks.
 
 ---
 

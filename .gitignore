@@ -23,27 +23,12 @@ dist-ssr
 *.sln
 *.sw?
 
-# Training artifacts (keep scripts, ignore model weights and intermediate data)
-training/data/*.log
-training/data/test_sample.jsonl
-training/output/chirp-cleanup/
-training/output/onnx/encoder_model.onnx
-training/output/onnx/decoder_model.onnx
-training/output/onnx/decoder_with_past_model.onnx
-training/output/qwen-lora/
-training/output/qwen3-0-6b-lora/
-training/output/llama_cpp_tools/
-training/output/*.log
-training/output/overnight*.log
-training/venv/
-training/.venv/
-training/__pycache__/
-
-# GGUF model files (tracked via git-lfs, but ignore downloaded benchmark models)
-# The fine-tuned model is committed via LFS
-chirp-benchmark-models/
-
-# Benchmark downloaded models
+# Local model artifacts and generated experiments
+*.gguf
+training/
+unsloth_compiled_cache/
+.llama-tools/
+llama.cpp/
 chirp-benchmark-models/
 
 # Debug output

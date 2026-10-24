@@ -65,19 +65,28 @@ No test suite exists. Validation is manual via the dev server.
 - `audio.rs` — cpal microphone capture, resampling to 16kHz mono, amplitude extraction
 - `transcribe.rs` — sherpa-onnx Parakeet ASR model loading and inference
 - `cleanup.rs` — Regex-based text cleanup (filler words, spoken punctuation, email formatting, number conversion)
-- `llm.rs` — AI cleanup via llama-server subprocess. Uses datamarking (^ between words) + JSON schema constraint to prevent prompt injection.
+- `llm.rs` — AI cleanup via Gemma 4 E2B through llama-server subprocess. Uses few-shot system prompt, dictionary vocabulary hints, output length guard, and `--reasoning off` to prevent thinking mode.
 - `hotkey.rs` (macOS) / `hotkey_windows.rs` (Windows) — Platform-specific global hotkey via low-level keyboard hooks
 - `inject.rs` — Clipboard write + Ctrl+V/Cmd+V simulation via enigo
 - `state.rs` — Shared app state (Settings, recognizer, LLM process handle)
 - `settings.rs` — Disk persistence for settings.json, dictionary.json, snippets.json
 - `history.rs` — Transcription history persistence with retention-based pruning
 
+### Parakeet ASR Output
+The app uses NVIDIA Parakeet TDT v3 0.6B (`sherpa-onnx-nemo-parakeet-tdt-0.6b-v3-int8`) via sherpa-onnx. This model outputs **capitalized, punctuated text natively** — sentence capitalization, proper nouns, periods, commas, and question marks are all produced by the ASR model itself.
+
+What Parakeet v3 **does** output: capitalized sentences, proper noun capitalization, periods/commas/question marks.
+
+What Parakeet v3 does **not** do: inverse text normalization (numbers stay as words like "twenty three"), filler word removal, self-correction resolution, spoken punctuation conversion (the word "period" stays as "period"), sentence merging.
+
 ### Data flow
 ```
 Hotkey press → cpal audio capture (16kHz mono)
-→ sherpa-onnx Parakeet model → raw transcript
-→ regex cleanup → optional llama-server AI cleanup (datamarked + JSON schema)
-→ dictionary replacements → clipboard + Ctrl+V injection
+→ sherpa-onnx Parakeet model → raw transcript (capitalized + punctuated)
+→ regex cleanup (fillers, spoken punctuation, number formatting)
+→ dictionary replacements → snippet expansion
+→ optional Gemma 4 E2B AI cleanup (few-shot prompt + dictionary hints)
+→ clipboard + Ctrl+V injection
 ```
 
 ### Cross-window sync
@@ -103,12 +112,11 @@ Dark sidebar (`#1a1917`) with noise texture and amber glow. Warm off-white conte
 - **No emojis.** Use Lucide React icons for all iconography.
 - **No console.log/debug/warn in production.** All removed. Only `console.error` in ErrorBoundary.
 - **Right-click context menu disabled** in production via `contextmenu` event prevention.
-- **Prompt injection defense** in LLM cleanup: datamarking (^ between words), JSON schema constraint (`response_format`), and output length guard.
+- **Prompt injection defense** in LLM cleanup: output length guard (reject if output >150% of input), low temperature (0.3), and `--reasoning off` to prevent hidden thinking mode.
 - **Platform-conditional code** uses `#[cfg(target_os)]` in Rust and runtime detection in TypeScript.
 - **Unified hotkey capture** — single flow via Win32 keyboard hook (`captureHotkeyKey`), no two-mode system exposed to users.
 
 ## Spec Documents
 
 - `APP.md` — Complete feature spec, UI screens, user flows
-- `CHIRP-SPEC.md` — Tech stack and architecture overview
 - `docs/superpowers/specs/2026-03-21-ui-redesign-design.md` — UI redesign design spec

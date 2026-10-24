@@ -1,6 +1,8 @@
 import { useState, useEffect, useRef } from 'react'
 import { invoke } from '@tauri-apps/api/core'
+import { emit } from '@tauri-apps/api/event'
 import { useAppStore } from '../../stores/appStore'
+import type { HotkeyMode } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { useHotkeyRecorder } from '../../hooks/useHotkeyRecorder'
 import type { AudioDevice } from '../../hooks/useTauri'
@@ -10,13 +12,17 @@ import { TONE_MODES, STT_MODELS, LLM_MODEL } from '../../lib/constants'
 import { formatHotkey } from '../../lib/utils'
 import { Toggle } from '../shared/Toggle'
 import { Select } from '../shared/Select'
-import { SegmentedControl } from '../shared/SegmentedControl'
 import { KeyBadge } from '../shared/KeyBadge'
 import { Button } from '../shared/Button'
 
+const HOTKEY_MODE_OPTIONS: Array<{ id: HotkeyMode; label: string }> = [
+  { id: 'hold', label: 'Hold' },
+  { id: 'tap', label: 'Tap' },
+]
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return (
-    <div className="text-[11px] font-semibold text-[#aaa] uppercase tracking-[0.8px] mb-2 pl-0.5">
+    <div className="text-[11px] font-semibold text-dm-secondary uppercase tracking-[0.8px] mb-2 pl-0.5">
       {children}
     </div>
   )
@@ -31,8 +37,8 @@ function Row({
 }) {
   return (
     <div
-      className={`flex items-center justify-between px-[18px] py-[14px] transition-colors hover:bg-[#FAFAF8] ${
-        last ? '' : 'border-b border-[#F5F4F0]'
+      className={`flex items-center justify-between px-[18px] py-[14px] transition-colors hover:bg-card-hover ${
+        last ? '' : 'border-b border-dm-row-sep'
       }`}
     >
       {children}
@@ -42,7 +48,7 @@ function Row({
 
 function Card({ children }: { children: React.ReactNode }) {
   return (
-    <div className="bg-white rounded-card border border-card-border overflow-hidden">
+    <div className="bg-card rounded-card border border-card-border overflow-hidden">
       {children}
     </div>
   )
@@ -74,7 +80,7 @@ function FeedbackSection() {
     return (
       <button
         onClick={() => setExpanded(true)}
-        className="text-[13px] font-medium text-[#1a1a1a] hover:text-chirp-amber-500 transition-colors w-full text-left"
+        className="text-[13px] font-medium text-dm-primary hover:text-chirp-amber-500 transition-colors w-full text-left"
       >
         Send Feedback
       </button>
@@ -83,13 +89,13 @@ function FeedbackSection() {
 
   return (
     <div className="w-full">
-      <div className="text-[13px] font-medium text-[#1a1a1a] mb-2">Send Feedback</div>
+      <div className="text-[13px] font-medium text-dm-primary mb-2">Send Feedback</div>
       <textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
         placeholder="Tell us what you think..."
         maxLength={2000}
-        className="w-full h-24 rounded-lg border border-card-border bg-white p-3 text-sm font-body text-chirp-stone-900 resize-none focus:outline-none focus:border-chirp-amber-400 transition-colors"
+        className="w-full h-24 rounded-lg border border-card-border bg-dm-input p-3 text-sm font-body text-dm-primary resize-none focus:outline-none focus:border-chirp-amber-400 transition-colors"
       />
       <div className="flex items-center justify-between mt-2">
         <span className="text-[11px] text-chirp-stone-400">
@@ -112,6 +118,16 @@ function FeedbackSection() {
       </div>
     </div>
   )
+}
+
+function describePosition(pos: unknown): string {
+  if (typeof pos === 'string') {
+    return pos === 'top' ? 'top center' : 'bottom center'
+  }
+  if (pos && typeof pos === 'object' && 'x' in pos && 'y' in pos) {
+    return 'custom position'
+  }
+  return 'bottom center'
 }
 
 export function SettingsPage() {
@@ -157,6 +173,16 @@ export function SettingsPage() {
   }, []) // eslint-disable-line react-hooks/exhaustive-deps -- continuous polling
 
   // ── Handlers ──────────────────────────────────────────────
+
+  const handleHotkeyModeChange = (mode: HotkeyMode) => {
+    if (mode === store.hotkeyMode) return
+    store.updateSettings({ hotkeyMode: mode })
+    tauri.updateSettings({ hotkeyMode: mode }).then(() => {
+      store.setSettingsSaved(true)
+    }).catch((e) => {
+      if (import.meta.env.DEV) console.error('Failed to sync hotkey mode:', e)
+    })
+  }
 
   const handleCaptureKey = () => {
     startCapture()
@@ -259,11 +285,11 @@ export function SettingsPage() {
           await tauri.startLlm()
           store.setLlmReady(true)
         } catch (e) {
-          console.error('Failed to start LLM after download:', e)
+          if (import.meta.env.DEV) console.error('Failed to start LLM after download:', e)
         }
       }
     } catch (e) {
-      console.error('LLM download failed:', e)
+      if (import.meta.env.DEV) console.error('LLM download failed:', e)
       setLlmDownloadError('Download failed. Check your internet connection and try again.')
     } finally {
       store.setLlmDownloadProgress(null)
@@ -290,25 +316,25 @@ export function SettingsPage() {
             <div className="p-5">
               <div className="flex items-center justify-between mb-4">
                 <div>
-                  <div className="text-[13px] font-medium text-[#1a1a1a]">Recording shortcut</div>
-                  <div className="text-[11px] text-[#aaa] mt-0.5">Press keys one at a time — they&apos;ll stick</div>
+                  <div className="text-[13px] font-medium text-dm-primary">Recording shortcut</div>
+                  <div className="text-[11px] text-dm-secondary mt-0.5">Press keys one at a time — they&apos;ll stick</div>
                 </div>
                 <button
                   onClick={cancelCapture}
-                  className="text-[12px] text-[#aaa] hover:text-[#666] hover:underline whitespace-nowrap transition-colors"
+                  className="text-[12px] text-dm-secondary hover:text-dm-primary hover:underline whitespace-nowrap transition-colors"
                 >
                   Cancel
                 </button>
               </div>
 
               {/* Large capture zone */}
-              <div className="flex h-24 items-center justify-center rounded-xl border-2 border-dashed border-chirp-amber-400 bg-chirp-amber-50/30 transition-all duration-200">
+              <div className="flex h-24 items-center justify-center rounded-xl border-2 border-dashed border-chirp-amber-400 bg-chirp-amber-400/10 transition-all duration-200">
                 {previewLabels.length > 0 ? (
                   <div className="flex items-center gap-3">
                     {previewLabels.map((label, i) => (
                       <div key={label} className="flex items-center gap-3">
                         {i > 0 && <span className="text-[13px] text-chirp-stone-300 font-medium select-none">+</span>}
-                        <span className="inline-flex min-w-[36px] items-center justify-center rounded-lg border border-card-border bg-white px-3 py-2 font-mono text-sm font-medium text-[#333] shadow-[0_2px_4px_rgba(0,0,0,0.06)]">
+                        <span className="inline-flex min-w-[36px] items-center justify-center rounded-lg border border-card-border bg-card px-3 py-2 font-mono text-sm font-medium text-dm-primary shadow-[0_2px_4px_rgba(0,0,0,0.06)]">
                           {label}
                         </span>
                       </div>
@@ -346,7 +372,7 @@ export function SettingsPage() {
                 <div className="mt-4 flex justify-end">
                   <button
                     onClick={handleConfirmCapture}
-                    className="rounded-lg bg-[#1a1a1a] px-5 py-2 text-[13px] font-medium text-white hover:bg-[#333] transition-colors"
+                    className="rounded-lg bg-dm-btn-bg px-5 py-2 text-[13px] font-medium text-dm-btn-text hover:bg-dm-btn-hover transition-colors"
                   >
                     Set hotkey
                   </button>
@@ -357,7 +383,7 @@ export function SettingsPage() {
             /* ── IDLE / PENDING STATE: compact row ── */
             <>
             {store.hotkeyStatus === 'accessibility_required' && (
-              <div className="mb-3 flex items-center justify-between rounded-xl border border-chirp-amber-300 bg-chirp-amber-50/50 px-4 py-3">
+              <div className="mb-3 flex items-center justify-between rounded-xl border border-chirp-amber-300 bg-chirp-amber-400/10 px-4 py-3">
                 <div>
                   <div className="text-[13px] font-medium text-chirp-amber-700">Accessibility permission required</div>
                   <div className="text-[11px] text-chirp-stone-500">Chirp needs Accessibility access to detect your hotkey.</div>
@@ -369,16 +395,16 @@ export function SettingsPage() {
                     await invoke('request_accessibility_permission').catch(() => {})
                     await open('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')
                   }}
-                  className="rounded-lg bg-[#1a1a1a] px-3 py-1.5 text-[11px] font-medium text-white hover:bg-[#333] transition-colors whitespace-nowrap ml-3"
+                  className="rounded-lg bg-dm-btn-bg px-3 py-1.5 text-[11px] font-medium text-dm-btn-text hover:bg-dm-btn-hover transition-colors whitespace-nowrap ml-3"
                 >
                   Open System Settings
                 </button>
               </div>
             )}
-            <Row last>
+            <Row>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
-                  <div className="text-[13px] font-medium text-[#1a1a1a]">Hotkey</div>
+                  <div className="text-[13px] font-medium text-dm-primary">Hotkey</div>
                   {store.hotkeyStatus === 'active' && (
                     <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
                   )}
@@ -389,12 +415,14 @@ export function SettingsPage() {
                     <div className="h-1.5 w-1.5 rounded-full bg-red-400" />
                   )}
                 </div>
-                <div className="text-[11px] text-[#aaa] mt-0.5">
+                <div className="text-[11px] text-dm-secondary mt-0.5">
                   {store.hotkeyStatus === 'failed'
                     ? 'Hotkey unavailable — try a different shortcut'
                     : store.hotkeyStatus === 'retrying'
                       ? 'Setting up hotkey...'
-                      : 'Hold to talk, release to transcribe'}
+                      : store.hotkeyMode === 'tap'
+                        ? 'Tap once to start, tap again to transcribe'
+                        : 'Hold to talk, release to transcribe'}
                 </div>
               </div>
 
@@ -414,7 +442,7 @@ export function SettingsPage() {
                     </button>
                     <button
                       onClick={cancelCapture}
-                      className="text-[12px] text-[#aaa] hover:underline whitespace-nowrap"
+                      className="text-[12px] text-dm-secondary hover:underline whitespace-nowrap"
                     >
                       Cancel
                     </button>
@@ -436,6 +464,40 @@ export function SettingsPage() {
                 )}
               </div>
             </Row>
+            <Row last>
+              <div className="flex-1 min-w-0">
+                <div className="text-[13px] font-medium text-dm-primary">Hotkey behavior</div>
+                <div className="text-[11px] text-dm-secondary mt-0.5">
+                  {store.hotkeyMode === 'tap'
+                    ? 'Record without holding the keys down'
+                    : 'Record only while the keys are held'}
+                </div>
+              </div>
+
+              <div
+                role="group"
+                aria-label="Hotkey behavior"
+                className="ml-4 flex rounded-lg border border-card-border bg-dm-input p-1"
+              >
+                {HOTKEY_MODE_OPTIONS.map((option) => {
+                  const selected = store.hotkeyMode === option.id
+                  return (
+                    <button
+                      key={option.id}
+                      type="button"
+                      onClick={() => handleHotkeyModeChange(option.id)}
+                      className={`h-8 min-w-[70px] rounded-md px-3 text-[12px] font-medium transition-colors ${
+                        selected
+                          ? 'bg-dm-btn-bg text-dm-btn-text shadow-[0_1px_3px_rgba(0,0,0,0.14)]'
+                          : 'text-dm-secondary hover:bg-card-hover hover:text-dm-primary'
+                      }`}
+                    >
+                      {option.label}
+                    </button>
+                  )
+                })}
+              </div>
+            </Row>
             </>
           )}
         </Card>
@@ -447,12 +509,12 @@ export function SettingsPage() {
         <Card>
           <Row>
             <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Input device</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Microphone used for recording</div>
+              <div className="text-[13px] font-medium text-dm-primary">Input device</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Microphone used for recording</div>
             </div>
             <div className="w-[220px]">
               {devicesLoading ? (
-                <span className="text-[12px] text-[#aaa]">Loading...</span>
+                <span className="text-[12px] text-dm-secondary">Loading...</span>
               ) : (
                 <Select
                   options={devices.map((d) => ({ value: d.id, label: d.name }))}
@@ -466,7 +528,7 @@ export function SettingsPage() {
           <Row last>
             <div className="flex-1 mr-4">
               <div className="flex items-center gap-2">
-                <div className="text-[13px] font-medium text-[#1a1a1a]">Input level</div>
+                <div className="text-[13px] font-medium text-dm-primary">Input level</div>
                 <button
                   onClick={handleTest}
                   disabled={testState !== 'idle'}
@@ -475,7 +537,7 @@ export function SettingsPage() {
                   {testLinkText}
                 </button>
               </div>
-              <div className="mt-2 h-[6px] w-full overflow-hidden rounded-full bg-[#F5F4F0]">
+              <div className="mt-2 h-[6px] w-full overflow-hidden rounded-full bg-surface">
                 <div
                   className="h-full rounded-full bg-chirp-success transition-all duration-100"
                   style={{ width: `${Math.min(100, inputLevel * 100)}%` }}
@@ -493,8 +555,8 @@ export function SettingsPage() {
         <Card>
           <Row>
             <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Smart formatting</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Automatically format lists, paragraphs, and structure</div>
+              <div className="text-[13px] font-medium text-dm-primary">Smart formatting</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Automatically format lists, paragraphs, and structure</div>
             </div>
             <Toggle
               checked={store.smartFormatting}
@@ -505,18 +567,18 @@ export function SettingsPage() {
           <Row>
             <div>
               <div className="flex items-center gap-2">
-                <div className="text-[13px] font-medium text-[#1a1a1a]">Smart Cleanup</div>
+                <div className="text-[13px] font-medium text-dm-primary">Smart Cleanup</div>
                 {store.aiCleanup && (
                   <span className="flex items-center gap-1">
                     {cleanupStarting ? (
                       <>
                         <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
-                        <span className="text-[11px] text-[#aaa]">Getting ready...</span>
+                        <span className="text-[11px] text-dm-secondary">Getting ready...</span>
                       </>
                     ) : store.llmReady ? (
                       <>
                         <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                        <span className="text-[11px] text-[#aaa]">Active</span>
+                        <span className="text-[11px] text-dm-secondary">Active</span>
                       </>
                     ) : !llmDownloaded ? (
                       <>
@@ -527,7 +589,7 @@ export function SettingsPage() {
                   </span>
                 )}
               </div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Polish grammar and filler words with local AI</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Polish grammar and filler words with local AI</div>
             </div>
             <Toggle
               checked={store.aiCleanup}
@@ -539,8 +601,8 @@ export function SettingsPage() {
           {store.aiCleanup && (
             <Row>
               <div>
-                <div className="text-[13px] font-medium text-[#1a1a1a]">Tone</div>
-                <div className="text-[11px] text-[#aaa] mt-0.5">
+                <div className="text-[13px] font-medium text-dm-primary">Tone</div>
+                <div className="text-[11px] text-dm-secondary mt-0.5">
                   {TONE_MODES.find(m => m.id === store.toneMode)?.description}
                 </div>
               </div>
@@ -556,8 +618,8 @@ export function SettingsPage() {
 
           <Row last>
             <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Enhanced Recognition</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Better accuracy with accents and noise, slightly slower</div>
+              <div className="text-[13px] font-medium text-dm-primary">Enhanced Recognition</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Better accuracy with accents and noise, slightly slower</div>
             </div>
             <Toggle
               checked={store.beamSearch}
@@ -573,8 +635,8 @@ export function SettingsPage() {
         <Card>
           <Row>
             <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Launch at login</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Start Chirp when you sign in</div>
+              <div className="text-[13px] font-medium text-dm-primary">Launch at login</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Start Chirp when you sign in</div>
             </div>
             <Toggle
               checked={store.launchAtLogin}
@@ -583,8 +645,8 @@ export function SettingsPage() {
           </Row>
           <Row>
             <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Auto-dismiss overlay</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Hide the overlay after text is injected</div>
+              <div className="text-[13px] font-medium text-dm-primary">Auto-dismiss overlay</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Hide the overlay after text is injected</div>
             </div>
             <Toggle
               checked={store.autoDismissOverlay}
@@ -593,8 +655,8 @@ export function SettingsPage() {
           </Row>
           <Row>
             <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Completion sound</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Play a sound when transcription finishes</div>
+              <div className="text-[13px] font-medium text-dm-primary">Completion sound</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Play a sound when transcription finishes</div>
             </div>
             <Toggle
               checked={store.playSoundOnComplete}
@@ -603,8 +665,8 @@ export function SettingsPage() {
           </Row>
           <Row>
             <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Passive indicator</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Small icon on screen when Chirp is ready</div>
+              <div className="text-[13px] font-medium text-dm-primary">Passive indicator</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Small icon on screen when Chirp is ready</div>
             </div>
             <Toggle
               checked={store.showPassiveOverlay}
@@ -613,22 +675,22 @@ export function SettingsPage() {
           </Row>
           <Row>
             <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Overlay position</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Where the recording pill appears</div>
+              <div className="text-[13px] font-medium text-dm-primary">Overlay position</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">
+                Currently: {describePosition(store.overlayPosition)}
+              </div>
             </div>
-            <SegmentedControl
-              options={[
-                { value: 'bottom', label: 'Bottom' },
-                { value: 'top', label: 'Top' },
-              ]}
-              value={store.overlayPosition}
-              onChange={(v) => store.updateSettings({ overlayPosition: v as 'bottom' | 'top' })}
-            />
+            <Button
+              onClick={() => emit('enter-reposition-mode')}
+              variant="secondary"
+            >
+              Reposition
+            </Button>
           </Row>
-          <Row last>
+          <Row>
             <div>
-              <div className="text-[13px] font-medium text-[#1a1a1a]">History retention</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Automatically delete old transcriptions</div>
+              <div className="text-[13px] font-medium text-dm-primary">History retention</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Automatically delete old transcriptions</div>
             </div>
             <div className="w-[140px]">
               <Select
@@ -643,6 +705,16 @@ export function SettingsPage() {
               />
             </div>
           </Row>
+          <Row last>
+            <div>
+              <div className="text-[13px] font-medium text-dm-primary">Dark mode</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Use a dark theme for the content area</div>
+            </div>
+            <Toggle
+              checked={store.darkMode}
+              onChange={(v) => store.updateSettings({ darkMode: v })}
+            />
+          </Row>
         </Card>
       </div>
 
@@ -654,20 +726,20 @@ export function SettingsPage() {
           <Row>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <div className="text-[13px] font-medium text-[#1a1a1a]">{currentModel?.name}</div>
-                <span className="text-[11px] text-[#aaa]">{currentModel?.size}</span>
+                <div className="text-[13px] font-medium text-dm-primary">{currentModel?.name}</div>
+                <span className="text-[11px] text-dm-secondary">{currentModel?.size}</span>
               </div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Speech recognition model</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Speech recognition model</div>
               {store.modelDownloadProgress !== null && (
                 <div className="mt-2">
                   <div className="flex items-center gap-2">
-                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-[#F5F4F0]">
+                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface">
                       <div
                         className="h-full rounded-full bg-chirp-amber-400 transition-all duration-200"
                         style={{ width: `${store.modelDownloadProgress}%` }}
                       />
                     </div>
-                    <span className="text-[11px] text-[#aaa]">{store.modelDownloadProgress}%</span>
+                    <span className="text-[11px] text-dm-secondary">{store.modelDownloadProgress}%</span>
                   </div>
                 </div>
               )}
@@ -679,7 +751,7 @@ export function SettingsPage() {
               {isDownloaded ? (
                 <div className="flex items-center gap-1.5">
                   <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                  <span className="text-[12px] text-[#888]">Ready</span>
+                  <span className="text-[12px] text-dm-muted">Ready</span>
                 </div>
               ) : (
                 <Button onClick={handleDownload} disabled={store.modelDownloadProgress !== null}>
@@ -693,21 +765,21 @@ export function SettingsPage() {
           <Row last>
             <div className="flex-1">
               <div className="flex items-center gap-2">
-                <div className="text-[13px] font-medium text-[#1a1a1a]">{LLM_MODEL.displayName} engine</div>
-                <span className="text-[11px] text-[#aaa]">{LLM_MODEL.friendlySize}</span>
+                <div className="text-[13px] font-medium text-dm-primary">{LLM_MODEL.displayName} engine</div>
+                <span className="text-[11px] text-dm-secondary">{LLM_MODEL.friendlySize}</span>
               </div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">Polishes grammar and sentences locally</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">Polishes grammar and sentences locally</div>
               <div className="text-[10px] text-chirp-stone-400 mt-0.5">{LLM_MODEL.attribution}</div>
               {store.llmDownloadProgress !== null && (
                 <div className="mt-2">
                   <div className="flex items-center gap-2">
-                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-[#F5F4F0]">
+                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface">
                       <div
                         className="h-full rounded-full bg-chirp-amber-400 transition-all duration-200"
                         style={{ width: `${store.llmDownloadProgress}%` }}
                       />
                     </div>
-                    <span className="text-[11px] text-[#aaa]">{store.llmDownloadProgress}%</span>
+                    <span className="text-[11px] text-dm-secondary">{store.llmDownloadProgress}%</span>
                   </div>
                 </div>
               )}
@@ -719,7 +791,7 @@ export function SettingsPage() {
               {llmDownloaded ? (
                 <div className="flex items-center gap-1.5">
                   <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                  <span className="text-[12px] text-[#888]">Ready</span>
+                  <span className="text-[12px] text-dm-muted">Ready</span>
                 </div>
               ) : (
                 <Button onClick={handleLlmDownload} disabled={store.llmDownloadProgress !== null}>
@@ -731,14 +803,14 @@ export function SettingsPage() {
         </Card>
       </div>
 
-      {/* ── PRIVACY & FEEDBACK ───────────────────────── */}
+      {/* Privacy & Feedback */}
       <div className="mt-6">
         <SectionLabel>Privacy & Feedback</SectionLabel>
         <Card>
           <Row>
             <div className="flex-1">
-              <div className="text-[13px] font-medium text-[#1a1a1a]">Help improve Chirp</div>
-              <div className="text-[11px] text-[#aaa] mt-0.5">
+              <div className="text-[13px] font-medium text-dm-primary">Help improve Chirp</div>
+              <div className="text-[11px] text-dm-secondary mt-0.5">
                 Share anonymous usage stats and crash reports
               </div>
               <div className="text-[10px] text-chirp-stone-400 mt-1">

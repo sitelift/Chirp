@@ -58,18 +58,18 @@ export function Select({ options, value, onChange, placeholder }: SelectProps) {
       <button
         ref={buttonRef}
         onClick={() => setOpen(!open)}
-        className="flex h-10 w-full items-center justify-between rounded-lg border border-card-border bg-white px-3 font-body text-sm text-chirp-stone-700 transition-colors duration-150 ease-out hover:border-chirp-stone-300 focus:border-chirp-yellow focus:border-2 focus:outline-none"
+        className="flex h-10 w-full items-center justify-between rounded-lg border border-card-border bg-dm-input px-3 font-body text-sm text-dm-primary transition-colors duration-150 ease-out hover:border-card-border focus:border-chirp-yellow focus:border-2 focus:outline-none"
       >
-        <span className={selected ? '' : 'text-chirp-stone-500 italic'}>
+        <span className={selected ? '' : 'text-dm-secondary italic'}>
           {selected?.label ?? placeholder ?? 'Select...'}
         </span>
-        <ChevronDown size={16} className="text-chirp-stone-500 ml-2" />
+        <ChevronDown size={16} className="text-dm-secondary ml-2" />
       </button>
 
       {open && createPortal(
         <div
           ref={dropdownRef}
-          className="fixed rounded-xl bg-white p-1 shadow-elevated border border-card-border"
+          className="fixed rounded-xl bg-card p-1 shadow-elevated border border-card-border"
           style={{
             top: pos.top,
             left: pos.left,
@@ -86,8 +86,8 @@ export function Select({ options, value, onChange, placeholder }: SelectProps) {
               }}
               className={`flex w-full items-center h-9 px-3 rounded-lg text-sm font-body transition-colors duration-150 ease-out ${
                 option.value === value
-                  ? 'bg-chirp-stone-100 text-chirp-stone-900'
-                  : 'text-chirp-stone-700 hover:bg-chirp-stone-100'
+                  ? 'bg-card-hover text-dm-primary'
+                  : 'text-dm-primary hover:bg-card-hover'
               }`}
             >
               {option.label}

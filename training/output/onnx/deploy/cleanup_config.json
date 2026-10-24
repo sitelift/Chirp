@@ -1,6 +1,0 @@
-{
-  "task_prefix": "Fix the text: ",
-  "max_input_length": 256,
-  "max_output_length": 256,
-  "model_type": "t5-small"
-}

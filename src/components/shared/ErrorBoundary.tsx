@@ -2,7 +2,7 @@ import { Component, type ReactNode } from 'react'
 
 interface Props {
   children: ReactNode
-  fallback: 'overlay' | 'settings'
+  fallback: 'overlay' | 'settings' | 'tray-popup'
 }
 
 interface State {

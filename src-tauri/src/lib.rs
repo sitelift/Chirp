@@ -2,12 +2,17 @@ mod announcements;
 mod audio;
 mod cleanup;
 mod commands;
-mod dictionary;
 mod feedback;
 mod history;
+#[cfg(windows)]
+mod clipboard_win;
 mod inject;
 mod llm;
 mod hotkey;
+#[cfg(target_os = "windows")]
+mod hotkey_raw_input;
+#[cfg(target_os = "windows")]
+mod hotkey_ll_suppress;
 #[cfg(target_os = "macos")]
 mod native_hotkey;
 mod settings;
@@ -17,11 +22,11 @@ mod transcribe;
 
 
 use commands::{RecordingStartTime, ResamplerFlushState, StreamActiveState, StreamErrorState, StreamHandle};
-use state::{AppState, AudioBuffer, SharedState};
+use state::{AppState, AudioBuffer, SharedState, VadCleanedTranscripts, VadFlushHandle, VadReceiverHandle, VadSender, VadTranscripts};
 use std::sync::Arc;
 use tauri::{
     menu::{Menu, MenuItem},
-    tray::TrayIconBuilder,
+    tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
     Emitter, Manager, WindowEvent,
 };
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
@@ -54,7 +59,7 @@ pub fn run() {
                         "LLM cleanup:",
                         "After AI cleanup",
                         "clipboard",
-                        "dictionary",
+                        "vocabulary",
                     ];
                     if skip.iter().any(|p| msg.contains(p)) {
                         return None;
@@ -79,7 +84,7 @@ pub fn run() {
     } else {
         None
     };
-    let initial_dictionary = settings::load_dictionary();
+    let initial_vocabulary = settings::load_vocabulary();
     let initial_snippets = settings::load_snippets();
     let mut initial_history = history::load_history();
     history::prune_history(&mut initial_history, initial_settings.history_retention_days);
@@ -120,7 +125,7 @@ pub fn run() {
         .manage::<SharedState>({
             Arc::new(tokio::sync::Mutex::new(AppState::new(
                 initial_settings,
-                initial_dictionary,
+                initial_vocabulary,
                 initial_snippets,
                 initial_history,
             )))
@@ -131,11 +136,16 @@ pub fn run() {
         .manage(ResamplerFlushState(std::sync::Mutex::new(None)))
         .manage(RecordingStartTime(std::sync::Mutex::new(None)))
         .manage(StreamActiveState(std::sync::Mutex::new(None)))
+        .manage::<VadTranscripts>(Arc::new(std::sync::Mutex::new(Vec::new())))
+        .manage(VadCleanedTranscripts(Arc::new(std::sync::Mutex::new(Vec::new()))))
+        .manage(VadReceiverHandle(std::sync::Mutex::new(None)))
+        .manage(VadSender(std::sync::Mutex::new(None)))
+        .manage(VadFlushHandle(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
             commands::get_settings,
             commands::update_settings,
-            commands::get_dictionary,
-            commands::update_dictionary,
+            commands::get_vocabulary,
+            commands::update_vocabulary,
             commands::get_audio_devices,
             commands::get_input_level,
             commands::start_recording,
@@ -163,6 +173,8 @@ pub fn run() {
             commands::check_accessibility_permission,
             commands::request_accessibility_permission,
             commands::capture_next_key,
+            commands::show_settings,
+            commands::quit_app,
         ])
         .setup(|app| {
             let handle = app.handle().clone();
@@ -189,7 +201,8 @@ pub fn run() {
                 let mut s = state.blocking_lock();
                 let model = s.settings.model.clone();
                 if transcribe::model_exists(&model) {
-                    match transcribe::load_model(&model, s.settings.beam_search) {
+                    let vocab = s.vocabulary.clone();
+                    match transcribe::load_model(&model, s.settings.beam_search, &vocab) {
                         Ok(recognizer) => {
                             s.recognizer = Some(Arc::new(recognizer));
                             log::info!("Speech model '{model}' loaded");
@@ -216,14 +229,16 @@ pub fn run() {
             // Kill any stale llama-server from a previous crash (C2 fix)
             llm::kill_stale_server();
 
-            // Auto-start LLM server if AI cleanup is enabled and files exist
+            // Auto-start cleanup server if AI cleanup is enabled and files exist
             {
                 let state = handle.state::<SharedState>();
                 let s = state.blocking_lock();
                 let ai_cleanup = s.settings.ai_cleanup;
                 drop(s);
 
-                if ai_cleanup && llm::binary_exists() && llm::model_exists() {
+                let should_start = ai_cleanup && llm::binary_exists() && llm::model_exists();
+
+                if should_start {
                     let state_clone = handle.state::<SharedState>().inner().clone();
                     tauri::async_runtime::spawn(async move {
                         let port = match std::net::TcpListener::bind("127.0.0.1:0") {
@@ -240,7 +255,9 @@ pub fn run() {
                             }
                         };
 
-                        match llm::start_server(port).await {
+                        let result = llm::start_server(port).await;
+
+                        match result {
                             Ok(child) => {
                                 let mut s = state_clone.lock().await;
                                 if let Some(pid) = child.id() {
@@ -248,26 +265,20 @@ pub fn run() {
                                 }
                                 s.llm_process = Some(child);
                                 s.llm_port = Some(port);
-                                log::info!("LLM server auto-started on port {port}");
+                                log::info!("Cleanup model server auto-started on port {port}");
                             }
                             Err(e) => {
-                                log::warn!("Failed to auto-start LLM server: {e}");
+                                log::warn!("Failed to auto-start cleanup model server: {e}");
                             }
                         }
                     });
                 }
             }
 
-            // Build system tray
+            // Build system tray — left-click opens custom popup, right-click shows minimal menu
             let version = env!("CARGO_PKG_VERSION");
             let version_item =
                 MenuItem::new(app, &format!("Chirp v{version}"), false, None::<&str>)?;
-            let toggle_item =
-                MenuItem::with_id(app, "toggle", "Start Listening", true, None::<&str>)?;
-            let settings_item =
-                MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
-            let updates_item =
-                MenuItem::with_id(app, "updates", "Check for Updates", true, None::<&str>)?;
             let quit_item =
                 MenuItem::with_id(app, "quit", "Quit Chirp", true, None::<&str>)?;
 
@@ -275,10 +286,6 @@ pub fn run() {
                 app,
                 &[
                     &version_item,
-                    &tauri::menu::PredefinedMenuItem::separator(app)?,
-                    &toggle_item,
-                    &settings_item,
-                    &updates_item,
                     &tauri::menu::PredefinedMenuItem::separator(app)?,
                     &quit_item,
                 ],
@@ -291,31 +298,66 @@ pub fn run() {
             TrayIconBuilder::new()
                 .icon(tray_icon)
                 .menu(&menu)
+                .menu_on_left_click(false)
                 .tooltip("Chirp — Voice to Text")
-                .on_menu_event(move |app, event| match event.id().as_ref() {
-                    "settings" => {
-                        if let Some(win) = app.get_webview_window("settings") {
-                            let _ = win.unminimize();
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
-                    }
-                    "quit" => {
+                .on_menu_event(move |app, event| {
+                    if event.id().as_ref() == "quit" {
                         app.exit(0);
                     }
-                    "toggle" => {
-                        // Tray toggle acts as press/release toggle
-                        let _ = app.emit("toggle-recording", ());
-                    }
-                    "updates" => {
-                        if let Some(win) = app.get_webview_window("settings") {
-                            let _ = win.unminimize();
-                            let _ = win.show();
-                            let _ = win.set_focus();
+                })
+                .on_tray_icon_event(|tray, event| {
+                    if let TrayIconEvent::Click {
+                        button: MouseButton::Left,
+                        button_state: MouseButtonState::Up,
+                        rect,
+                        ..
+                    } = event
+                    {
+                        let app = tray.app_handle();
+                        if let Some(win) = app.get_webview_window("tray-popup") {
+                            if win.is_visible().unwrap_or(false) {
+                                let _ = win.hide();
+                            } else {
+                                // Get the scale factor so we can normalize to logical coords.
+                                // Tray rect may arrive as physical pixels on Windows with DPI scaling.
+                                let scale = win.scale_factor().unwrap_or(1.0);
+
+                                let icon_x = match rect.position {
+                                    tauri::Position::Physical(p) => p.x as f64 / scale,
+                                    tauri::Position::Logical(p) => p.x,
+                                };
+                                let icon_y = match rect.position {
+                                    tauri::Position::Physical(p) => p.y as f64 / scale,
+                                    tauri::Position::Logical(p) => p.y,
+                                };
+                                let icon_w = match rect.size {
+                                    tauri::Size::Physical(s) => s.width as f64 / scale,
+                                    tauri::Size::Logical(s) => s.width,
+                                };
+
+                                let popup_w = 320.0_f64;
+                                let popup_h = 440.0_f64;
+                                let gap = 8.0_f64;
+
+                                // Center popup horizontally on the tray icon
+                                let x = icon_x + icon_w / 2.0 - popup_w / 2.0;
+                                let y = if cfg!(target_os = "macos") {
+                                    icon_y + gap
+                                } else {
+                                    // Windows: above the taskbar
+                                    icon_y - popup_h - gap
+                                };
+
+                                let x = if x < 0.0 { 0.0 } else { x };
+                                let y = if y < 0.0 { 0.0 } else { y };
+
+                                let _ = win.set_position(tauri::LogicalPosition::new(x, y));
+                                let _ = win.show();
+                                let _ = win.set_focus();
+                                let _ = app.emit("tray-popup-shown", ());
+                            }
                         }
-                        let _ = app.emit("check-for-updates", ());
                     }
-                    _ => {}
                 })
                 .build(app)?;
 
@@ -328,6 +370,24 @@ pub fn run() {
                     let ns_win = overlay.ns_window().unwrap() as cocoa::base::id;
                     unsafe {
                         // Level 1000 = NSScreenSaverWindowLevel, above fullscreen spaces
+                        ns_win.setLevel_(1000);
+                        ns_win.setCollectionBehavior_(
+                            NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
+                            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
+                            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorStationary
+                        );
+                    }
+                }
+            }
+
+            // macOS: make tray popup float above fullscreen apps
+            #[cfg(target_os = "macos")]
+            {
+                if let Some(popup) = app.get_webview_window("tray-popup") {
+                    use cocoa::appkit::NSWindow;
+                    use cocoa::appkit::NSWindowCollectionBehavior;
+                    let ns_win = popup.ns_window().unwrap() as cocoa::base::id;
+                    unsafe {
                         ns_win.setLevel_(1000);
                         ns_win.setCollectionBehavior_(
                             NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
@@ -387,6 +447,18 @@ pub fn run() {
                     if let WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         if let Some(win) = handle_for_close.get_webview_window("settings") {
+                            let _ = win.hide();
+                        }
+                    }
+                });
+            }
+
+            // Hide tray popup when it loses focus (click outside)
+            if let Some(popup_win) = app.get_webview_window("tray-popup") {
+                let handle_for_popup = handle.clone();
+                popup_win.on_window_event(move |event| {
+                    if let WindowEvent::Focused(false) = event {
+                        if let Some(win) = handle_for_popup.get_webview_window("tray-popup") {
                             let _ = win.hide();
                         }
                     }
