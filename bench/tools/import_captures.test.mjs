@@ -42,6 +42,29 @@ test('append preserves every original byte and copies float audio without requan
 test('invalid or unpasted selection cannot partially import a batch', t => {
   const f=fixture(t), bad=path.join(f.root,'bad'); fs.mkdirSync(bad);
   fs.writeFileSync(path.join(bad,'meta.json'),JSON.stringify({status:'failed'}));
+  fs.writeFileSync(path.join(bad,'audio.wav'),f.audio);
   assert.throws(()=>importCaptures({...f,captures:[...f.captures,'bad']}),/no completed paste/);
   assert.equal(fs.existsSync(f.manifest),false); assert.equal(fs.existsSync(f.wavDir),false);
+});
+test('partial folders are skipped even with metadata, without creating a manifest', t => {
+  const f = fixture(t);
+  const temp = path.join(f.root, '.capture.tmp');
+  fs.renameSync(f.dir, temp);
+  assert.deepEqual(importCaptures({...f, captures:['.capture.tmp']}).skipped, ['.capture.tmp']);
+  assert.equal(fs.existsSync(f.manifest), false);
+  fs.renameSync(temp, f.dir);
+  fs.unlinkSync(path.join(f.dir, 'audio.wav'));
+  assert.deepEqual(importCaptures(f).skipped, f.captures);
+  fs.writeFileSync(path.join(f.dir, 'audio.wav'), f.audio);
+  fs.unlinkSync(path.join(f.dir, 'meta.json'));
+  assert.deepEqual(importCaptures(f).skipped, f.captures);
+  assert.equal(fs.existsSync(f.manifest), false);
+});
+test('missing ASR inputs and interrupted metadata are incomplete', t => {
+  const f = fixture(t);
+  fs.writeFileSync(path.join(f.dir, 'meta.json'), JSON.stringify({status:'pasted', asr_inputs:[{wav:'asr-input-000.wav'}]}));
+  assert.deepEqual(importCaptures(f).skipped, f.captures);
+  fs.writeFileSync(path.join(f.dir, 'meta.json'), '{"status":');
+  assert.deepEqual(importCaptures(f).skipped, f.captures);
+  assert.equal(fs.existsSync(f.manifest), false);
 });

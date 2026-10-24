@@ -121,6 +121,7 @@ pub fn run() {
                 let autostart = app.autolaunch();
                 let state = handle.state::<SharedState>();
                 let s = state.blocking_lock();
+                crate::capture::maintain_at_startup(&s.settings);
                 if s.settings.launch_at_login {
                     if let Err(e) = autostart.enable() {
                         log::warn!("Failed to enable autostart: {e}");
