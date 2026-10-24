@@ -50,6 +50,7 @@ jobs:
           "C:/Program Files/LLVM/bin" >> $env:GITHUB_PATH
       - run: npm ci
       - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --features bench --bin bench
       - run: npm run lint
       - run: cargo install trusted-signing-cli --locked
       - name: Build and sign

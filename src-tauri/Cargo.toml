@@ -12,6 +12,14 @@ rust-version = "1.77.2"
 name = "app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+bench = []
+
+[[bin]]
+name = "bench"
+path = "../bench/native.rs"
+required-features = ["bench"]
+
 [build-dependencies]
 cc = "1.2.57"
 tauri-build = { version = "2.5.6", features = [] }
