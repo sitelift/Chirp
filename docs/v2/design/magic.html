@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>chirp</title>
+<style>
+  :root {
+    --amber: #F0B723;
+    --ink: #0E0D0B;
+    --display: "Segoe UI Variable Display", "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+    --text: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--ink); font-family: var(--text); -webkit-font-smoothing: antialiased; }
+  body { display: grid; gap: 0; }
+  .frame { position: relative; min-height: 760px; display: grid; place-items: center; overflow: hidden; }
+
+  /* ---------- 1. The moment ---------- */
+  .moment { background: #FBFAF7; }
+  .page { width: min(680px, 86vw); font-size: 26px; line-height: 1.55; color: var(--ink); letter-spacing: -.005em; }
+  .page .prev { color: #A8A296; }
+  .line { position: relative; min-height: 1.55em; }
+  .caret { display: inline-block; width: 2px; height: 1.1em; background: var(--ink); vertical-align: -.17em; animation: blink 1.1s steps(1) infinite; }
+  .caret.hold { animation: none; opacity: 0; }
+  @keyframes blink { 50% { opacity: 0; } }
+
+  /* the dot: the only UI while you talk */
+  .dot { position: absolute; width: 14px; height: 14px; margin: -7px 0 0 -7px; border-radius: 50%; background: var(--amber); pointer-events: none; transform: scale(0); opacity: 0; transition: transform .22s cubic-bezier(.3,1.6,.5,1), opacity .15s; box-shadow: 0 0 0 0 rgba(240,183,35,.0); }
+  .dot.on { opacity: 1; transform: scale(1); }
+  .dot.think { animation: think .9s ease-in-out infinite; }
+  @keyframes think { 50% { transform: scale(.7); opacity: .65; } }
+  .dot.out { transition: transform .16s ease-in, opacity .16s; transform: scale(0); opacity: 0; }
+
+  /* words arrive */
+  .ch { display: inline; opacity: 0; filter: blur(6px); color: var(--amber); animation: land .5s cubic-bezier(.2,.8,.2,1) forwards; }
+  @keyframes land { 40% { opacity: 1; filter: blur(0); color: var(--amber); } 100% { opacity: 1; filter: blur(0); color: var(--ink); } }
+
+  .hint { position: absolute; bottom: 44px; left: 0; right: 0; text-align: center; font-size: 14px; color: #A8A296; }
+  .hint kbd { font-family: var(--text); font-weight: 600; color: var(--ink); background: #fff; border: 1px solid #E4DFD5; border-bottom-width: 2px; border-radius: 6px; padding: 2px 8px; margin: 0 2px; }
+  .again { position: absolute; top: 28px; right: 32px; display: flex; gap: 8px; }
+  .again button { font: 500 13px var(--text); color: #8F897D; background: none; border: 0; cursor: pointer; padding: 6px 4px; }
+  .again button.on { color: var(--ink); }
+
+  /* ---------- 2. The app ---------- */
+  .app { background: var(--amber); color: var(--ink); }
+  .app .stack { display: grid; justify-items: center; gap: 56px; text-align: center; }
+  .bird { width: 168px; height: 168px; }
+  .key { font-family: var(--display); font-weight: 700; font-size: 64px; letter-spacing: -.03em; background: var(--ink); color: var(--amber); border-radius: 22px; padding: 26px 46px 30px; box-shadow: 0 10px 0 #000; cursor: pointer; transition: transform .08s, box-shadow .08s; user-select: none; border: 0; }
+  .key:active, .key.down { transform: translateY(8px); box-shadow: 0 2px 0 #000; }
+  .key.listen { color: rgba(240,183,35,.45); }
+  .say { font-family: var(--display); font-weight: 600; font-size: 28px; letter-spacing: -.02em; margin-top: -20px; }
+  .more { position: absolute; bottom: 40px; left: 0; right: 0; display: flex; justify-content: center; gap: 28px; font-size: 14px; font-weight: 600; }
+  .more a { color: rgba(14,13,11,.55); text-decoration: none; }
+  .more a:hover { color: var(--ink); }
+  .cap { position: absolute; top: 28px; left: 32px; font-size: 13px; font-weight: 600; color: rgba(14,13,11,.5); }
+  .moment .cap { color: #B5AFA3; }
+</style>
+</head>
+<body>
+
+<section class="frame moment" id="moment">
+  <span class="cap">While you talk</span>
+  <div class="again" id="scen"></div>
+  <div class="page">
+    <p class="prev" id="prev">Joris: are we still shipping the hotkey fix this week?</p>
+    <div class="line" id="line"><span id="out"></span><span class="caret" id="caret"></span></div>
+  </div>
+  <i class="dot" id="dot"></i>
+  <p class="hint">Hold <kbd>Space</kbd> and talk. Let go.</p>
+</section>
+
+<section class="frame app">
+  <span class="cap">The whole app</span>
+  <div class="stack">
+    <svg class="bird" viewBox="0 0 4167 4167" aria-label="Chirp"><path fill="#FFFFFF" d="M1531.604,2829.783c668.518,24.139 1171.926,-353.144 1045.89,-883.882c-0.56,-2.358 -17.658,-74.359 -23.385,-19.253c-0.995,9.575 69.958,358.895 -292.787,623.11c-524.721,382.194 -1516.421,61.554 -1543.52,-49.205c-11.643,-47.586 14.39,-42.864 628.22,-583.275c147.113,-129.517 646.449,-555.007 653.201,-572.264c34.69,-88.668 53.661,-462.329 467.34,-678.203c261.617,-136.522 720.888,-99.525 911.155,199.849c29.64,46.637 21.052,59.492 57.912,65.5c39.258,6.398 321.439,44.685 346.981,111.874c6.542,17.208 3.266,26.147 -189.861,130.03c-119.168,64.1 -121.172,70.126 -124.937,81.447c-10.473,31.492 -22.872,225.25 16.526,343.54c4.893,14.69 49.551,107.832 76.735,336.287c61.149,513.904 -236.456,1191.465 -944.642,1420.703c-412.05,133.38 -863.994,33.644 -1136.283,-126.848c-276.402,-162.916 -260.407,-240.238 -310.516,-201.362c-357.873,277.646 -414.605,298.476 -456.184,313.742c-37.345,13.712 -249.743,91.697 -493.694,-59.685c-90.71,-56.289 2.227,-101.049 53.22,-135.73c621.383,-422.616 620.158,-437.327 651.083,-428.394c149.547,43.196 321.948,101.022 607.547,112.018Z"/></svg>
+    <button class="key" id="key">Right Ctrl</button>
+    <p class="say" id="say">Hold it and say something.</p>
+  </div>
+  <nav class="more"><a href="#">Microphone</a><a href="#">API key</a><a href="#">Words</a></nav>
+</section>
+
+<script>
+// ---------- sound: one soft rising chirp, one falling ----------
+let ac;
+function chirp(f0, f1, dur, gain = 0.07) {
+  try {
+    ac ??= new AudioContext();
+    const t = ac.currentTime, o = ac.createOscillator(), g = ac.createGain();
+    o.frequency.setValueAtTime(f0, t); o.frequency.exponentialRampToValueAtTime(f1, t + dur);
+    g.gain.setValueAtTime(0, t); g.gain.linearRampToValueAtTime(gain, t + 0.008); g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+    o.connect(g).connect(ac.destination); o.start(t); o.stop(t + dur + 0.02);
+  } catch {}
+}
+
+// ---------- the moment ----------
+const SCEN = [
+  { name: "Reply", prev: "Joris: are we still shipping the hotkey fix this week?", text: "Yeah, we can ship it Friday. The resync thing is done." },
+  { name: "Email", prev: "RE: Invoice March", text: "Hi Mark,\n\nThanks for sending this. The total should be €4,250, not €4,500.\n\nThanks,\nPieter" },
+  { name: "Prompt", prev: "New chat", text: "Refactor this function so it handles null input, logs errors instead of throwing, and stays under 30 lines." },
+];
+let scen = SCEN[0];
+const scenEl = document.getElementById("scen");
+SCEN.forEach((s, i) => {
+  const b = document.createElement("button"); b.textContent = s.name; if (!i) b.className = "on";
+  b.onclick = () => { scen = s; scenEl.querySelectorAll("button").forEach((x) => x.classList.toggle("on", x === b)); reset(); };
+  scenEl.appendChild(b);
+});
+
+const moment = document.getElementById("moment"), dot = document.getElementById("dot"), caret = document.getElementById("caret"), out = document.getElementById("out");
+let talking = false, raf = 0, analyser = null, buf = null, t0 = 0;
+
+function reset() { out.innerHTML = ""; document.getElementById("prev").textContent = scen.prev; }
+function placeDot() {
+  const c = caret.getBoundingClientRect(), m = moment.getBoundingClientRect();
+  dot.style.left = (c.right - m.left + 14) + "px";
+  dot.style.top = (c.top - m.top + c.height / 2) + "px";
+}
+function level() {
+  if (analyser) { analyser.getByteTimeDomainData(buf); let s = 0; for (const v of buf) s += ((v - 128) / 128) ** 2; return Math.min(1, Math.sqrt(s / buf.length) * 6); }
+  const t = (performance.now() - t0) / 1000;
+  return Math.max(0, Math.sin(t * 6.8) * 0.5 + Math.sin(t * 2.3) * 0.4 + 0.15) * (0.75 + Math.random() * 0.25);
+}
+function breathe() { const l = level(); dot.style.transform = `scale(${1 + l * 0.9})`; raf = requestAnimationFrame(breathe); }
+
+async function down() {
+  if (talking) return; talking = true; t0 = performance.now();
+  reset(); placeDot();
+  caret.classList.add("hold");
+  dot.className = "dot on"; dot.style.transform = "";
+  chirp(1500, 2900, 0.07);
+  if (!analyser) {
+    try {
+      const s = await navigator.mediaDevices.getUserMedia({ audio: true });
+      ac ??= new AudioContext(); analyser = ac.createAnalyser(); analyser.fftSize = 1024; buf = new Uint8Array(analyser.fftSize);
+      ac.createMediaStreamSource(s).connect(analyser);
+    } catch {}
+  }
+  setTimeout(() => { if (talking) { dot.style.transition = "transform .06s linear, opacity .15s"; breathe(); } }, 220);
+}
+function up() {
+  if (!talking) return; talking = false; cancelAnimationFrame(raf);
+  dot.style.transition = ""; dot.style.transform = ""; dot.className = "dot on think";
+  setTimeout(write, 420); // the polish step: the dot just breathes
+}
+function write() {
+  dot.className = "dot out";
+  const text = scen.text; let i = 0;
+  for (const ch of text) {
+    if (ch === "\n") { out.appendChild(document.createElement("br")); continue; }
+    const s = document.createElement("span"); s.className = "ch"; s.textContent = ch;
+    s.style.animationDelay = (i++ * 7) + "ms"; out.appendChild(s);
+  }
+  caret.classList.remove("hold");
+  chirp(2900, 1900, 0.06);
+}
+addEventListener("keydown", (e) => { if (e.code === "Space" && !e.repeat) { e.preventDefault(); down(); } });
+addEventListener("keyup", (e) => { if (e.code === "Space") { e.preventDefault(); up(); } });
+moment.addEventListener("pointerdown", (e) => { if (e.target.closest("button")) return; down(); });
+addEventListener("pointerup", up);
+addEventListener("resize", placeDot);
+
+// ---------- the app: press the key to rebind ----------
+const key = document.getElementById("key"), say = document.getElementById("say");
+let rebinding = false;
+key.onclick = () => { rebinding = true; key.classList.add("listen"); key.textContent = "Press a key"; say.textContent = "Any key, or a combination."; };
+addEventListener("keydown", (e) => {
+  if (!rebinding) return; e.preventDefault(); e.stopImmediatePropagation();
+  const side = e.location === 2 ? "Right " : "";
+  const name = { Control: "Ctrl", " ": "Space", Meta: "Win", AltGraph: "Right Alt" }[e.key] ?? (e.key.length === 1 ? e.key.toUpperCase() : e.key);
+  key.textContent = (name.startsWith("Right") ? "" : side) + name;
+  key.classList.remove("listen"); rebinding = false; say.textContent = "Hold it and say something.";
+}, true);
+</script>
+</body>
+</html>

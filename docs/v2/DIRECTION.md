@@ -105,6 +105,14 @@ Before any UI work, build a headless harness: WAV in → per-stage timings + out
 
 It runs on the Windows machine. The Linux devbox has no GPU and can only run the CPU and API parts.
 
+### ASR benchmark decision (2026-10-24)
+
+The first Windows run uses the 45-file synthetic SAPI corpus, not maintainer recordings. Parakeet v3 **FP32 on CUDA** is the measured choice: warm ASR p50 98.6 ms / p95 243.8 ms, raw WER 11.66%, versus CPU int8 with six threads at 317.2 / 1106.7 ms and 12.14%. CUDA int8 is slower; the v2 FP16 export returned empty text and crashed. The tested Nemotron 80 ms int8 model was slower and less accurate on a three-file screening subset, so keep Parakeet with incremental Silero segmentation for now.
+
+The app defaults to automatic selection: FP32/CUDA when that model and runtime are installed, otherwise int8/CPU (up to six threads). Silero stays on CPU. Keep the microphone and VAD warm; warm ASR and deterministic regexes at model load. The FP32 model is available through the maintainer's Hugging Face export; `bench/setup-native.ps1 -Fp32Model` installs it alongside the switchable native runtimes. See `bench/README.md` and `bench/PERFORMANCE.md` for reproduction and limitations.
+
+The <200 ms aspiration is not yet established end to end: offline ASR's full-corpus p95 exceeds it, and actual key-release-to-paste needs live dictation validation. History/log timing now records that boundary through clipboard restoration. Do not infer live latency from the WAV harness.
+
 ## Keep, port, drop
 
 **Port into v2 (re-read and clean up, don't copy blindly):**
@@ -154,6 +162,20 @@ Also drop:
 3. **Prompt quality.** Iterate on the cleanup prompt against the corpus until it's best in class.
 4. **UX redesign.** First-principles design using Mobbin references: overlay, settings, onboarding, brand system.
 5. **Public polish.** README, contributing guide, Windows-only release pipeline, updater.
+
+## Design direction: magic, not visibility (2026-10-24)
+
+Supersedes the north-star list below. Prototype: `docs/v2/design/magic.html` (hold Space).
+
+Simple and bold. The best dictation UI is almost none: you talk, and your words appear. (A first "Sonogram" concept with receipts, latency readouts and diffs was rejected as visibility for its own sake.)
+
+- **While you talk:** a single amber dot next to the text caret, gently swelling with your voice. No pill, no waveform, no text. Caret position from `GetGUIThreadInfo`, then UI Automation, falling back to near the mouse; the dot is a tiny window sized to content.
+- **Waiting for polish:** the dot breathes.
+- **Release:** the dot vanishes and the words arrive, blooming in amber out of a slight blur and settling to ink within about 0.5 s. (In real apps we paste; the bloom is drawn by our overlay over the pasted text's position, or skipped where we can't locate it.)
+- **Sound:** one soft rising chirp when listening starts, one falling chirp when the words land.
+- **The app window:** full amber, the white bird, one giant ink key cap showing your hotkey (click it to rebind), "Hold it and say something." Microphone, API key and Words are small links at the bottom. Onboarding is this same screen.
+- **Color:** amber `#F0B723`, ink `#0E0D0B`, white. Type: Segoe UI Variable (native Windows), heavy weights for anything that matters.
+- Latency, history and diagnostics exist (logs, dev tooling) but are not part of the everyday UI.
 
 ## Brand north stars (first pass, 2026-10-24)
 
