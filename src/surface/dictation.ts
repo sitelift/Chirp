@@ -62,6 +62,10 @@ export function useLiveBackend(ctx: Ctx) {
     let owner: 'hold' | 'toggle' | null = null
 
     const showPill = (kind: 'listening' | 'handsfree' | 'working') => set({ phase: 'pill', leaving: false, pill: { kind } })
+    /** Earcons, when sounds are on. Fire and forget: playback never delays capture or paste. */
+    const cue = (name: 'start' | 'done' | 'no-ai') => {
+      if (get().settings.playSoundOnComplete) api.call('play_sound', { cue: name }).catch(() => {})
+    }
 
     async function stop() {
       if (!recording) return
@@ -70,7 +74,7 @@ export function useLiveBackend(ctx: Ctx) {
       showPill('working')
       try {
         const result = await api.call<{ fallbackReason?: string | null }>('stop_recording')
-        if (get().settings.playSoundOnComplete) api.call('play_completion_sound').catch(() => {})
+        cue(result?.fallbackReason ? 'no-ai' : 'done')
         if (!get().settings.onboardingComplete) {
           await saveSettings(ctx, { onboardingComplete: true })
           showMessage(ctx, "You're set. Click me anytime.", { check: true, hold: TIMING.firstRunDoneHold })
@@ -122,6 +126,7 @@ export function useLiveBackend(ctx: Ctx) {
       try {
         await api.call('start_recording', { hold: mode === 'hold' })
         recording = true
+        cue('start')
       } catch (e) {
         busy = false
         return startError(e)

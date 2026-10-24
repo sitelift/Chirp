@@ -17,6 +17,7 @@ pub mod router;
 pub mod speculative;
 mod settings;
 mod snippets;
+mod sound;
 mod state;
 mod surface;
 mod tray;
@@ -94,7 +95,7 @@ pub fn run() {
             commands::test_microphone,
             commands::get_snippets,
             commands::update_snippets,
-            commands::play_completion_sound,
+            commands::play_sound,
             commands::get_hotkey_status,
             commands::record_binding,
             commands::cancel_record_binding,

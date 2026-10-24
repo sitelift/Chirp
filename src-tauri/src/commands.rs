@@ -7,14 +7,11 @@ use crate::snippets;
 use crate::state::*;
 use crate::transcribe;
 
-use std::io::Cursor;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Instant;
 use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
-
-const CHIRP_SOUND: &[u8] = include_bytes!("../sounds/chirp.wav");
 
 /// Active audio stream handle — wrapped in an unsafe Send wrapper because
 /// cpal::Stream is !Send but we only access it from the main thread.
@@ -1365,20 +1362,12 @@ pub async fn test_microphone(
     Ok(wav_bytes)
 }
 
+/// Play an earcon ("start", "done" or "no-ai"). Returns at once; see sound.rs.
 #[tauri::command]
-pub async fn play_completion_sound() -> Result<(), String> {
-    tokio::task::spawn_blocking(|| {
-        let cursor = Cursor::new(CHIRP_SOUND);
-        let (_stream, stream_handle) =
-            rodio::OutputStream::try_default().map_err(|e| format!("Audio output error: {e}"))?;
-        let sink = rodio::Sink::try_new(&stream_handle).map_err(|e| format!("Sink error: {e}"))?;
-        let source = rodio::Decoder::new(cursor).map_err(|e| format!("Decode error: {e}"))?;
-        sink.append(source);
-        sink.sleep_until_end();
-        Ok(())
-    })
-    .await
-    .map_err(|e| format!("Task error: {e}"))?
+pub async fn play_sound(cue: String) -> Result<(), String> {
+    let cue = crate::sound::Cue::parse(&cue).ok_or_else(|| format!("Unknown sound: {cue}"))?;
+    crate::sound::play(cue);
+    Ok(())
 }
 
 #[tauri::command]
