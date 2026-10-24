@@ -350,13 +350,13 @@ pub fn start(settings: &crate::state::Settings, app: AppHandle) -> Result<(), St
             while let Ok(event) = events.recv() {
                 match event {
                     Output::Press(mode, at) => {
-                        crate::commands::note_hotkey_press(&app);
+                        crate::commands::note_hotkey_press(&app, at);
                         let _ = app.emit("hotkey-pressed", mode);
                         log::debug!("Input dispatch: {:?}", at.elapsed());
                     }
                     Output::Release(at) => {
                         if let Some(trace) = crate::performance::Trace::current() {
-                            trace.input(true);
+                            trace.input_at(true, at);
                         }
                         let _ = app.emit("hotkey-released", "hold");
                         log::debug!("Input release dispatch: {:?}", at.elapsed());

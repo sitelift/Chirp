@@ -45,8 +45,11 @@ impl Trace {
     }
     pub fn set_hold(&self, hold: bool) { self.0.lock().unwrap_or_else(|e|e.into_inner()).hold = hold; }
     pub fn input(&self, key_up: bool) {
+        self.input_at(key_up, Instant::now());
+    }
+    pub fn input_at(&self, key_up: bool, at: Instant) {
         let mut inner = self.0.lock().unwrap_or_else(|e|e.into_inner());
-        if inner.hold == key_up { inner.release.get_or_insert_with(Instant::now); }
+        if inner.hold == key_up { inner.release.get_or_insert(at); }
     }
     pub fn release(&self) {
         self.0

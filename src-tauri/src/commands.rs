@@ -41,9 +41,9 @@ pub struct RecordingStartTime(pub std::sync::Mutex<Option<Instant>>);
 #[derive(Default)]
 pub struct RecordingContext(pub std::sync::Mutex<crate::llm::AppContext>, pub std::sync::Mutex<Option<(Instant, crate::llm::AppContext)>>);
 
-pub fn note_hotkey_press(app: &AppHandle) {
-    *app.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()) = Some((Instant::now(), crate::context::foreground()));
-    if let Some(trace) = crate::performance::Trace::current() { trace.input(false); }
+pub fn note_hotkey_press(app: &AppHandle, at: Instant) {
+    *app.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()) = Some((at, crate::context::foreground()));
+    if let Some(trace) = crate::performance::Trace::current() { trace.input_at(false, at); }
 }
 
 pub struct StreamActiveState(pub std::sync::Mutex<Option<audio::StreamActiveFlag>>);
