@@ -2,7 +2,7 @@ import { useEffect } from 'react'
 import { Check } from 'lucide-react'
 import { useForced } from '../forced'
 import { useSurface, useSurfaceContext } from '../store'
-import { Header, LevelBars } from '../parts'
+import { Divider, Header, LevelBars, Row, SwitchTrack } from '../parts'
 import { deviceLabel } from '../format'
 import { drill, saveSettings } from '../actions'
 
@@ -22,6 +22,18 @@ function DeviceRow({ id, label, selected, missing, level }: { id: string; label:
       <span className={`min-w-0 flex-1 truncate font-display text-row ${selected ? 'font-semibold' : ''} ${missing ? 'text-t4' : 'text-t1'}`}>{label}</span>
       {missing ? <span className="text-meta text-t4">Unplugged</span> : <LevelBars level={level} active={selected} />}
     </button>
+  )
+}
+
+/** Start, done and pasted-without-AI earcons. The row is the switch. */
+function SoundsRow() {
+  const ctx = useSurfaceContext()
+  const on = useSurface((s) => s.settings.playSoundOnComplete)
+  return (
+    <Row id="sounds" tight={false} role="switch" aria-checked={on} onClick={() => saveSettings(ctx, { playSoundOnComplete: !on })}>
+      <span>Sounds</span>
+      <SwitchTrack state={on ? 'on' : 'off'} />
+    </Row>
   )
 }
 
@@ -50,13 +62,15 @@ export function Microphone() {
   return (
     <div className="flex flex-col">
       <Header title="Microphone" onBack={() => drill(ctx, 'home')} />
-      <div className="-m-[4px] flex max-h-[328px] flex-col overflow-y-auto p-[4px]">
+      <div className="-m-[4px] flex max-h-[288px] flex-col overflow-y-auto p-[4px]">
         {missing && <DeviceRow id={selected} label={deviceLabel(selected)} selected missing level={0} />}
         {devices.map((d) => (
           <DeviceRow key={d.id} id={d.id} label={deviceLabel(d.id, ids)} selected={d.id === selected} missing={false} level={levels[d.id] ?? 0} />
         ))}
         {devices.length === 0 && <div className="flex h-[40px] items-center pl-[36px] text-row text-t4">No microphones found</div>}
       </div>
+      <Divider />
+      <SoundsRow />
     </div>
   )
 }

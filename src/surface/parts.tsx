@@ -117,18 +117,13 @@ export function IconButton({ label, onClick, children, size = 32, className = ''
 
 export type ToggleState = 'off' | 'on' | 'disabled'
 
-export function Toggle({ state, onChange, label }: { state: ToggleState; onChange?: (on: boolean) => void; label: string }) {
+/** The switch itself, without a button: for rows that are the button (Sounds). */
+export function SwitchTrack({ state }: { state: ToggleState }) {
   const on = state === 'on'
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      data-nav=""
-      disabled={state === 'disabled'}
-      onClick={() => onChange?.(!on)}
-      className="nav flex h-[20px] w-[40px] shrink-0 items-center rounded-[10px] px-[3px] transition-colors duration-150"
+    <span
+      aria-hidden
+      className="flex h-[20px] w-[40px] shrink-0 items-center rounded-[10px] px-[3px] transition-colors duration-150"
       style={
         on
           ? { background: 'var(--accent)', justifyContent: 'flex-end' }
@@ -143,6 +138,24 @@ export function Toggle({ state, onChange, label }: { state: ToggleState; onChang
             : { width: 12, height: 12, background: state === 'disabled' ? 'var(--toggle-disabled-thumb)' : 'var(--toggle-thumb)' }
         }
       />
+    </span>
+  )
+}
+
+export function Toggle({ state, onChange, label }: { state: ToggleState; onChange?: (on: boolean) => void; label: string }) {
+  const on = state === 'on'
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      data-nav=""
+      disabled={state === 'disabled'}
+      onClick={() => onChange?.(!on)}
+      className="nav flex shrink-0 rounded-[10px]"
+    >
+      <SwitchTrack state={state} />
     </button>
   )
 }

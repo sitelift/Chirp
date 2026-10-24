@@ -157,9 +157,9 @@ export const SECTIONS: Section[] = [
   {
     id: '05',
     title: '05 Microphone',
-    note: 'Every input shows a live level. The same list opens from the No microphone pill.',
+    note: 'Every input shows a live level. The same list opens from the No microphone pill. Sounds switches the start, done and pasted-without-AI earcons.',
     width: 360,
-    height: 340,
+    height: 400,
     scenarios: [
       { label: 'Picker', state: () => home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }) },
       { label: 'Hover', state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceHover: 'mic-Microphone Array (Laptop microphone)' } }) },
@@ -167,6 +167,10 @@ export const SECTIONS: Section[] = [
         label: 'From No mic',
         state: () => ({ ...home({ view: 'microphone', devices: [DEVICES[0], DEVICES[2]] }), ui: { forceHover: 'mic-Microphone Array (Laptop microphone)' } }),
       },
+      { label: 'Sounds on', state: () => home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 }, settings: { ...DEFAULT_SETTINGS, onboardingComplete: true, inputDevice: 'Microphone (Brio 500)', playSoundOnComplete: true } }) },
+      { label: 'Sounds hover', state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceHover: 'sounds' } }) },
+      { label: 'Sounds pressed', state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forcePress: 'sounds' } }) },
+      { label: 'Sounds focus', state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceFocus: 'sounds' } }) },
     ],
   },
   {
@@ -251,7 +255,7 @@ export const SECTIONS: Section[] = [
     height: 500,
     scenarios: [
       { label: 'Focus on Home', state: () => ({ ...home(), ui: { forceFocus: 'microphone' } }) },
-      { label: 'Focus in a drill-in', height: 340, state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceFocus: 'mic-Microphone Array (Laptop microphone)' } }) },
+      { label: 'Focus in a drill-in', height: 400, state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceFocus: 'mic-Microphone Array (Laptop microphone)' } }) },
     ],
   },
 ]
