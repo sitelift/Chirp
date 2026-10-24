@@ -122,7 +122,7 @@ export function Words() {
         }
       />
       {(edit?.mode === 'add' || empty) && <EditRow />}
-      <div className="flex max-h-[288px] flex-col overflow-y-auto">
+      <div className="-m-[4px] flex max-h-[296px] flex-col overflow-y-auto p-[4px]">
         {items.map((item, i) =>
           edit?.mode === 'edit' && edit.index === i ? <EditRow key={`edit-${i}`} item={item} /> : <WordRow key={`${item.kind}-${item.say}-${i}`} item={item} index={i} />,
         )}

@@ -15,6 +15,8 @@ import type { View } from './types'
 const MARGIN = { top: 40, side: 40, bottom: 12 }
 const HOVER_PILL = { width: 56, height: 36 }
 const TICK = { width: 28, height: 5 }
+/** The tick sits centred in the slot the hover pill fills (frame 01). */
+const TICK_LIFT = (HOVER_PILL.height - TICK.height) / 2
 /** Longest morph (pill to surface, 240 ms) plus a frame. */
 const SHRINK_DELAY = 260
 
@@ -113,8 +115,8 @@ function useScene(): { kind: Kind; key: string; mode: Mode; content: ReactNode }
 }
 
 function morphStyle(kind: Kind, latched: boolean, size: { width: number; height: number }): CSSProperties {
-  if (kind === 'tick') return { ...TICK, borderRadius: 3, background: '#1A1917', opacity: 'var(--tick-opacity)' as unknown as number, boxShadow: '0 0 0 1px var(--tick-ring)' }
-  if (kind === 'none') return { width: TICK.width, height: TICK.height, opacity: 0, borderRadius: 3, background: '#1A1917' }
+  if (kind === 'tick') return { ...TICK, marginBottom: TICK_LIFT, borderRadius: 3, background: '#1A1917', opacity: 'var(--tick-opacity)' as unknown as number, boxShadow: '0 0 0 1px var(--tick-ring)' }
+  if (kind === 'none') return { ...TICK, marginBottom: TICK_LIFT, opacity: 0, borderRadius: 3, background: '#1A1917' }
   const surface = kind === 'surface'
   return {
     ...size,

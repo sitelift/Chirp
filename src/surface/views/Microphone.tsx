@@ -50,7 +50,7 @@ export function Microphone() {
   return (
     <div className="flex flex-col">
       <Header title="Microphone" onBack={() => drill(ctx, 'home')} />
-      <div className="flex max-h-[320px] flex-col overflow-y-auto">
+      <div className="-m-[4px] flex max-h-[328px] flex-col overflow-y-auto p-[4px]">
         {missing && <DeviceRow id={selected} label={deviceLabel(selected)} selected missing level={0} />}
         {devices.map((d) => (
           <DeviceRow key={d.id} id={d.id} label={deviceLabel(d.id, ids)} selected={d.id === selected} missing={false} level={levels[d.id] ?? 0} />

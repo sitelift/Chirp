@@ -164,7 +164,7 @@
 
 /* The morphing container: pill, tick and surface are one object. */
 .morph {
-  transition-property: width, height, border-radius, background-color, box-shadow, opacity, transform;
+  transition-property: width, height, margin, border-radius, background-color, box-shadow, opacity, transform;
   transition-duration: 240ms;
   transition-timing-function: var(--ease-out);
 }

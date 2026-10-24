@@ -36,12 +36,12 @@ function RecentRow({ entry }: { entry: HistoryEntry }) {
       <span className="min-w-0 flex-1 truncate font-display text-row text-t1">{entry.text}</span>
       {copied ? (
         <span className="flex shrink-0 items-center gap-[4px] text-meta text-t1">
-          <Check size={12} strokeWidth={2.5} />
+          <Check size={13} strokeWidth={2.5} />
           Copied
         </span>
       ) : (
         <>
-          <span className="w-[28px] shrink-0 text-right text-meta text-t3 group-hover:hidden group-focus-within:hidden group-data-[force-hover]:hidden">{relativeShort(entry.timestamp)}</span>
+          <span className="w-[28px] shrink-0 text-right font-display text-meta text-t3 group-hover:hidden group-focus-within:hidden group-data-[force-hover]:hidden">{relativeShort(entry.timestamp)}</span>
           <span className="hidden shrink-0 items-center gap-[12px] text-t1 group-hover:flex group-focus-within:flex group-data-[force-hover]:flex">
             <button
               type="button"
@@ -70,7 +70,7 @@ export function Recent() {
   return (
     <div className="flex flex-col">
       <Header title="Recent" onBack={() => drill(ctx, 'home')} />
-      <div className="flex max-h-[320px] flex-col overflow-y-auto">
+      <div className="-m-[4px] flex max-h-[328px] flex-col overflow-y-auto p-[4px]">
         {recent.map((e) => (
           <RecentRow key={e.timestamp} entry={e} />
         ))}
