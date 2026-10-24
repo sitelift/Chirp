@@ -20,6 +20,8 @@ struct Item {
 }
 #[derive(Serialize)]
 struct Run {
+    speculation: Option<app_lib::speculative::Metrics>,
+    baseline_llm: Option<serde_json::Value>,
     route: String,
     llm: Option<serde_json::Value>,
     id: String,
@@ -36,6 +38,70 @@ struct Run {
 }
 fn ms(t: Instant) -> f64 {
     t.elapsed().as_secs_f64() * 1000.0
+}
+// Stable non-security fingerprints identify the exact compiled prompt/client and
+// loaded manifest without embedding their contents in each performance artifact.
+fn fingerprint(bytes: &[u8]) -> String {
+    let hash = bytes.iter().fold(0xcbf29ce484222325_u64, |h, b| {
+        (h ^ *b as u64).wrapping_mul(0x100000001b3)
+    });
+    format!("fnv1a64:{hash:016x}")
+}
+type CloudResult = Result<app_lib::llm::LlmOutcome, String>;
+async fn routed_cleanup(
+    client: &app_lib::llm::LlmClient,
+    ctx: &app_lib::llm::AppContext,
+    text: &str,
+    speculation: Option<&app_lib::speculative::Speculation>,
+    compare: bool,
+) -> (
+    CloudResult,
+    Option<app_lib::speculative::Metrics>,
+    f64,
+    Option<(CloudResult, f64)>,
+) {
+    let start = Instant::now();
+    let normal = || async {
+        client
+            .cleanup(text, ctx, Duration::from_millis(2500))
+            .await
+            .map_err(|e| e.to_string())
+    };
+    if let Some(spec) = speculation {
+        if compare {
+            // Paired counterfactuals share audio/ASR and start at the same release.
+            // Retain individual completion times: waiting for the slower control
+            // must not inflate the speculative path's latency.
+            let ((candidate, metrics, spec_ms), (baseline, baseline_ms)) =
+                futures_util::future::join(
+                    async {
+                        let (out, metrics) = spec.finish(text).await;
+                        (out, metrics, ms(start))
+                    },
+                    async {
+                        let out = normal().await;
+                        (out, ms(start))
+                    },
+                )
+                .await;
+            return match candidate {
+                Some(out) => (out, Some(metrics), spec_ms, Some((baseline, baseline_ms))),
+                None => (
+                    baseline.clone(),
+                    Some(metrics),
+                    baseline_ms,
+                    Some((baseline, baseline_ms)),
+                ),
+            };
+        }
+        let (candidate, metrics) = spec.finish(text).await;
+        let out = match candidate {
+            Some(out) => out,
+            None => normal().await,
+        };
+        return (out, Some(metrics), ms(start), None);
+    }
+    (normal().await, None, ms(start), None)
 }
 fn words(s: &str) -> Vec<String> {
     s.split_whitespace()
@@ -202,11 +268,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("--vad applies to offline Parakeet only".into());
     }
     let use_llm = args.iter().any(|a| a == "--llm");
+    let compare_speculation = args.iter().any(|a| a == "--compare-speculation");
+    let speculate = compare_speculation || args.iter().any(|a| a == "--speculate");
+    if speculate && (!use_llm || vad_path.is_none() || !paced) {
+        return Err("speculation requires --llm, --vad and paced input".into());
+    }
+    let trim_silence: Option<f64> = args
+        .windows(2)
+        .find(|a| a[0] == "--trailing-silence-ms")
+        .map(|a| a[1].parse())
+        .transpose()?;
+    if trim_silence.is_some_and(|v| !v.is_finite() || v < 0.0) {
+        return Err("trailing silence must be nonnegative".into());
+    }
+    let warm_only = args.iter().any(|a| a == "--warm-only");
     let client = app_lib::llm::LlmClient::from_env();
     if use_llm && !client.has_key() {
         return Err("--llm requires ANTHROPIC_API_KEY".into());
     }
-    let mut corpus: Vec<Item> = serde_json::from_slice(&std::fs::read(&manifest)?)?;
+    let manifest_bytes = std::fs::read(&manifest)?;
+    let manifest_fingerprint = fingerprint(&manifest_bytes);
+    let mut corpus: Vec<Item> = serde_json::from_slice(&manifest_bytes)?;
     let min_seconds: f64 = arg("--min-seconds", "0").parse()?;
     let max_seconds: f64 = arg("--max-seconds", "100000").parse()?;
     let mut filtered = Vec::new();
@@ -274,8 +356,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "file", "run", "ASR ms", "tail ms", "cleanup", "WER"
     );
     // One true first decode, then N warm corpus passes. The first pass is retained separately.
-    for iteration in 0..=iterations {
+    for iteration in usize::from(warm_only)..=iterations {
         for (index, item) in corpus.iter().enumerate() {
+            let ctx = app_lib::llm::AppContext {
+                app: item.context["app"].as_str().unwrap_or_default().into(),
+                title: item.context["title"].as_str().unwrap_or_default().into(),
+                url: item.context["url"].as_str().map(Into::into),
+            };
+            let speculation = speculate.then(|| {
+                app_lib::speculative::Speculation::new(
+                    client.clone(),
+                    ctx.clone(),
+                    Duration::from_millis(2500),
+                )
+            });
             if use_llm {
                 client.prewarm();
             }
@@ -291,10 +385,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             {
                 return Err(format!("{} must be PCM16 mono 16kHz", item.wav).into());
             }
-            let samples: Vec<f32> = wav
+            let mut samples: Vec<f32> = wav
                 .samples::<i16>()
                 .map(|s| s.map(|s| s as f32 / 32768.0))
                 .collect::<Result<_, _>>()?;
+            if let Some(quiet_ms) = trim_silence {
+                // Preserve every nonzero PCM sample; only remove digital silence.
+                if let Some(last) = samples.iter().rposition(|s| *s != 0.0) {
+                    samples.truncate((last + 1 + (quiet_ms * 16.0) as usize).min(samples.len()));
+                }
+            }
             stages.insert("wav_read".into(), ms(t));
             stages.insert("resample".into(), 0.0); // Corpus is already 16 kHz mono.
             let (raw, asr, tail, precleaned) = if let Some(rec) = &streaming {
@@ -308,7 +408,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let mut asr_capture_ms = 0.0;
                 let mut cleanup_capture_ms = 0.0;
                 let mut vad_ms = 0.0;
-                let mut decode = |segment: &[f32], during_capture: bool| -> Result<(), String> {
+                let mut decode = |segment: &[f32],
+                                  release_at: Option<Instant>|
+                 -> Result<(), String> {
                     let t = Instant::now();
                     let mut chunks = Vec::new();
                     for chunk in transcribe::chunk_audio(segment, 16000, 30.0, 1.0) {
@@ -316,8 +418,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     let elapsed = ms(t);
                     asr_ms += elapsed;
-                    if during_capture {
-                        asr_capture_ms += elapsed;
+                    if let Some(release_at) = release_at {
+                        asr_capture_ms += elapsed
+                            .min(release_at.saturating_duration_since(t).as_secs_f64() * 1000.0);
                     }
                     let raw = transcribe::merge_transcriptions(chunks);
                     if vad_path.is_some() && !raw.is_empty() {
@@ -327,6 +430,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                             &[],
                         ));
                         cleanup_capture_ms += ms(t);
+                        if let Some(spec) = &speculation {
+                            if release_at.is_none_or(|at| Instant::now() >= at) {
+                                spec.seal();
+                            }
+                            let joined = cleanup::join_cleaned_segments_with_formatting(
+                                &cleaned_segments,
+                                true,
+                            );
+                            spec.offer(cleanup::repair_vad_boundary_artifacts(&joined));
+                        }
                     }
                     texts.push(raw);
                     Ok(())
@@ -350,7 +463,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         audio::feed_vad(chunk, &state);
                         vad_ms += ms(t);
                         for segment in rx.try_iter() {
-                            decode(&segment, true)?;
+                            decode(
+                                &segment,
+                                Some(
+                                    begin + Duration::from_secs_f64(samples.len() as f64 / 16000.0),
+                                ),
+                            )?;
                         }
                     }
                     let backlog = if paced {
@@ -359,15 +477,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         0.0
                     };
                     let tail = Instant::now();
+                    if let Some(spec) = &speculation {
+                        spec.seal();
+                    }
                     let t = Instant::now();
                     audio::flush_vad(&state);
                     vad_ms += ms(t);
                     for segment in rx.try_iter() {
-                        decode(&segment, false)?;
+                        decode(&segment, None)?;
                     }
                     tail_ms = backlog + ms(tail);
                 } else {
-                    decode(&samples, false)?;
+                    decode(&samples, None)?;
                     tail_ms = asr_ms;
                 }
                 stages.insert("vad".into(), vad_ms);
@@ -397,23 +518,39 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let t = Instant::now();
             let cleaned = cleanup::repair_vad_boundary_artifacts(&cleaned);
             stages.insert("boundary_and_snippets".into(), ms(t)); // Empty snippet configuration.
-            let route = if cleaned.split_whitespace().count() <= 6 {
-                "skip"
-            } else {
+            let route = if app_lib::router::needs_llm(&cleaned, &ctx.app) {
                 "haiku"
+            } else {
+                "skip"
             };
             let mut llm = None;
-            let t = Instant::now();
+            let mut spec_metrics = None;
+            let mut baseline_llm = None;
+            let mut llm_ms = 0.0;
+            let deterministic_ms = ms(post_asr);
             let cleaned = if use_llm && route == "haiku" {
-                let ctx = app_lib::llm::AppContext {
-                    app: item.context["app"].as_str().unwrap_or_default().into(),
-                    title: item.context["title"].as_str().unwrap_or_default().into(),
-                };
-                match tauri::async_runtime::block_on(client.cleanup(
-                    &cleaned,
-                    &ctx,
-                    Duration::from_millis(2500),
-                )) {
+                let (out, metrics, elapsed, baseline) =
+                    tauri::async_runtime::block_on(routed_cleanup(
+                        &client,
+                        &ctx,
+                        &cleaned,
+                        speculation.as_ref(),
+                        compare_speculation,
+                    ));
+                llm_ms = elapsed;
+                spec_metrics = metrics;
+                if let Some((out, elapsed)) = baseline {
+                    stages.insert("baseline_llm".into(), elapsed);
+                    stages.insert(
+                        "baseline_end_of_audio_to_final".into(),
+                        tail + deterministic_ms + elapsed,
+                    );
+                    baseline_llm = Some(match out {
+                        Ok(out) => serde_json::to_value(out)?,
+                        Err(e) => json!({"error":e}),
+                    });
+                }
+                match out {
                     Ok(out) => {
                         stages.insert("llm_ttft".into(), out.ttft_ms as f64);
                         stages.insert("llm_service_total".into(), out.total_ms as f64);
@@ -426,11 +563,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                 }
             } else {
+                if let Some(spec) = &speculation {
+                    let (_, metrics) = tauri::async_runtime::block_on(spec.finish(&cleaned));
+                    spec_metrics = Some(metrics);
+                }
                 cleaned
             };
-            stages.insert("llm".into(), ms(t));
+            stages.insert("llm".into(), llm_ms);
             stages.insert("pipeline_wall".into(), ms(pipeline_start));
-            stages.insert("end_of_audio_to_final".into(), tail + ms(post_asr));
+            stages.insert(
+                "end_of_audio_to_final".into(),
+                tail + deterministic_ms + llm_ms,
+            );
             let (errors, reference, wer) = wer(&item.spoken, &raw);
             println!(
                 "{:24} {:>5} {:>10.2} {:>10.2} {:>10.2} {:>7.1}%",
@@ -443,6 +587,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let _ = (&item.ideal, &item.context); // retained in the input manifest; no cloud cleanup in this bench.
             runs.push(Run {
+                speculation: spec_metrics,
+                baseline_llm,
                 route: route.into(),
                 llm,
                 id: item.id.clone(),
@@ -475,7 +621,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let errors: usize = selected.iter().map(|r| r.word_errors).sum();
         let words: usize = selected.iter().map(|r| r.reference_words).sum();
-        json!({"samples":selected.len(),"llm_errors":selected.iter().filter(|r| r.llm.as_ref().is_some_and(|v| v.get("error").is_some())).count(),"stages_ms":stages,"wer":if words>0 {Some(errors as f64/words as f64)}else{None},"word_errors":errors,"reference_words":words})
+        json!({"samples":selected.len(),"speculative_hits":selected.iter().filter(|r|r.speculation.as_ref().is_some_and(|s|s.hit)).count(),"speculative_calls":selected.iter().filter_map(|r|r.speculation.as_ref().map(|s|s.calls)).sum::<usize>(),"speculative_overlap_ms":stats(selected.iter().filter_map(|r|r.speculation.as_ref().map(|s|s.time_saved_ms)).collect()),"baseline_llm_errors":selected.iter().filter(|r|r.baseline_llm.as_ref().is_some_and(|v|v.get("error").is_some())).count(),"llm_errors":selected.iter().filter(|r| r.llm.as_ref().is_some_and(|v| v.get("error").is_some())).count(),"stages_ms":stages,"wer":if words>0 {Some(errors as f64/words as f64)}else{None},"word_errors":errors,"reference_words":words})
     };
     let warm = aggregate(runs.iter().filter(|r| r.iteration > 0).collect());
     let groups = json!({"skip":aggregate(runs.iter().filter(|r|r.iteration>0 && r.route=="skip").collect()),"haiku":aggregate(runs.iter().filter(|r|r.iteration>0 && r.route=="haiku").collect())});
@@ -509,7 +655,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "{}-{label}.json",
         chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
     ));
-    let result = json!({"model_dir":dir,"provider_requested":provider,"threads":threads,"online":online,"paced":paced,"manifest":manifest,"iterations":iterations,"limit":limit,"llm_enabled":use_llm,"vad_model":vad_path,"model_load_ms":model_load_ms,"warmup_ms":warmup_ms,"gpu_before":gpu_before,"gpu_loaded":gpu_loaded,"gpu_after":gpu(),"aggregate_warm":warm,"groups_warm":groups,"provider_selected":provider,"provider_option":requested,"per_file_warm":per_file,"runs":runs,"notes":"GPU memory is device-wide snapshots, not process peak. First corpus pass excluded from warm aggregates. WAV loading excluded from tail. VAD simulation uses the real segmenter; ASR runs synchronously between feeds, so paced tail conservatively includes backlog. No clipboard or microphone in this harness. LLM is opt-in. Zero resample cost: corpus is already 16 kHz."});
+    let result = json!({"model_dir":dir,"provider_requested":provider,"threads":threads,"online":online,"paced":paced,"manifest":manifest,"manifest_fingerprint":manifest_fingerprint,"prompt_fingerprint":fingerprint(include_bytes!("../prompts/cleanup_system.md")),"llm_client_fingerprint":fingerprint(include_bytes!("../llm.rs")),"iterations":iterations,"limit":limit,"llm_enabled":use_llm,"speculation_enabled":speculate,"paired_control":compare_speculation,"warm_only":warm_only,"trailing_silence_ms":trim_silence,"vad_model":vad_path,"model_load_ms":model_load_ms,"warmup_ms":warmup_ms,"gpu_before":gpu_before,"gpu_loaded":gpu_loaded,"gpu_after":gpu(),"aggregate_warm":warm,"groups_warm":groups,"provider_selected":provider,"provider_option":requested,"per_file_warm":per_file,"runs":runs,"notes":"GPU memory is device-wide snapshots, not process peak. First corpus pass excluded from warm aggregates. WAV loading excluded from tail. VAD simulation uses the real segmenter; ASR runs synchronously between feeds, so paced tail conservatively includes backlog. No clipboard or microphone in this harness. LLM is opt-in. Zero resample cost: corpus is already 16 kHz."});
     std::fs::write(&path, serde_json::to_vec_pretty(&result)?)?;
     println!(
         "Warm stages (ms): {}",

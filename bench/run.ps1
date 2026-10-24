@@ -10,6 +10,10 @@ param(
     [switch]$Online,
     [switch]$Unpaced,
     [switch]$Llm,
+    [switch]$Speculate,
+    [switch]$CompareSpeculation,
+    [switch]$WarmOnly,
+    [double]$TrailingSilenceMs = -1,
     [switch]$MicLifecycle,
     [string]$Vad = '',
     [switch]$SkipBuild
@@ -17,7 +21,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repo = Split-Path $PSScriptRoot -Parent
 Set-Location $repo
-$env:PATH = "$env:USERPROFILE/.cargo/bin;C:/Program Files/CMake/bin;C:/Program Files/LLVM/bin;$env:PATH"
+$env:PATH = "$env:USERPROFILE/.cargo/bin;C:/Program Files/CMake/bin;C:/Program Files/LLVM/bin;${env:ProgramFiles(x86)}/Microsoft Visual Studio/Installer;$env:PATH"
 $env:CARGO_TARGET_DIR = 'C:/tmp/chirp-target'
 $env:LIBCLANG_PATH = 'C:/Program Files/LLVM/bin'
 if (!$SkipBuild) {
@@ -50,6 +54,10 @@ if ($Limit -gt 0) { $benchArgs += @('--limit',"$Limit") }
 if ($Online) { $benchArgs += '--online' }
 if ($Unpaced) { $benchArgs += '--unpaced' }
 if ($Llm) { $benchArgs += '--llm' }
+if ($Speculate) { $benchArgs += '--speculate' }
+if ($CompareSpeculation) { $benchArgs += '--compare-speculation' }
+if ($WarmOnly) { $benchArgs += '--warm-only' }
+if ($TrailingSilenceMs -ge 0) { $benchArgs += @('--trailing-silence-ms',"$TrailingSilenceMs") }
 if ($MicLifecycle) { $benchArgs += '--mic-lifecycle' }
 if ($Vad) { $benchArgs += @('--vad',$Vad) }
 & "$runtime/bench.exe" @benchArgs
