@@ -115,6 +115,13 @@ impl Speculation {
         loop {
             let text = {
                 let mut s = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+                // A replacement may have been reserved just before release.
+                // Do not turn that reservation into a new cloud call afterward.
+                if !s.accepting {
+                    s.inflight = None;
+                    self.changed.notify_one();
+                    return;
+                }
                 let Some(text) = s.inflight.clone() else {
                     return;
                 };
@@ -228,6 +235,19 @@ mod tests {
             cache_write_tokens: 0,
             output_tokens: 0,
         }
+    }
+    #[test]
+    fn release_discards_a_reserved_but_not_started_request() {
+        tauri::async_runtime::block_on(async {
+            let cleanup: Cleanup = Arc::new(|_| panic!("must not launch after release"));
+            let spec = Speculation::with_cleanup("Outlook".into(), true, cleanup);
+            spec.inner.lock().unwrap().inflight = Some("pending".into());
+            spec.seal();
+            spec.run().await;
+            let (out, stats) = spec.finish("pending").await;
+            assert!(out.is_none());
+            assert_eq!(stats.calls, 0);
+        });
     }
     #[test]
     fn newer_segments_coalesce_and_only_exact_final_text_is_reused() {
