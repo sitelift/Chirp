@@ -1,6 +1,6 @@
 export const DEFAULT_SETTINGS = {
-  hotkey: 'MetaLeft+ShiftLeft+Space',
-  hotkeyMode: 'hold' as const,
+  holdBinding: { keys: [{scan: 29, extended: true, vk: 163}], label: 'Right Ctrl', suppress: false },
+  toggleBinding: { keys: [{scan: 29, extended: false, vk: 162}, {scan: 91, extended: true, vk: 91}], label: 'Left Ctrl + Left Win', suppress: false },
   launchAtLogin: true,
   playSoundOnComplete: false,
   autoDismissOverlay: true,

@@ -3,7 +3,7 @@ import { DEFAULT_SETTINGS, type ErrorType } from '../lib/constants'
 
 export type AppStatus = 'idle' | 'listening' | 'processing' | 'polishing' | 'done' | 'error'
 export type SttModel = 'parakeet-tdt-0.6b'
-export type HotkeyMode = 'hold' | 'tap'
+import type { Binding } from '../lib/hotkeyCapture'
 
 export interface SnippetEntry {
   trigger: string
@@ -38,8 +38,8 @@ export interface AppState {
   amplitudes: number[]
 
   // Settings
-  hotkey: string
-  hotkeyMode: HotkeyMode
+  holdBinding: Binding | null
+  toggleBinding: Binding | null
   launchAtLogin: boolean
   playSoundOnComplete: boolean
   autoDismissOverlay: boolean
@@ -134,8 +134,8 @@ export const useAppStore = create<AppState>((set) => ({
   amplitudes: [],
 
   // Settings (from defaults)
-  hotkey: DEFAULT_SETTINGS.hotkey,
-  hotkeyMode: DEFAULT_SETTINGS.hotkeyMode,
+  holdBinding: DEFAULT_SETTINGS.holdBinding,
+  toggleBinding: DEFAULT_SETTINGS.toggleBinding,
   launchAtLogin: DEFAULT_SETTINGS.launchAtLogin,
   playSoundOnComplete: DEFAULT_SETTINGS.playSoundOnComplete,
   autoDismissOverlay: DEFAULT_SETTINGS.autoDismissOverlay,

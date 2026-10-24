@@ -18,7 +18,7 @@ export function useRecording() {
   const busyRef = useRef(false)
   const busyTimestampRef = useRef(0)
   const pendingStopRef = useRef(false)
-  const lastTapAtRef = useRef(0)
+  const ownerRef = useRef<'hold' | 'toggle' | null>(null)
 
   useEffect(() => {
     // Only handle recording in the overlay window
@@ -44,21 +44,24 @@ export function useRecording() {
     }
 
     // --- Hotkey press: start in hold mode, toggle in tap mode ---
-    listen('hotkey-pressed', async () => {
+    listen<string>('hotkey-pressed', async (event) => {
       checkBusyStale()
-      if (useAppStore.getState().hotkeyMode === 'tap') {
-        const now = Date.now()
-        if (now - lastTapAtRef.current < 250) return
-        lastTapAtRef.current = now
-        if (busyRef.current) return
+      if (event.payload === 'toggle') {
+        if (busyRef.current) {
+          if (useAppStore.getState().status === 'listening') pendingStopRef.current = true
+          return
+        }
 
         const status = useAppStore.getState().status
         setBusy(true)
         try {
           if (status === 'idle' || status === 'error' || status === 'done') {
             if (status === 'error' || status === 'done') setStatus('idle')
+            ownerRef.current = 'toggle'
+            pendingStopRef.current = false
             setStatus('listening')
             await tauri.startRecording()
+            if (pendingStopRef.current) { pendingStopRef.current = false; await stopAndProcess() }
           } else if (status === 'listening') {
             await stopAndProcess()
           }
@@ -79,8 +82,9 @@ export function useRecording() {
       setBusy(true)
       pendingStopRef.current = false
       try {
+        ownerRef.current = 'hold'
         setStatus('listening')
-        await tauri.startRecording()
+        await tauri.startRecording(true)
       } catch (e) {
         handleStartError(e)
         return
@@ -101,8 +105,8 @@ export function useRecording() {
     }).then((fn) => unlisteners.push(fn))
 
     // --- Hold-to-record: release to stop ---
-    listen('hotkey-released', async () => {
-      if (useAppStore.getState().hotkeyMode === 'tap') return
+    listen<string | null>('hotkey-released', async (event) => {
+      if (event.payload === 'hold' && ownerRef.current !== 'hold') return
 
       // If start is still in progress, queue the stop for when it finishes
       if (busyRef.current) {
@@ -130,8 +134,11 @@ export function useRecording() {
       try {
         if (status === 'idle' || status === 'error' || status === 'done') {
           if (status === 'error' || status === 'done') setStatus('idle')
+          ownerRef.current = 'toggle'
+          pendingStopRef.current = false
           setStatus('listening')
           await tauri.startRecording()
+          if (pendingStopRef.current) { pendingStopRef.current = false; await stopAndProcess() }
         } else if (status === 'listening') {
           await stopAndProcess()
         }
@@ -143,6 +150,7 @@ export function useRecording() {
     }).then((fn) => unlisteners.push(fn))
 
     async function stopAndProcess() {
+      ownerRef.current = null
       try {
         setStatus('processing')
         const result = await tauri.stopRecording()

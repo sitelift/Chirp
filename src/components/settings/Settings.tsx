@@ -33,8 +33,7 @@ export function Settings() {
   const setSettingsPage = useAppStore((s) => s.setSettingsPage)
   const settingsSaved = useAppStore((s) => s.settingsSaved)
   const setSettingsSaved = useAppStore((s) => s.setSettingsSaved)
-  const hotkey = useAppStore((s) => s.hotkey)
-  const hotkeyMode = useAppStore((s) => s.hotkeyMode)
+  const hotkey = useAppStore((s) => s.holdBinding ?? s.toggleBinding)
   const aboutModalOpen = useAppStore((s) => s.aboutModalOpen)
   const setAboutModalOpen = useAppStore((s) => s.setAboutModalOpen)
   const setUpdateAvailable = useAppStore((s) => s.setUpdateAvailable)
@@ -157,7 +156,7 @@ export function Settings() {
           {/* Hotkey card */}
           <div className="mx-1 p-[14px] bg-white/[0.05] rounded-[10px] border border-white/[0.06] backdrop-blur-sm">
             <div className="text-[10px] text-white/30 font-semibold uppercase tracking-[1px] mb-2">
-              {hotkeyMode === 'tap' ? 'Tap to dictate' : 'Hold to dictate'}
+              Hold to dictate
             </div>
             <div className="flex gap-1">
               {hotkeyKeys.map((key) => (
