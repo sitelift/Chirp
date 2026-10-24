@@ -1,0 +1,15 @@
+{
+  "_comment": "Held-out test ids. Never tune the cleanup prompt against these; report them separately. Stratified: at least one per category.",
+  "test": [
+    "chat-03",
+    "chat-07",
+    "email-03",
+    "email-06",
+    "prompt-03",
+    "prompt-06",
+    "code-04",
+    "list-04",
+    "ramble-04",
+    "short-04"
+  ]
+}
