@@ -3,6 +3,7 @@ param(
     [int]$Threads = 0,
     [int]$Iterations = 3,
     [string]$ModelDir = '',
+    [string]$Manifest = '',
     [string]$Label = '',
     [int]$Limit = 0,
     [double]$MinSeconds = 0,
@@ -49,6 +50,7 @@ Copy-Item -LiteralPath "$env:CARGO_TARGET_DIR/release/bench.exe" -Destination "$
 $benchArgs = @('--provider',$Provider,'--iterations',"$Iterations",'--min-seconds',"$MinSeconds",'--max-seconds',"$MaxSeconds")
 if ($Threads -gt 0) { $benchArgs += @('--threads',"$Threads") }
 if ($ModelDir) { $benchArgs += @('--model-dir',$ModelDir) }
+if ($Manifest) { $benchArgs += @('--manifest',$Manifest) }
 if ($Label) { $benchArgs += @('--label',$Label) }
 if ($Limit -gt 0) { $benchArgs += @('--limit',"$Limit") }
 if ($Online) { $benchArgs += '--online' }

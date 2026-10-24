@@ -17,6 +17,10 @@ struct Item {
     spoken: String,
     ideal: String,
     context: serde_json::Value,
+    #[serde(default)]
+    dictionary_terms: Vec<String>,
+    #[serde(default)]
+    needs_review: bool,
 }
 #[derive(Serialize)]
 struct Run {
@@ -52,6 +56,7 @@ async fn routed_cleanup(
     client: &app_lib::llm::LlmClient,
     ctx: &app_lib::llm::AppContext,
     text: &str,
+    terms: &[String],
     speculation: Option<&app_lib::speculative::Speculation>,
     compare: bool,
 ) -> (
@@ -63,7 +68,7 @@ async fn routed_cleanup(
     let start = Instant::now();
     let normal = || async {
         client
-            .cleanup(text, ctx, Duration::from_millis(2500))
+            .cleanup_with(text, ctx, terms, Duration::from_millis(2500))
             .await
             .map_err(|e| e.to_string())
     };
@@ -307,6 +312,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if corpus.is_empty() {
         return Err("empty corpus".into());
     }
+    if corpus.iter().any(|item| item.needs_review) {
+        return Err("Human references are drafts: correct spoken/ideal and set needs_review=false before scoring them".into());
+    }
     let gpu_before = gpu();
     let load = Instant::now();
     let offline = if !online {
@@ -364,14 +372,15 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 url: item.context["url"].as_str().map(Into::into),
             };
             let speculation = speculate.then(|| {
-                app_lib::speculative::Speculation::new(
+                app_lib::speculative::Speculation::new_with_terms(
                     client.clone(),
                     ctx.clone(),
+                    item.dictionary_terms.clone(),
                     Duration::from_millis(2500),
                 )
             });
             if use_llm {
-                client.prewarm();
+                client.prewarm_with(&item.dictionary_terms);
             }
             let pipeline_start = Instant::now();
             let mut stages = BTreeMap::new();
@@ -380,15 +389,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let spec = wav.spec();
             if spec.channels != 1
                 || spec.sample_rate != 16000
-                || spec.bits_per_sample != 16
-                || spec.sample_format != hound::SampleFormat::Int
+                || !matches!(
+                    (spec.sample_format, spec.bits_per_sample),
+                    (hound::SampleFormat::Int, 16) | (hound::SampleFormat::Float, 32)
+                )
             {
-                return Err(format!("{} must be PCM16 mono 16kHz", item.wav).into());
+                return Err(format!("{} must be PCM16 or float32 mono 16kHz", item.wav).into());
             }
-            let mut samples: Vec<f32> = wav
-                .samples::<i16>()
-                .map(|s| s.map(|s| s as f32 / 32768.0))
-                .collect::<Result<_, _>>()?;
+            let mut samples: Vec<f32> = if spec.sample_format == hound::SampleFormat::Float {
+                wav.samples::<f32>().collect::<Result<_, _>>()?
+            } else {
+                wav.samples::<i16>()
+                    .map(|s| s.map(|s| s as f32 / 32768.0))
+                    .collect::<Result<_, _>>()?
+            };
+            if samples.iter().any(|s| !s.is_finite()) {
+                return Err(format!("{} contains non-finite audio samples", item.wav).into());
+            }
             if let Some(quiet_ms) = trim_silence {
                 // Preserve every nonzero PCM sample; only remove digital silence.
                 if let Some(last) = samples.iter().rposition(|s| *s != 0.0) {
@@ -534,6 +551,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         &client,
                         &ctx,
                         &cleaned,
+                        &item.dictionary_terms,
                         speculation.as_ref(),
                         compare_speculation,
                     ));
