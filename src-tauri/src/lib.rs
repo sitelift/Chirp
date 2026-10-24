@@ -10,6 +10,8 @@ mod hotkey_input;
 mod hotkey_migration;
 mod inject;
 pub mod llm;
+pub mod router;
+pub mod speculative;
 mod settings;
 mod snippets;
 mod state;
@@ -65,6 +67,7 @@ pub fn run() {
         .manage::<AudioBuffer>(Arc::new(std::sync::Mutex::new(Vec::new())))
         .manage(crate::llm::LlmClient::from_env())
         .manage(commands::RecordingContext::default())
+        .manage(crate::speculative::RecordingSpeculation::default())
         .manage(StreamHandle(std::sync::Mutex::new(None)))
         .manage(StreamErrorState(std::sync::Mutex::new(None)))
         .manage(ResamplerFlushState(std::sync::Mutex::new(None)))

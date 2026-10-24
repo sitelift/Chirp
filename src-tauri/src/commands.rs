@@ -293,9 +293,14 @@ pub async fn start_recording(
     vad_flush_handle: State<'_, VadFlushHandle>,
 ) -> Result<(), String> {
     let (capture_start, context) = app_handle.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()).take().unwrap_or_else(|| (Instant::now(), crate::context::foreground()));
-    *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = context;
+    *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = context.clone();
     app_handle.state::<crate::llm::LlmClient>().prewarm();
     let trace = crate::performance::Trace::start();
+    let speculation = crate::speculative::Speculation::new(
+        app_handle.state::<crate::llm::LlmClient>().inner().clone(), context,
+        std::time::Duration::from_millis(2500),
+    );
+    if let Some(old) = app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()).replace(speculation.clone()) { old.cancel(); }
     // Self-heal: if we're already in a Recording/Processing state, a prior
     // session got stuck (e.g. stop_recording never fired due to a press/release
     // race). Tear down the stale stream + buffer and proceed fresh rather than
@@ -398,6 +403,7 @@ pub async fn start_recording(
     let recognizer_for_vad = s.recognizer.clone();
     let smart_fmt_for_vad = s.settings.smart_formatting;
     let vocab_for_vad = s.vocabulary.clone();
+    let snippets_for_vad = s.snippets.clone();
     s.recording_state = RecordingState::Recording;
     s.vad_was_active = false;
     drop(s);
@@ -426,6 +432,7 @@ pub async fn start_recording(
                 let cleaned = vad_cleaned.0.clone();
                 let state_for_thread = state.inner().clone();
                 let rec = recognizer_for_vad.clone().unwrap();
+                let speculation_for_vad = speculation.clone();
 
                 let handle = std::thread::Builder::new()
                     .name("vad-receiver".into())
@@ -481,10 +488,14 @@ pub async fn start_recording(
                             // No per-segment LLM cleanup — the joined text
                             // gets a single polish pass in stop_recording
                             // after the hotkey is released.
-                            cleaned
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .push(after_vocab);
+                            let text_so_far = {
+                                let mut segments = cleaned.lock().unwrap_or_else(|e| e.into_inner());
+                                segments.push(after_vocab);
+                                cleanup::join_cleaned_segments_with_formatting(&segments, smart_fmt_for_vad)
+                            };
+                            let text_so_far = cleanup::repair_vad_boundary_artifacts(&text_so_far);
+                            let text_so_far = snippets::apply_snippets(&text_so_far, &snippets_for_vad);
+                            speculation_for_vad.offer(text_so_far);
                             seg_idx += 1;
                         }
                         log::info!("VAD receiver thread exiting after {seg_idx} segments");
@@ -597,6 +608,8 @@ pub async fn stop_recording(
     let start_time = Instant::now();
     let trace = crate::performance::Trace::current().unwrap_or_else(crate::performance::Trace::start);
     trace.release();
+    let speculation = app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()).take();
+    if let Some(speculation) = &speculation { speculation.seal(); }
     let _ = &stream_handle;
 
     // Grab wall-clock recording duration for sample rate sanity check
@@ -892,8 +905,17 @@ pub async fn stop_recording(
     let llm_start = Instant::now();
     let client = app_handle.state::<crate::llm::LlmClient>().inner().clone();
     let ctx = app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()).clone();
-    let result = if client.has_key() && result.split_whitespace().count() > 6 {
-        match client.cleanup(&result, &ctx, std::time::Duration::from_millis(2500)).await {
+    let speculative_outcome = if let Some(speculation) = speculation {
+        let (outcome, metrics) = speculation.finish(&result).await;
+        trace.speculation(metrics);
+        outcome
+    } else { None };
+    let result = if client.has_key() && crate::router::needs_llm(&result, &ctx.app) {
+        let outcome = match speculative_outcome {
+            Some(outcome) => outcome,
+            None => client.cleanup(&result, &ctx, std::time::Duration::from_millis(2500)).await.map_err(|e|e.to_string()),
+        };
+        match outcome {
             Ok(out) => {
                 trace.llm(serde_json::json!({"ttft_ms":out.ttft_ms,"total_ms":out.total_ms,"cache_read_tokens":out.cache_read_tokens,"cache_write_tokens":out.cache_write_tokens,"input_tokens":out.input_tokens,"output_tokens":out.output_tokens}));
                 was_cleaned_up = true; out.text
@@ -1042,11 +1064,13 @@ pub async fn stop_recording(
 
 #[tauri::command]
 pub async fn cancel_recording(
+    app_handle: AppHandle,
     state: State<'_, SharedState>,
     buffer: State<'_, AudioBuffer>,
     stream_handle: State<'_, StreamHandle>,
     stream_active_state: State<'_, StreamActiveState>,
 ) -> Result<(), String> {
+    if let Some(speculation) = app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()).take() { speculation.cancel(); }
     // Deactivate zombie callbacks before dropping the stream
     {
         let active = stream_active_state

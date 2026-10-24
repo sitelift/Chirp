@@ -9,6 +9,8 @@ use std::{
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Breakdown {
     pub llm: Option<serde_json::Value>,
+    #[serde(default)]
+    pub speculation: Option<crate::speculative::Metrics>,
     pub stages_ms: BTreeMap<String, f64>,
     pub asr_chunks_ms: Vec<f64>,
     #[serde(default)]
@@ -98,6 +100,9 @@ impl Trace {
     }
     pub fn llm(&self, value: serde_json::Value) {
         self.0.lock().unwrap_or_else(|e| e.into_inner()).data.llm = Some(value);
+    }
+    pub fn speculation(&self, value: crate::speculative::Metrics) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).data.speculation = Some(value);
     }
     pub async fn wait_restored(&self) {
         self.1.notified().await;
