@@ -1,4 +1,6 @@
-# Renders every `spoken` line in bench/corpus/manifest.json to a WAV with Windows SAPI
+# Renders every entry in bench/corpus/manifest.json to a WAV with Windows SAPI. It speaks
+# the entry's optional `tts` text when present (a phonetic respelling so US voices say
+# Dutch names the way the user does), otherwise `spoken`.
 # (System.Speech, fully offline). Output: 16 kHz, 16-bit, mono PCM, 300 ms of silence
 # at the start and end.
 #
@@ -94,7 +96,8 @@ for ($i = 0; $i -lt $entries.Count; $i++) {
     $ms = New-Object System.IO.MemoryStream
     # Raw PCM (no header) in the requested format; we write our own header.
     $synth.SetOutputToAudioStream($ms, $format)
-    $synth.Speak([string]$e.spoken)
+    $text = if ($e.PSObject.Properties['tts'] -and $e.tts) { [string]$e.tts } else { [string]$e.spoken }
+    $synth.Speak($text)
     $synth.SetOutputToNull()
     $pcm = $ms.ToArray()
     $ms.Dispose()

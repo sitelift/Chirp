@@ -1,0 +1,10 @@
+[
+  { "term": "Pieter de Bruijn", "replaces": ["Peter de Brown", "Peter de Bruin", "Peter de Brone", "Peter de Bron", "Pieter the Bruin"] },
+  { "term": "de Bruijn", "replaces": ["de Brown", "de Bruin", "de Brone", "DeBron", "DeBrone"] },
+  { "term": "Pieter", "replaces": ["Peter"] },
+  { "term": "Sitelift", "replaces": ["sight lift", "site lift", "Sightlift"] },
+  { "term": "Bloem & Co", "replaces": ["Bloom and Co", "Bloem and Co", "Bloom & Co"] },
+  { "term": "Sanne Visser", "replaces": ["Sana Visser", "Sanne Fisser"] },
+  { "term": "Thijs", "replaces": ["Tice", "Thice"] },
+  { "term": "Daan", "replaces": ["Dahn"] }
+]

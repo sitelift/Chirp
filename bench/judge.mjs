@@ -192,13 +192,16 @@ function agg(list) {
   out.min_overall = Math.min(...ok.map((j) => j.overall));
   return out;
 }
+// `human-` ids are real recordings (the primary eval); everything else is synthetic SAPI audio or text.
 const groups = {
   all: judged,
+  human: judged.filter((j) => j.id.startsWith("human-")),
+  synthetic: judged.filter((j) => !j.id.startsWith("human-")),
   train: judged.filter((j) => j.split === "train"),
   test: judged.filter((j) => j.split === "test"),
 };
 for (const cat of [...new Set(judged.map((j) => j.category))]) groups[`cat:${cat}`] = judged.filter((j) => j.category === cat);
-const summary = Object.fromEntries(Object.entries(groups).map(([k, v]) => [k, agg(v)]));
+const summary = Object.fromEntries(Object.entries(groups).filter(([, v]) => v.length).map(([k, v]) => [k, agg(v)]));
 
 const f = (x) => (Number.isFinite(x) ? x.toFixed(2) : "  - ");
 console.log(`\ngroup          n   overall  faith  corr  fill  fmt   notAns  sim    min`);
