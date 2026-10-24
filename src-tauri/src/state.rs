@@ -28,7 +28,6 @@ pub enum HotkeyStatus {
     Retrying,
     Active,
     Failed,
-    AccessibilityRequired,
 }
 
 /// How the global hotkey controls recording.
@@ -60,28 +59,16 @@ pub struct Settings {
     #[serde(alias = "whisperModel")]
     pub model: String,
     pub onboarding_complete: bool,
-    #[serde(default)]
-    pub ai_cleanup: bool,
     #[serde(default = "default_overlay_position")]
     pub overlay_position: serde_json::Value,
     #[serde(default = "default_true")]
     pub show_passive_overlay: bool,
-    #[serde(default = "default_tone_mode")]
-    pub tone_mode: String,
     #[serde(default)]
     pub history_retention_days: i64,
     #[serde(default)]
-    pub help_improve: bool,
-    #[serde(default)]
     pub beam_search: bool,
-    #[serde(default = "default_cleanup_model")]
-    pub cleanup_model: String,
     #[serde(default)]
     pub dark_mode: bool,
-}
-
-fn default_cleanup_model() -> String {
-    "chirp-v2".into()
 }
 
 fn default_overlay_position() -> serde_json::Value {
@@ -92,14 +79,10 @@ fn default_true() -> bool {
     true
 }
 
-fn default_tone_mode() -> String {
-    "message".into()
-}
-
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            hotkey: if cfg!(target_os = "macos") { "MetaLeft+ShiftLeft+Space" } else { "ControlLeft+ShiftLeft+Space" }.into(),
+            hotkey: "ControlLeft+ShiftLeft+Space".into(),
             hotkey_mode: HotkeyMode::Hold,
             launch_at_login: true,
             play_sound_on_complete: false,
@@ -108,14 +91,10 @@ impl Default for Settings {
             input_device: "default".into(),
             model: "parakeet-tdt-0.6b".into(),
             onboarding_complete: false,
-            ai_cleanup: true,
             overlay_position: serde_json::Value::String("bottom".into()),
             show_passive_overlay: true,
-            tone_mode: "message".into(),
             history_retention_days: 0,
-            help_improve: false,
             beam_search: false,
-            cleanup_model: "chirp-v2".into(),
             dark_mode: false,
         }
     }
@@ -235,10 +214,6 @@ pub struct AppState {
     /// rapid update_vocabulary calls — sherpa-onnx can't handle rapid
     /// create/destroy of hotword-enabled recognizers.
     pub recognizer_dirty: bool,
-    pub llm_process: Option<tokio::process::Child>,
-    pub llm_port: Option<u16>,
-    /// Shared HTTP client for LLM/T5 requests (connection pooling)
-    pub http_client: reqwest::Client,
 }
 
 impl AppState {
@@ -254,13 +229,6 @@ impl AppState {
             hotkey_status: HotkeyStatus::Idle,
             recognizer: None,
             recognizer_dirty: false,
-            llm_process: None,
-            llm_port: None,
-            http_client: reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
-                .pool_max_idle_per_host(1)
-                .build()
-                .expect("Failed to create HTTP client"),
         }
     }
 }
@@ -275,9 +243,8 @@ pub type AudioBuffer = Arc<std::sync::Mutex<Vec<f32>>>;
 pub type VadTranscripts = Arc<std::sync::Mutex<Vec<String>>>;
 
 /// Accumulated per-segment CLEANED transcripts from VAD segments, filled by
-/// the receiver thread after it runs the full cleanup pipeline
-/// (regex + vocab + snippets + optional LLM) on each segment as it arrives.
-/// Joined in stop_recording and injected directly.
+/// the receiver thread after it runs the regex + vocabulary pass on each
+/// segment as it arrives. Joined in stop_recording.
 ///
 /// Newtype wrapper (not a type alias) so Tauri's state manager can
 /// distinguish it from `VadTranscripts` — both wrap the same inner type

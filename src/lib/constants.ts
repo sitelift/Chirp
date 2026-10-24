@@ -8,39 +8,16 @@ export const DEFAULT_SETTINGS = {
   inputDevice: 'default',
   model: 'parakeet-tdt-0.6b' as const,
   onboardingComplete: false,
-  aiCleanup: true,
   overlayPosition: 'default' as string | { x: number; y: number },
   showPassiveOverlay: true,
-  toneMode: 'message',
   historyRetentionDays: 0,
-  helpImprove: false,
   beamSearch: false,
-  cleanupModel: 'chirp-v2' as string,
   darkMode: false,
 }
-
-export const TONE_MODES = [
-  { id: 'message', label: 'Message', description: 'Natural conversational tone' },
-  { id: 'email', label: 'Email', description: 'Professional email formatting' },
-] as const
 
 export const STT_MODELS = [
   { id: 'parakeet-tdt-0.6b' as const, name: 'Parakeet TDT — NVIDIA', size: '465 MB', description: 'Best accuracy · 25 languages · fast on any PC', recommended: true },
 ]
-
-export const LLM_MODEL = {
-  name: 'Qwen 3 1.7B',
-  displayName: 'Smart Cleanup',
-  size: '1.1 GB',
-  friendlySize: 'About 1.1 GB',
-  description: 'On-device language model that removes filler words, fixes stutters, and resolves self-corrections — all without sending audio anywhere.',
-  attribution: 'Built on Qwen 3 1.7B — Alibaba (Apache 2.0)',
-}
-
-export const CLEANUP_EXAMPLE = {
-  before: "so um basically I was thinking that we should like probably move the meeting to uh Thursday if that works",
-  after: "I was thinking we should probably move the meeting to Thursday, if that works.",
-}
 
 export const ERROR_MESSAGES = {
   mic_not_found: {
@@ -67,11 +44,6 @@ export const ERROR_MESSAGES = {
     title: "Couldn't paste text",
     help: 'Make sure a text field is focused',
     action: { label: 'Copy to Clipboard', type: 'copy' as const },
-  },
-  accessibility_denied: {
-    title: 'Accessibility access needed',
-    help: 'Enable Chirp in System Settings > Privacy > Accessibility',
-    action: { label: 'Open Settings', type: 'os_settings' as const },
   },
   unknown: {
     title: 'Something went wrong',

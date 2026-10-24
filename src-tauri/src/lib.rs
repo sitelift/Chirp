@@ -1,20 +1,12 @@
-mod announcements;
 mod audio;
 mod cleanup;
-mod commands;
-mod feedback;
-mod history;
-#[cfg(windows)]
 mod clipboard_win;
-mod inject;
-mod llm;
+mod commands;
+mod history;
 mod hotkey;
-#[cfg(target_os = "windows")]
-mod hotkey_raw_input;
-#[cfg(target_os = "windows")]
 mod hotkey_ll_suppress;
-#[cfg(target_os = "macos")]
-mod native_hotkey;
+mod hotkey_raw_input;
+mod inject;
 mod settings;
 mod snippets;
 mod state;
@@ -33,62 +25,14 @@ use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Ensure a Tokio runtime context exists before plugin setup.
-    // tauri-plugin-aptabase calls tokio::spawn() during plugin setup, which
-    // panics if no runtime is present. Tauri creates its own runtime later
-    // (during .run()), but plugin .setup() hooks run during .build() which
-    // is too early. This runtime lives for the duration of run().
-    let rt = tokio::runtime::Runtime::new().expect("Failed to create Tokio runtime");
-    let _rt_guard = rt.enter();
-
     // Read settings early so we can configure the shortcut before building
     let initial_settings = settings::load_settings();
 
-    // Initialize Sentry crash reporting (only when user has opted in).
-    // The guard must live for the entire run() scope — dropping it disables Sentry.
-    let _sentry_guard = if initial_settings.help_improve {
-        let client = sentry::init(sentry::ClientOptions {
-            dsn: "https://25fcb0687861c03dfc6a02254aa057a8@o4511102179278848.ingest.us.sentry.io/4511102182293504".parse().ok(),
-            release: Some(std::borrow::Cow::Borrowed(env!("CARGO_PKG_VERSION"))),
-            before_breadcrumb: Some(Arc::new(|breadcrumb| {
-                // Drop breadcrumbs that may contain transcription text
-                if let Some(msg) = &breadcrumb.message {
-                    let skip = [
-                        "After regex",
-                        "Parakeet chunk",
-                        "LLM cleanup:",
-                        "After AI cleanup",
-                        "clipboard",
-                        "vocabulary",
-                    ];
-                    if skip.iter().any(|p| msg.contains(p)) {
-                        return None;
-                    }
-                }
-                Some(breadcrumb)
-            })),
-            before_send: Some(Arc::new(|mut event| {
-                // Scrub exception values that could contain user text
-                for exc_val in event.exception.values.iter_mut() {
-                    if let Some(ref v) = exc_val.value {
-                        if v.len() > 200 {
-                            exc_val.value = Some("[scrubbed — value too long]".into());
-                        }
-                    }
-                }
-                Some(event)
-            })),
-            ..Default::default()
-        });
-        Some(client)
-    } else {
-        None
-    };
     let initial_vocabulary = settings::load_vocabulary();
     let initial_snippets = settings::load_snippets();
     let mut initial_history = history::load_history();
     history::prune_history(&mut initial_history, initial_settings.history_retention_days);
-    let mut builder = tauri::Builder::default()
+    tauri::Builder::default()
         .plugin(
             tauri_plugin_log::Builder::default()
                 .level(log::LevelFilter::Info)
@@ -106,22 +50,7 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_shell::init())
-        .plugin(tauri_plugin_dialog::init());
-
-    // Register Sentry plugin (auto-injects @sentry/browser into webviews)
-    if let Some(ref guard) = _sentry_guard {
-        builder = builder.plugin(tauri_plugin_sentry::init(guard));
-    }
-
-    // Aptabase telemetry — empty key disables all tracking (no-op).
-    // Key is hardcoded; it's write-only (can only send events, not read data).
-    let aptabase_key = if initial_settings.help_improve {
-        "A-US-1585552886"
-    } else {
-        ""
-    };
-
-    builder.plugin(tauri_plugin_aptabase::Builder::new(aptabase_key).build())
+        .plugin(tauri_plugin_dialog::init())
         .manage::<SharedState>({
             Arc::new(tokio::sync::Mutex::new(AppState::new(
                 initial_settings,
@@ -156,22 +85,11 @@ pub fn run() {
             commands::get_history,
             commands::clear_history,
             commands::delete_history_entry,
-            commands::get_llm_status,
-            commands::download_llm,
-            commands::start_llm,
-            commands::stop_llm,
-            commands::test_llm_cleanup,
             commands::test_microphone,
             commands::get_snippets,
             commands::update_snippets,
             commands::play_completion_sound,
             commands::get_hotkey_status,
-            commands::get_announcements,
-            commands::dismiss_announcement,
-            commands::send_feedback,
-            commands::request_mic_permission,
-            commands::check_accessibility_permission,
-            commands::request_accessibility_permission,
             commands::capture_next_key,
             commands::show_settings,
             commands::quit_app,
@@ -211,68 +129,6 @@ pub fn run() {
                     }
                 }
 
-            }
-
-            // Track app_started event (only fires if help_improve is on)
-            {
-                use tauri_plugin_aptabase::EventTracker;
-                let state = handle.state::<SharedState>();
-                let s = state.blocking_lock();
-                let model_loaded = s.recognizer.is_some();
-                drop(s);
-                let _ = app.track_event("app_started", Some(serde_json::json!({
-                    "version": env!("CARGO_PKG_VERSION"),
-                    "model_loaded": model_loaded,
-                })));
-            }
-
-            // Kill any stale llama-server from a previous crash (C2 fix)
-            llm::kill_stale_server();
-
-            // Auto-start cleanup server if AI cleanup is enabled and files exist
-            {
-                let state = handle.state::<SharedState>();
-                let s = state.blocking_lock();
-                let ai_cleanup = s.settings.ai_cleanup;
-                drop(s);
-
-                let should_start = ai_cleanup && llm::binary_exists() && llm::model_exists();
-
-                if should_start {
-                    let state_clone = handle.state::<SharedState>().inner().clone();
-                    tauri::async_runtime::spawn(async move {
-                        let port = match std::net::TcpListener::bind("127.0.0.1:0") {
-                            Ok(listener) => match listener.local_addr() {
-                                Ok(addr) => addr.port(),
-                                Err(e) => {
-                                    log::warn!("Failed to get local address for LLM: {e}");
-                                    return;
-                                }
-                            },
-                            Err(e) => {
-                                log::warn!("Failed to find free port for LLM: {e}");
-                                return;
-                            }
-                        };
-
-                        let result = llm::start_server(port).await;
-
-                        match result {
-                            Ok(child) => {
-                                let mut s = state_clone.lock().await;
-                                if let Some(pid) = child.id() {
-                                    llm::save_server_pid(pid);
-                                }
-                                s.llm_process = Some(child);
-                                s.llm_port = Some(port);
-                                log::info!("Cleanup model server auto-started on port {port}");
-                            }
-                            Err(e) => {
-                                log::warn!("Failed to auto-start cleanup model server: {e}");
-                            }
-                        }
-                    });
-                }
             }
 
             // Build system tray — left-click opens custom popup, right-click shows minimal menu
@@ -341,12 +197,8 @@ pub fn run() {
 
                                 // Center popup horizontally on the tray icon
                                 let x = icon_x + icon_w / 2.0 - popup_w / 2.0;
-                                let y = if cfg!(target_os = "macos") {
-                                    icon_y + gap
-                                } else {
-                                    // Windows: above the taskbar
-                                    icon_y - popup_h - gap
-                                };
+                                // Above the taskbar
+                                let y = icon_y - popup_h - gap;
 
                                 let x = if x < 0.0 { 0.0 } else { x };
                                 let y = if y < 0.0 { 0.0 } else { y };
@@ -360,63 +212,6 @@ pub fn run() {
                     }
                 })
                 .build(app)?;
-
-            // macOS: make overlay float above fullscreen apps
-            #[cfg(target_os = "macos")]
-            {
-                if let Some(overlay) = app.get_webview_window("overlay") {
-                    use cocoa::appkit::NSWindow;
-                    use cocoa::appkit::NSWindowCollectionBehavior;
-                    let ns_win = overlay.ns_window().unwrap() as cocoa::base::id;
-                    unsafe {
-                        // Level 1000 = NSScreenSaverWindowLevel, above fullscreen spaces
-                        ns_win.setLevel_(1000);
-                        ns_win.setCollectionBehavior_(
-                            NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
-                            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
-                            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorStationary
-                        );
-                    }
-                }
-            }
-
-            // macOS: make tray popup float above fullscreen apps
-            #[cfg(target_os = "macos")]
-            {
-                if let Some(popup) = app.get_webview_window("tray-popup") {
-                    use cocoa::appkit::NSWindow;
-                    use cocoa::appkit::NSWindowCollectionBehavior;
-                    let ns_win = popup.ns_window().unwrap() as cocoa::base::id;
-                    unsafe {
-                        ns_win.setLevel_(1000);
-                        ns_win.setCollectionBehavior_(
-                            NSWindowCollectionBehavior::NSWindowCollectionBehaviorCanJoinAllSpaces
-                            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorFullScreenAuxiliary
-                            | NSWindowCollectionBehavior::NSWindowCollectionBehaviorStationary
-                        );
-                    }
-                }
-            }
-
-            // macOS: enable native stoplight buttons on settings window
-            #[cfg(target_os = "macos")]
-            {
-                if let Some(settings_win) = app.get_webview_window("settings") {
-                    use cocoa::appkit::{NSWindow, NSWindowStyleMask, NSWindowTitleVisibility};
-                    let ns_win = settings_win.ns_window().unwrap() as cocoa::base::id;
-                    unsafe {
-                        let mut mask = ns_win.styleMask();
-                        mask |= NSWindowStyleMask::NSTitledWindowMask
-                            | NSWindowStyleMask::NSClosableWindowMask
-                            | NSWindowStyleMask::NSMiniaturizableWindowMask
-                            | NSWindowStyleMask::NSResizableWindowMask
-                            | NSWindowStyleMask::NSFullSizeContentViewWindowMask;
-                        ns_win.setStyleMask_(mask);
-                        ns_win.setTitlebarAppearsTransparent_(cocoa::base::YES);
-                        ns_win.setTitleVisibility_(NSWindowTitleVisibility::NSWindowTitleHidden);
-                    }
-                }
-            }
 
             // Start the global hotkey listener
             {
@@ -469,26 +264,10 @@ pub fn run() {
         })
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
-        .run(|app_handle, event| {
-            match event {
-                tauri::RunEvent::Exit => {
-                    hotkey::stop();
-                    llm::kill_stale_server();
-                    llm::clear_server_pid();
-                    log::info!("App exiting — cleaned up hotkey and LLM process");
-                }
-                #[cfg(target_os = "macos")]
-                tauri::RunEvent::Reopen { has_visible_windows, .. } => {
-                    // Dock icon clicked — restore the settings window
-                    if !has_visible_windows {
-                        if let Some(win) = app_handle.get_webview_window("settings") {
-                            let _ = win.unminimize();
-                            let _ = win.show();
-                            let _ = win.set_focus();
-                        }
-                    }
-                }
-                _ => {}
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                hotkey::stop();
+                log::info!("App exiting — cleaned up hotkey");
             }
         });
 }

@@ -3,12 +3,7 @@ import { ERROR_MESSAGES } from '../../lib/constants'
 import { open } from '@tauri-apps/plugin-shell'
 
 function openOsSettings() {
-  const isMac = navigator.platform.includes('Mac')
-  if (isMac) {
-    open('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone')
-  } else {
-    open('ms-settings:privacy-microphone')
-  }
+  open('ms-settings:privacy-microphone')
 }
 
 export function Error() {

@@ -7,9 +7,9 @@ const SYNCED_KEYS = [
   'hotkey', 'hotkeyMode', 'launchAtLogin', 'playSoundOnComplete',
   'autoDismissOverlay', 'smartFormatting',
   'inputDevice', 'model', 'onboardingComplete',
-  'aiCleanup', 'cleanupModel', 'beamSearch', 'toneMode',
+  'beamSearch',
   'overlayPosition', 'showPassiveOverlay',
-  'historyRetentionDays', 'helpImprove', 'darkMode',
+  'historyRetentionDays', 'darkMode',
 ] as const
 
 function isIpcNotReady(err: unknown): boolean {
@@ -21,7 +21,7 @@ function isIpcNotReady(err: unknown): boolean {
  * Lightweight settings sync for the overlay and tray-popup windows.
  *
  * Unlike useSettingsSync, this only hydrates settings from the backend —
- * no history / vocabulary / snippets / model-status / llm-status fetches.
+ * no history / vocabulary / snippets / model-status fetches.
  * The initial invoke retries until Tauri's IPC shim is injected, which
  * avoids the RUST-R crash ("window.__TAURI_IPC__ is not a function") that
  * shows up as "Something went wrong" on the overlay at cold start.

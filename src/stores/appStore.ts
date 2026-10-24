@@ -54,15 +54,8 @@ export interface AppState {
   modelDownloaded: Record<string, boolean>
   modelDownloadProgress: number | null
 
-  // AI Cleanup
-  aiCleanup: boolean
-  cleanupModel: string
-  llmReady: boolean
-  llmDownloaded: boolean
-
   // Beam Search
   beamSearch: boolean
-  llmDownloadProgress: number | null
 
   // Vocabulary
   vocabulary: VocabEntry[]
@@ -76,9 +69,6 @@ export interface AppState {
   // Onboarding
   onboardingComplete: boolean
 
-  // Tone
-  toneMode: string
-
   // Overlay
   overlayPosition: string | { x: number; y: number }
   showPassiveOverlay: boolean
@@ -90,20 +80,14 @@ export interface AppState {
   // Appearance
   darkMode: boolean
 
-  // Telemetry
-  helpImprove: boolean
-
   // Hotkey status
-  hotkeyStatus: 'idle' | 'retrying' | 'active' | 'failed' | 'accessibility_required'
+  hotkeyStatus: 'idle' | 'retrying' | 'active' | 'failed'
 
   // Settings saved indicator
   settingsSaved: boolean
 
   // About modal
   aboutModalOpen: boolean
-
-  // Upgrade modal (shown when user needs the new cleanup model)
-  upgradeModalOpen: boolean
 
   // Update availability
   updateAvailable: string | null  // version string, or null
@@ -121,9 +105,6 @@ export interface AppState {
   setWordCount: (count: number) => void
   setInputLevel: (level: number) => void
   setModelDownloadProgress: (progress: number | null) => void
-  setLlmDownloadProgress: (progress: number | null) => void
-  setLlmReady: (ready: boolean) => void
-  setLlmDownloaded: (downloaded: boolean) => void
   updateSettings: (partial: Partial<AppState>) => void
   addVocabularyEntry: (term: string) => void
   updateVocabularyEntry: (index: number, entry: VocabEntry) => void
@@ -137,11 +118,10 @@ export interface AppState {
   setHistory: (history: TranscriptionEntry[]) => void
   removeHistoryEntry: (timestamp: string) => void
   setSettingsPage: (page: string) => void
-  setHotkeyStatus: (status: 'idle' | 'retrying' | 'active' | 'failed' | 'accessibility_required') => void
+  setHotkeyStatus: (status: 'idle' | 'retrying' | 'active' | 'failed') => void
   setOnboardingComplete: (complete: boolean) => void
   setSettingsSaved: (saved: boolean) => void
   setAboutModalOpen: (open: boolean) => void
-  setUpgradeModalOpen: (open: boolean) => void
   setUpdateAvailable: (version: string | null) => void
   setRepositionMode: (mode: boolean) => void
 }
@@ -170,13 +150,6 @@ export const useAppStore = create<AppState>((set) => ({
   modelDownloaded: {},
   modelDownloadProgress: null,
 
-  // AI Cleanup
-  aiCleanup: DEFAULT_SETTINGS.aiCleanup,
-  cleanupModel: DEFAULT_SETTINGS.cleanupModel,
-  llmReady: false,
-  llmDownloaded: false,
-  llmDownloadProgress: null,
-
   // Beam Search
   beamSearch: DEFAULT_SETTINGS.beamSearch,
 
@@ -192,9 +165,6 @@ export const useAppStore = create<AppState>((set) => ({
   // Onboarding
   onboardingComplete: DEFAULT_SETTINGS.onboardingComplete,
 
-  // Tone
-  toneMode: DEFAULT_SETTINGS.toneMode,
-
   // Overlay
   overlayPosition: DEFAULT_SETTINGS.overlayPosition,
   showPassiveOverlay: DEFAULT_SETTINGS.showPassiveOverlay,
@@ -206,9 +176,6 @@ export const useAppStore = create<AppState>((set) => ({
   // Appearance
   darkMode: DEFAULT_SETTINGS.darkMode,
 
-  // Telemetry
-  helpImprove: DEFAULT_SETTINGS.helpImprove,
-
   // Hotkey status
   hotkeyStatus: 'idle',
 
@@ -217,7 +184,6 @@ export const useAppStore = create<AppState>((set) => ({
 
   // About modal
   aboutModalOpen: false,
-  upgradeModalOpen: false,
 
   // Update availability
   updateAvailable: null,
@@ -235,9 +201,6 @@ export const useAppStore = create<AppState>((set) => ({
   setWordCount: (wordCount) => set({ wordCount }),
   setInputLevel: (inputLevel) => set({ inputLevel }),
   setModelDownloadProgress: (modelDownloadProgress) => set({ modelDownloadProgress }),
-  setLlmDownloadProgress: (llmDownloadProgress) => set({ llmDownloadProgress }),
-  setLlmReady: (llmReady) => set({ llmReady }),
-  setLlmDownloaded: (llmDownloaded) => set({ llmDownloaded }),
   updateSettings: (partial) => set(partial),
   addVocabularyEntry: (term) =>
     set((state) => ({
@@ -268,7 +231,6 @@ export const useAppStore = create<AppState>((set) => ({
   setOnboardingComplete: (onboardingComplete) => set({ onboardingComplete }),
   setSettingsSaved: (settingsSaved) => set({ settingsSaved }),
   setAboutModalOpen: (aboutModalOpen) => set({ aboutModalOpen }),
-  setUpgradeModalOpen: (upgradeModalOpen) => set({ upgradeModalOpen }),
   setUpdateAvailable: (updateAvailable) => set({ updateAvailable }),
   setRepositionMode: (repositionMode) => set({ repositionMode }),
 }))

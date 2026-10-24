@@ -5,10 +5,8 @@ import { listen } from '@tauri-apps/api/event'
 import { Copy, Settings, LogOut, Check } from 'lucide-react'
 import { useAppStore, type TranscriptionEntry } from '../../stores/appStore'
 import { useOverlaySync } from '../../hooks/useOverlaySync'
-import { useCleanupToggle } from '../../hooks/useCleanupToggle'
 import { formatHotkey, formatRelativeTime } from '../../lib/utils'
 import { BirdMark } from '../shared/BirdMark'
-import { Toggle } from '../shared/Toggle'
 import { KeyBadge } from '../shared/KeyBadge'
 
 export function TrayPopup() {
@@ -18,11 +16,10 @@ export function TrayPopup() {
   useEffect(() => {
     const refresh = async () => {
       try {
-        const [settings, history, modelStatus, llmStatus] = await Promise.all([
+        const [settings, history, modelStatus] = await Promise.all([
           invoke('get_settings'),
           invoke('get_history'),
           invoke<{ model: string; downloaded: boolean }>('get_model_status', { model: 'parakeet-tdt-0.6b' }),
-          invoke<{ binaryDownloaded: boolean; modelDownloaded: boolean; serverRunning: boolean }>('get_llm_status'),
         ])
         if (settings && typeof settings === 'object') {
           useAppStore.getState().updateSettings(settings as Partial<ReturnType<typeof useAppStore.getState>>)
@@ -38,10 +35,6 @@ export function TrayPopup() {
             },
           })
         }
-        if (llmStatus) {
-          useAppStore.getState().setLlmDownloaded(llmStatus.binaryDownloaded && llmStatus.modelDownloaded)
-          useAppStore.getState().setLlmReady(llmStatus.serverRunning)
-        }
       } catch { /* backend unavailable */ }
     }
     refresh()
@@ -51,13 +44,10 @@ export function TrayPopup() {
 
   const darkMode = useAppStore((s) => s.darkMode)
   const hotkey = useAppStore((s) => s.hotkey)
-  const aiCleanup = useAppStore((s) => s.aiCleanup)
-  const llmReady = useAppStore((s) => s.llmReady)
   const hotkeyStatus = useAppStore((s) => s.hotkeyStatus)
   const history = useAppStore((s) => s.history)
   const modelDownloaded = useAppStore((s) => s.modelDownloaded)
   const settingsLoaded = useAppStore((s) => s.settingsLoaded)
-  const { handleCleanupToggle, cleanupStarting } = useCleanupToggle()
 
   const [copied, setCopied] = useState(false)
 
@@ -143,27 +133,6 @@ export function TrayPopup() {
               <div className="w-1.5 h-1.5 rounded-full bg-red-400 ml-1" />
             )}
           </div>
-        </div>
-
-        {/* Smart Cleanup toggle */}
-        <div className="flex items-center justify-between px-5 py-3 border-t border-card-border">
-          <div>
-            <div className="text-[13px] font-medium text-dm-primary">Smart Cleanup</div>
-            <div className="text-[11px] text-dm-secondary mt-0.5">
-              {aiCleanup
-                ? cleanupStarting
-                  ? 'Starting...'
-                  : llmReady
-                    ? 'Active'
-                    : 'Model needed'
-                : 'Off'}
-            </div>
-          </div>
-          <Toggle
-            checked={aiCleanup}
-            onChange={handleCleanupToggle}
-            disabled={cleanupStarting}
-          />
         </div>
 
         {/* Last transcription */}

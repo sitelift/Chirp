@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import { trackEvent } from '@aptabase/tauri'
 import { useAppStore, type VocabEntry } from '../../stores/appStore'
 import { Button } from '../shared/Button'
 
@@ -127,11 +126,6 @@ export function VocabularyPage() {
     if (!term) return
     addEntry(term)
     setNewTerm('')
-    try {
-      trackEvent('feature_used', { feature: 'vocabulary_add' })
-    } catch {
-      // Aptabase may not be ready on first paint — silently ignore
-    }
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

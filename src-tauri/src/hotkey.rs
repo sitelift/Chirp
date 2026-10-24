@@ -1,18 +1,8 @@
-#[cfg(any(target_os = "macos", all(not(target_os = "macos"), not(target_os = "windows"))))]
-use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Mutex;
-#[cfg(target_os = "windows")]
 use std::sync::Arc;
 use tauri::AppHandle;
-#[cfg(any(target_os = "macos", all(not(target_os = "macos"), not(target_os = "windows"))))]
-use tauri::Emitter;
 
-#[cfg(target_os = "macos")]
-use crate::native_hotkey::{self, KeyAction};
-
-#[cfg(not(target_os = "macos"))]
 use rdev::{Event, EventType, Key};
 
 // ---------------------------------------------------------------------------
@@ -46,13 +36,6 @@ pub struct CapturedKey {
     pub label: String,
 }
 
-// ---------------------------------------------------------------------------
-// Statics
-// ---------------------------------------------------------------------------
-
-static SHUTDOWN: AtomicBool = AtomicBool::new(false);
-static GRAB_THREAD: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
-
 /// Modifier key identifiers — combos consisting entirely of these are never
 /// suppressed so that e.g. Ctrl alone as a hotkey doesn't break Ctrl+C.
 const MODIFIERS: &[&str] = &[
@@ -68,10 +51,9 @@ const MODIFIERS: &[&str] = &[
 ];
 
 // ---------------------------------------------------------------------------
-// Key mapping (non-macOS only — macOS gets IDs directly from native_hotkey)
+// Key mapping (rdev Key -> string id, used by capture_next_key)
 // ---------------------------------------------------------------------------
 
-#[cfg(not(target_os = "macos"))]
 pub fn key_to_id(key: &Key) -> String {
     match key {
         Key::KeyA => "KeyA".into(),
@@ -191,21 +173,9 @@ pub fn id_to_label(id: &str) -> String {
     match id {
         "ControlLeft" | "ControlRight" => "Ctrl".into(),
         "ShiftLeft" | "ShiftRight" => "Shift".into(),
-        "Alt" => {
-            if cfg!(target_os = "macos") {
-                "Option".into()
-            } else {
-                "Alt".into()
-            }
-        }
+        "Alt" => "Alt".into(),
         "AltGr" => "AltGr".into(),
-        "MetaLeft" | "MetaRight" => {
-            if cfg!(target_os = "macos") {
-                "Cmd".into()
-            } else {
-                "Win".into()
-            }
-        }
+        "MetaLeft" | "MetaRight" => "Win".into(),
         "Fn" => "fn".into(),
         s if s.starts_with("Key") && s.len() == 4 => s[3..].into(),
         s if s.starts_with("Digit") && s.len() == 6 => s[5..].into(),
@@ -242,128 +212,11 @@ fn is_modifier_only_combo(combo: &HashSet<String>) -> bool {
 }
 
 // ===========================================================================
-// macOS: use native_hotkey (no rdev)
+// start(): Raw Input detection + LL hook suppression (split architecture)
 // ===========================================================================
 
-#[cfg(target_os = "macos")]
 pub fn start(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
     stop();
-    SHUTDOWN.store(false, Ordering::SeqCst);
-
-    let combo = parse_hotkey(hotkey);
-    let modifier_only = is_modifier_only_combo(&combo);
-    let app = app_handle.clone();
-
-    let handle = std::thread::Builder::new()
-        .name("hotkey-grab".into())
-        .spawn(move || {
-            let held: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
-            let combo_active: RefCell<bool> = RefCell::new(false);
-
-            let combo_for_cb = combo.clone();
-            let app_for_cb = app.clone();
-
-            let grab_result = native_hotkey::grab(move |action: KeyAction| -> bool {
-                if SHUTDOWN.load(Ordering::SeqCst) {
-                    native_hotkey::stop_run_loop();
-                    return true;
-                }
-
-                match action {
-                    KeyAction::Press(id) => {
-                        held.borrow_mut().insert(id.clone());
-
-                        if *held.borrow() == combo_for_cb {
-                            if !*combo_active.borrow() {
-                                *combo_active.borrow_mut() = true;
-                                log::info!("Hotkey pressed");
-                                let _ = app_for_cb.emit("hotkey-pressed", ());
-                            }
-                            if !modifier_only {
-                                return false;
-                            }
-                        }
-
-                        if *combo_active.borrow()
-                            && combo_for_cb.contains(&id)
-                            && !modifier_only
-                        {
-                            return false;
-                        }
-
-                        true
-                    }
-                    KeyAction::Release(id) => {
-                        held.borrow_mut().remove(&id);
-
-                        if *combo_active.borrow() && combo_for_cb.contains(&id) {
-                            *combo_active.borrow_mut() = false;
-                            log::info!("Hotkey released");
-                            let _ = app_for_cb.emit("hotkey-released", ());
-
-                            if !modifier_only {
-                                return false;
-                            }
-                        }
-
-                        true
-                    }
-                }
-            });
-
-            if let Err(e) = grab_result {
-                log::warn!("native grab failed ({e}), falling back to listen-only");
-                let _ = app.emit("hotkey-status", "accessibility_required");
-
-                let combo_for_listen = combo;
-                let app_for_listen = app;
-                let mut held: HashSet<String> = HashSet::new();
-                let mut combo_active = false;
-
-                let _ = native_hotkey::listen(move |action: KeyAction| {
-                    if SHUTDOWN.load(Ordering::SeqCst) {
-                        native_hotkey::stop_run_loop();
-                        return;
-                    }
-
-                    match action {
-                        KeyAction::Press(id) => {
-                            held.insert(id);
-                            if held == combo_for_listen && !combo_active {
-                                combo_active = true;
-                                log::info!("Hotkey pressed (listen mode)");
-                                let _ = app_for_listen.emit("hotkey-pressed", ());
-                            }
-                        }
-                        KeyAction::Release(id) => {
-                            held.remove(&id);
-                            if combo_active && combo_for_listen.contains(&id) {
-                                combo_active = false;
-                                log::info!("Hotkey released (listen mode)");
-                                let _ = app_for_listen.emit("hotkey-released", ());
-                            }
-                        }
-                    }
-                });
-            }
-        })
-        .map_err(|e| format!("Failed to spawn hotkey thread: {e}"))?;
-
-    if let Ok(mut guard) = GRAB_THREAD.lock() {
-        *guard = Some(handle);
-    }
-
-    Ok(())
-}
-
-// ===========================================================================
-// Windows: Raw Input detection + LL hook suppression (split architecture)
-// ===========================================================================
-
-#[cfg(target_os = "windows")]
-pub fn start(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
-    stop();
-    SHUTDOWN.store(false, Ordering::SeqCst);
 
     let combo = parse_hotkey(hotkey);
     let modifier_only = is_modifier_only_combo(&combo);
@@ -393,153 +246,14 @@ pub fn start(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-// ===========================================================================
-// Linux (and any other non-macOS, non-Windows target): use rdev
-// ===========================================================================
-
-#[cfg(all(not(target_os = "macos"), not(target_os = "windows")))]
-pub fn start(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
-    stop();
-    SHUTDOWN.store(false, Ordering::SeqCst);
-
-    let combo = parse_hotkey(hotkey);
-    let modifier_only = is_modifier_only_combo(&combo);
-    let app = app_handle.clone();
-
-    let handle = std::thread::Builder::new()
-        .name("hotkey-grab".into())
-        .spawn(move || {
-            let held: RefCell<HashSet<String>> = RefCell::new(HashSet::new());
-            let combo_active: RefCell<bool> = RefCell::new(false);
-
-            let combo_for_cb = combo.clone();
-            let app_for_cb = app.clone();
-
-            let grab_result = rdev::grab(move |event: Event| -> Option<Event> {
-                if SHUTDOWN.load(Ordering::SeqCst) {
-                    return Some(event);
-                }
-
-                match event.event_type {
-                    EventType::KeyPress(k) => {
-                        let id = key_to_id(&k);
-                        held.borrow_mut().insert(id.clone());
-
-                        if *held.borrow() == combo_for_cb {
-                            if !*combo_active.borrow() {
-                                *combo_active.borrow_mut() = true;
-                                log::info!("Hotkey pressed");
-                                let _ = app_for_cb.emit("hotkey-pressed", ());
-                            }
-                            if !modifier_only {
-                                return None;
-                            }
-                        }
-
-                        if *combo_active.borrow()
-                            && combo_for_cb.contains(&id)
-                            && !modifier_only
-                        {
-                            return None;
-                        }
-
-                        Some(event)
-                    }
-                    EventType::KeyRelease(k) => {
-                        let id = key_to_id(&k);
-                        held.borrow_mut().remove(&id);
-
-                        if *combo_active.borrow() && combo_for_cb.contains(&id) {
-                            *combo_active.borrow_mut() = false;
-                            log::info!("Hotkey released");
-                            let _ = app_for_cb.emit("hotkey-released", ());
-
-                            if !modifier_only {
-                                return None;
-                            }
-                        }
-
-                        Some(event)
-                    }
-                    _ => Some(event),
-                }
-            });
-
-            if let Err(e) = grab_result {
-                log::error!(
-                    "rdev::grab failed: {:?} — hotkey suppression DISABLED, hotkey will leak through to active app. Falling back to passive listen mode.",
-                    e
-                );
-                let _ = app.emit(
-                    "hotkey-grab-failed",
-                    serde_json::json!({ "reason": format!("{:?}", e) }),
-                );
-                let _ = app.emit("hotkey-status", "accessibility_required");
-
-                let combo_for_listen = combo;
-                let app_for_listen = app;
-                let mut held: HashSet<String> = HashSet::new();
-                let mut combo_active = false;
-
-                let _ = rdev::listen(move |event: Event| {
-                    if SHUTDOWN.load(Ordering::SeqCst) {
-                        return;
-                    }
-
-                    match event.event_type {
-                        EventType::KeyPress(k) => {
-                            let id = key_to_id(&k);
-                            held.insert(id);
-
-                            if held == combo_for_listen && !combo_active {
-                                combo_active = true;
-                                log::info!("Hotkey pressed (listen mode)");
-                                let _ = app_for_listen.emit("hotkey-pressed", ());
-                            }
-                        }
-                        EventType::KeyRelease(k) => {
-                            let id = key_to_id(&k);
-                            held.remove(&id);
-
-                            if combo_active && combo_for_listen.contains(&id) {
-                                combo_active = false;
-                                log::info!("Hotkey released (listen mode)");
-                                let _ = app_for_listen.emit("hotkey-released", ());
-                            }
-                        }
-                        _ => {}
-                    }
-                });
-            }
-        })
-        .map_err(|e| format!("Failed to spawn hotkey thread: {e}"))?;
-
-    if let Ok(mut guard) = GRAB_THREAD.lock() {
-        *guard = Some(handle);
-    }
-
-    Ok(())
-}
-
 // ---------------------------------------------------------------------------
 // stop()
 // ---------------------------------------------------------------------------
 
 pub fn stop() {
-    SHUTDOWN.store(true, Ordering::SeqCst);
 
-    #[cfg(target_os = "macos")]
-    native_hotkey::stop_run_loop();
-
-    #[cfg(target_os = "windows")]
-    {
-        crate::hotkey_raw_input::stop();
-        crate::hotkey_ll_suppress::stop();
-    }
-
-    if let Ok(mut guard) = GRAB_THREAD.lock() {
-        *guard = None;
-    }
+    crate::hotkey_raw_input::stop();
+    crate::hotkey_ll_suppress::stop();
 }
 
 // ---------------------------------------------------------------------------
@@ -553,57 +267,15 @@ pub fn update(hotkey: &str, app_handle: AppHandle) -> Result<(), String> {
 }
 
 // ---------------------------------------------------------------------------
-// capture_next_key() — macOS native
+// capture_next_key() — rdev listen
 // ---------------------------------------------------------------------------
 
-#[cfg(target_os = "macos")]
 pub async fn capture_next_key() -> Result<CapturedKey, String> {
-    SHUTDOWN.store(true, Ordering::SeqCst);
-    native_hotkey::stop_run_loop();
 
-    let (tx, rx) = tokio::sync::oneshot::channel::<CapturedKey>();
-
-    std::thread::Builder::new()
-        .name("hotkey-capture".into())
-        .spawn(move || {
-            let tx = std::sync::Mutex::new(Some(tx));
-
-            let _ = native_hotkey::listen(move |action: KeyAction| {
-                if let KeyAction::Press(id) = action {
-                    let label = crate::hotkey::id_to_label(&id);
-                    if let Ok(mut guard) = tx.lock() {
-                        if let Some(sender) = guard.take() {
-                            let _ = sender.send(CapturedKey { code: id, label });
-                            native_hotkey::stop_run_loop();
-                        }
-                    }
-                }
-            });
-        })
-        .map_err(|e| format!("Failed to spawn capture thread: {e}"))?;
-
-    match tokio::time::timeout(std::time::Duration::from_secs(10), rx).await {
-        Ok(Ok(key)) => Ok(key),
-        Ok(Err(_)) => Err("Capture channel closed unexpectedly".into()),
-        Err(_) => Err("Hotkey capture timed out after 10 seconds".into()),
-    }
-}
-
-// ---------------------------------------------------------------------------
-// capture_next_key() — non-macOS rdev fallback
-// ---------------------------------------------------------------------------
-
-#[cfg(not(target_os = "macos"))]
-pub async fn capture_next_key() -> Result<CapturedKey, String> {
-    SHUTDOWN.store(true, Ordering::SeqCst);
-
-    // Release Windows-specific listeners so the key we're about to capture
-    // isn't suppressed and doesn't double-fire via Raw Input.
-    #[cfg(target_os = "windows")]
-    {
-        crate::hotkey_raw_input::stop();
-        crate::hotkey_ll_suppress::stop();
-    }
+    // Release the Raw Input / LL hook listeners so the key we're about to
+    // capture isn't suppressed and doesn't double-fire.
+    crate::hotkey_raw_input::stop();
+    crate::hotkey_ll_suppress::stop();
 
     let (tx, rx) = tokio::sync::oneshot::channel::<CapturedKey>();
 

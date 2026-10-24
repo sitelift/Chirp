@@ -1,11 +1,8 @@
 import { useState, useMemo } from 'react'
-import { trackEvent } from '@aptabase/tauri'
 import { Search, Download, Trash2, Copy, BookText, Zap, ChevronDown, Clock, Mic, Type, Hash, AlertTriangle, Check } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
-import { useCleanupToggle } from '../../hooks/useCleanupToggle'
 import { useCountUp } from '../../hooks/useCountUp'
-import { TONE_MODES } from '../../lib/constants'
 import {
   formatRelativeTime,
   getWeekBarChartData,
@@ -14,9 +11,6 @@ import {
   groupHistoryByDay,
   formatDayLabel,
 } from '../../lib/utils'
-import { Toggle } from '../shared/Toggle'
-import { Select } from '../shared/Select'
-import { AnnouncementBanner } from './AnnouncementBanner'
 
 function getGreeting(): string {
   const hour = new Date().getHours()
@@ -28,7 +22,6 @@ function getGreeting(): string {
 export function HomePage() {
   const store = useAppStore()
   const tauri = useTauri()
-  const { handleCleanupToggle, cleanupStarting, llmDownloaded } = useCleanupToggle()
   const [copiedTimestamp, setCopiedTimestamp] = useState<string | null>(null)
   const [expandedTimestamp, setExpandedTimestamp] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
@@ -118,7 +111,6 @@ export function HomePage() {
       await navigator.clipboard.writeText(text)
       setCopiedTimestamp(timestamp)
       setTimeout(() => setCopiedTimestamp(null), 1500)
-      trackEvent('feature_used', { feature: 'history_copy' })
     } catch { /* clipboard access denied — window may not be focused */ }
   }
 
@@ -160,8 +152,6 @@ export function HomePage() {
 
   return (
     <div className="flex flex-col gap-[10px] animate-fade-in">
-      <AnnouncementBanner />
-
       {/* Hero Stats Block */}
       <div className="bg-sidebar rounded-[18px] relative overflow-hidden">
         {/* Floating orbs */}
@@ -280,53 +270,6 @@ export function HomePage() {
 
       {/* Contextual Cards Row */}
       <div className="flex gap-[10px]">
-        {/* Smart Cleanup controls */}
-        <div className="flex-1 rounded-card border border-card-border bg-card p-4 hover-lift">
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-2">
-              <span className="text-[13px] font-semibold text-dm-primary">Smart Cleanup</span>
-              {store.aiCleanup && (
-                <span className="flex items-center gap-1">
-                  {cleanupStarting ? (
-                    <>
-                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
-                      <span className="text-[11px] text-dm-secondary">Starting...</span>
-                    </>
-                  ) : store.llmReady ? (
-                    <>
-                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                      <span className="text-[11px] text-dm-secondary">Active</span>
-                    </>
-                  ) : !llmDownloaded ? (
-                    <>
-                      <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400" />
-                      <span className="text-[11px] text-chirp-amber-500">Model needed</span>
-                    </>
-                  ) : null}
-                </span>
-              )}
-            </div>
-            <Toggle
-              checked={store.aiCleanup}
-              onChange={handleCleanupToggle}
-              disabled={cleanupStarting}
-            />
-          </div>
-          <p className="text-[11px] text-dm-secondary mb-3">Polish grammar and filler words with local AI</p>
-          {store.aiCleanup && (
-            <div className="flex items-center justify-between pt-3 border-t border-dm-row-sep">
-              <span className="text-[12px] text-dm-muted">Tone</span>
-              <div className="w-[140px]">
-                <Select
-                  options={TONE_MODES.map(m => ({ value: m.id, label: m.label }))}
-                  value={store.toneMode}
-                  onChange={(v) => store.updateSettings({ toneMode: String(v) })}
-                />
-              </div>
-            </div>
-          )}
-        </div>
-
         {/* Quick-add vocabulary/snippets */}
         <div className="flex-1 rounded-card border border-card-border bg-card p-4 hover-lift">
           {/* Tab header */}

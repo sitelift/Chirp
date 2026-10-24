@@ -10,14 +10,10 @@ const SYNCED_KEYS = [
   'hotkey', 'hotkeyMode', 'launchAtLogin', 'playSoundOnComplete',
   'autoDismissOverlay', 'smartFormatting',
   'inputDevice', 'model', 'onboardingComplete',
-  'aiCleanup',
-  'cleanupModel',
   'beamSearch',
-  'toneMode',
   'overlayPosition',
   'showPassiveOverlay',
   'historyRetentionDays',
-  'helpImprove',
   'darkMode',
 ] as const
 
@@ -81,13 +77,6 @@ export function useSettingsSync() {
         }
       }).catch((e) => { if (import.meta.env.DEV) console.error('Failed to get model status:', e) })
     }
-
-    // Initialize LLM ready state from backend
-    tauri.getLlmStatus().then((status) => {
-      if (status.serverRunning) {
-        useAppStore.getState().setLlmReady(true)
-      }
-    }).catch((e) => { if (import.meta.env.DEV) console.error('Failed to get LLM status:', e) })
   }, []) // eslint-disable-line react-hooks/exhaustive-deps -- one-time init
 
   // Always-active: sync store changes back to backend + listen for events.

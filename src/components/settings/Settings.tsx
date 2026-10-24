@@ -7,16 +7,13 @@ import { open } from '@tauri-apps/plugin-shell'
 import { Home, BookText, Zap, Settings as SettingsIcon, Check, Minus, Square, X, Heart } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
-import { useTauri } from '../../hooks/useTauri'
 import { BirdMark } from '../shared/BirdMark'
 import { KeyBadge } from '../shared/KeyBadge'
 import { AboutModal } from '../shared/AboutModal'
-import { UpgradeModal } from '../shared/UpgradeModal'
 import { formatHotkey } from '../../lib/utils'
 import { HomePage } from './HomePage'
 import { VocabularyPage } from './VocabularyPage'
 import { SnippetsPage } from './SnippetsPage'
-import { ProPage } from './ProPage'
 import { SettingsPage } from './SettingsPage'
 const NAV_ITEMS: { id: string; label: string; icon: LucideIcon }[] = [
   { id: 'home', label: 'Home', icon: Home },
@@ -28,11 +25,8 @@ const PAGES: Record<string, React.FC> = {
   home: HomePage,
   vocabulary: VocabularyPage,
   snippets: SnippetsPage,
-  pro: ProPage,
   settings: SettingsPage,
 }
-
-const IS_MAC = navigator.platform.includes('Mac')
 
 export function Settings() {
   const settingsPage = useAppStore((s) => s.settingsPage)
@@ -43,24 +37,11 @@ export function Settings() {
   const hotkeyMode = useAppStore((s) => s.hotkeyMode)
   const aboutModalOpen = useAppStore((s) => s.aboutModalOpen)
   const setAboutModalOpen = useAppStore((s) => s.setAboutModalOpen)
-  const setUpgradeModalOpen = useAppStore((s) => s.setUpgradeModalOpen)
   const setUpdateAvailable = useAppStore((s) => s.setUpdateAvailable)
   const darkMode = useAppStore((s) => s.darkMode)
-  const tauri = useTauri()
   const [appVersion, setAppVersion] = useState('...')
 
   useEffect(() => { getVersion().then(setAppVersion) }, [])
-
-  // Auto-show upgrade modal for existing users who had cleanup enabled but need the new model
-  useEffect(() => {
-    const aiCleanup = useAppStore.getState().aiCleanup
-    if (!aiCleanup) return
-    tauri.getLlmStatus().then((status) => {
-      if (!status.modelDownloaded) {
-        setUpgradeModalOpen(true)
-      }
-    }).catch(() => {})
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   // Auto-check for updates on launch (silently, no UI blocking)
   useEffect(() => {
@@ -84,58 +65,44 @@ export function Settings() {
   }, [setAboutModalOpen])
 
   const hotkeyKeys = formatHotkey(hotkey)
-  const proActive = settingsPage === 'pro'
 
   const PageComponent = PAGES[settingsPage] ?? HomePage
 
   return (
     <div className={`flex flex-col h-screen overflow-hidden no-select transition-colors duration-200 ${darkMode ? 'dark' : ''}`}>
-      {/* Custom titlebar — macOS: drag-only region; Windows: logo + window controls */}
-      <div data-tauri-drag-region className={`flex items-center justify-between shrink-0 bg-sidebar w-full ${IS_MAC ? 'h-[34px]' : 'h-10'}`} style={IS_MAC ? { WebkitAppRegion: 'drag' } as React.CSSProperties : undefined}>
-        {!IS_MAC && (
-          <div className="flex items-center gap-[8px] px-[14px] h-full">
-            <BirdMark size={18} color="#F0B723" />
-            <span className="font-display font-black text-[15px] text-white tracking-[-0.5px]">
-              chirp
-            </span>
-          </div>
-        )}
-        {!IS_MAC && (
-          <div className="flex items-stretch h-full">
-            <button
-              onClick={() => getCurrentWindow().minimize()}
-              className="w-[46px] flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
-            >
-              <Minus size={16} />
-            </button>
-            <button
-              onClick={() => getCurrentWindow().toggleMaximize()}
-              className="w-[46px] flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
-            >
-              <Square size={12} />
-            </button>
-            <button
-              onClick={() => getCurrentWindow().close()}
-              className="w-[46px] flex items-center justify-center text-white/40 hover:bg-red-500 hover:text-white transition-colors"
-            >
-              <X size={16} />
-            </button>
-          </div>
-        )}
+      {/* Custom titlebar — logo + window controls */}
+      <div data-tauri-drag-region className="flex items-center justify-between shrink-0 bg-sidebar w-full h-10">
+        <div className="flex items-center gap-[8px] px-[14px] h-full">
+          <BirdMark size={18} color="#F0B723" />
+          <span className="font-display font-black text-[15px] text-white tracking-[-0.5px]">
+            chirp
+          </span>
+        </div>
+        <div className="flex items-stretch h-full">
+          <button
+            onClick={() => getCurrentWindow().minimize()}
+            className="w-[46px] flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
+          >
+            <Minus size={16} />
+          </button>
+          <button
+            onClick={() => getCurrentWindow().toggleMaximize()}
+            className="w-[46px] flex items-center justify-center text-white/40 hover:text-white/60 transition-colors"
+          >
+            <Square size={12} />
+          </button>
+          <button
+            onClick={() => getCurrentWindow().close()}
+            className="w-[46px] flex items-center justify-center text-white/40 hover:bg-red-500 hover:text-white transition-colors"
+          >
+            <X size={16} />
+          </button>
+        </div>
       </div>
 
       <div className="flex flex-1 min-h-0">
       {/* Dark sidebar */}
       <div className="flex w-[220px] shrink-0 flex-col bg-sidebar p-[20px_12px] relative overflow-hidden sidebar-noise sidebar-glow">
-        {/* Logo in sidebar on macOS (below traffic lights) */}
-        {IS_MAC && (
-          <div className="flex items-center gap-[8px] px-[14px] mb-3 relative z-10">
-            <BirdMark size={18} color="#F0B723" />
-            <span className="font-display font-black text-[15px] text-white tracking-[-0.5px]">
-              chirp
-            </span>
-          </div>
-        )}
         {/* Nav items */}
         <nav className="flex flex-col gap-0.5 relative z-10">
           {NAV_ITEMS.map(({ id, label, icon: Icon }) => {
@@ -187,22 +154,6 @@ export function Settings() {
             Support Chirp
           </button>
 
-          {/* Chirp Pro */}
-          <button
-            onClick={() => setSettingsPage('pro')}
-            className={`flex items-center gap-[10px] w-full px-[14px] py-[10px] rounded-lg text-[13px] transition-all duration-200 relative mb-3 ${
-              proActive
-                ? 'text-chirp-yellow font-semibold bg-chirp-yellow/[0.08]'
-                : 'text-white/30 hover:text-white/50 hover:bg-white/[0.04]'
-            }`}
-          >
-            {proActive && (
-              <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-4 bg-chirp-yellow rounded-r-sm" />
-            )}
-            <BirdMark size={16} color={proActive ? '#F0B723' : 'rgba(255,255,255,0.3)'} />
-            Chirp Pro
-          </button>
-
           {/* Hotkey card */}
           <div className="mx-1 p-[14px] bg-white/[0.05] rounded-[10px] border border-white/[0.06] backdrop-blur-sm">
             <div className="text-[10px] text-white/30 font-semibold uppercase tracking-[1px] mb-2">
@@ -244,9 +195,6 @@ export function Settings() {
 
       {/* About modal */}
       {aboutModalOpen && <AboutModal />}
-
-      {/* Upgrade modal — shown when Smart Cleanup needs new model */}
-      <UpgradeModal />
     </div>
   )
 }

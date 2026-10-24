@@ -1,14 +1,11 @@
 import { useState, useEffect, useRef } from 'react'
-import { invoke } from '@tauri-apps/api/core'
 import { emit } from '@tauri-apps/api/event'
 import { useAppStore } from '../../stores/appStore'
 import type { HotkeyMode } from '../../stores/appStore'
 import { useTauri } from '../../hooks/useTauri'
 import { useHotkeyRecorder } from '../../hooks/useHotkeyRecorder'
 import type { AudioDevice } from '../../hooks/useTauri'
-import { useCleanupToggle } from '../../hooks/useCleanupToggle'
-import { useLlmDownloaded } from '../../hooks/useLlmDownloaded'
-import { TONE_MODES, STT_MODELS, LLM_MODEL } from '../../lib/constants'
+import { STT_MODELS } from '../../lib/constants'
 import { formatHotkey } from '../../lib/utils'
 import { Toggle } from '../shared/Toggle'
 import { Select } from '../shared/Select'
@@ -54,72 +51,6 @@ function Card({ children }: { children: React.ReactNode }) {
   )
 }
 
-function FeedbackSection() {
-  const [expanded, setExpanded] = useState(false)
-  const [text, setText] = useState('')
-  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
-  const [errorMsg, setErrorMsg] = useState('')
-
-  const handleSend = async () => {
-    setStatus('sending')
-    try {
-      await invoke('send_feedback', { text })
-      setStatus('sent')
-      setText('')
-      setTimeout(() => {
-        setStatus('idle')
-        setExpanded(false)
-      }, 3000)
-    } catch (e) {
-      setStatus('error')
-      setErrorMsg(String(e))
-    }
-  }
-
-  if (!expanded) {
-    return (
-      <button
-        onClick={() => setExpanded(true)}
-        className="text-[13px] font-medium text-dm-primary hover:text-chirp-amber-500 transition-colors w-full text-left"
-      >
-        Send Feedback
-      </button>
-    )
-  }
-
-  return (
-    <div className="w-full">
-      <div className="text-[13px] font-medium text-dm-primary mb-2">Send Feedback</div>
-      <textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        placeholder="Tell us what you think..."
-        maxLength={2000}
-        className="w-full h-24 rounded-lg border border-card-border bg-dm-input p-3 text-sm font-body text-dm-primary resize-none focus:outline-none focus:border-chirp-amber-400 transition-colors"
-      />
-      <div className="flex items-center justify-between mt-2">
-        <span className="text-[11px] text-chirp-stone-400">
-          {status === 'sent' ? 'Sent!' : status === 'error' ? errorMsg : `${text.length}/2000`}
-        </span>
-        <div className="flex gap-2">
-          <button
-            onClick={() => { setExpanded(false); setText(''); setStatus('idle') }}
-            className="text-[12px] text-chirp-stone-400 hover:text-chirp-stone-600"
-          >
-            Cancel
-          </button>
-          <Button
-            onClick={handleSend}
-            disabled={text.trim().length === 0 || status === 'sending' || status === 'sent'}
-          >
-            {status === 'sending' ? 'Sending...' : status === 'sent' ? 'Sent!' : 'Send'}
-          </Button>
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function describePosition(pos: unknown): string {
   if (typeof pos === 'string') {
     return pos === 'top' ? 'top center' : 'bottom center'
@@ -144,13 +75,8 @@ export function SettingsPage() {
   const audioRef = useRef<HTMLAudioElement | null>(null)
   const testIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
-  // AI / LLM state
-  const { handleCleanupToggle, cleanupStarting, llmDownloaded } = useCleanupToggle()
-  const [, setLlmDownloaded] = useLlmDownloaded()
-
   // Model download state
   const [downloadError, setDownloadError] = useState<string | null>(null)
-  const [llmDownloadError, setLlmDownloadError] = useState<string | null>(null)
 
   const currentModel = STT_MODELS.find((m) => m.id === store.model)
   const isDownloaded = store.modelDownloaded[store.model]
@@ -271,31 +197,6 @@ export function SettingsPage() {
     }
   }
 
-  const handleLlmDownload = async () => {
-    setLlmDownloadError(null)
-    store.setLlmDownloadProgress(0)
-    try {
-      await tauri.downloadLlm((progress) => {
-        store.setLlmDownloadProgress(progress)
-      })
-      setLlmDownloaded(true)
-
-      if (store.aiCleanup) {
-        try {
-          await tauri.startLlm()
-          store.setLlmReady(true)
-        } catch (e) {
-          if (import.meta.env.DEV) console.error('Failed to start LLM after download:', e)
-        }
-      }
-    } catch (e) {
-      if (import.meta.env.DEV) console.error('LLM download failed:', e)
-      setLlmDownloadError('Download failed. Check your internet connection and try again.')
-    } finally {
-      store.setLlmDownloadProgress(null)
-    }
-  }
-
   const testLinkText =
     testState === 'recording'
       ? `Recording... (${testCountdown}s)`
@@ -382,25 +283,6 @@ export function SettingsPage() {
           ) : (
             /* ── IDLE / PENDING STATE: compact row ── */
             <>
-            {store.hotkeyStatus === 'accessibility_required' && (
-              <div className="mb-3 flex items-center justify-between rounded-xl border border-chirp-amber-300 bg-chirp-amber-400/10 px-4 py-3">
-                <div>
-                  <div className="text-[13px] font-medium text-chirp-amber-700">Accessibility permission required</div>
-                  <div className="text-[11px] text-chirp-stone-500">Chirp needs Accessibility access to detect your hotkey.</div>
-                </div>
-                <button
-                  onClick={async () => {
-                    const { invoke } = await import('@tauri-apps/api/core')
-                    const { open } = await import('@tauri-apps/plugin-shell')
-                    await invoke('request_accessibility_permission').catch(() => {})
-                    await open('x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility')
-                  }}
-                  className="rounded-lg bg-dm-btn-bg px-3 py-1.5 text-[11px] font-medium text-dm-btn-text hover:bg-dm-btn-hover transition-colors whitespace-nowrap ml-3"
-                >
-                  Open System Settings
-                </button>
-              </div>
-            )}
             <Row>
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
@@ -564,58 +446,6 @@ export function SettingsPage() {
             />
           </Row>
 
-          <Row>
-            <div>
-              <div className="flex items-center gap-2">
-                <div className="text-[13px] font-medium text-dm-primary">Smart Cleanup</div>
-                {store.aiCleanup && (
-                  <span className="flex items-center gap-1">
-                    {cleanupStarting ? (
-                      <>
-                        <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400 animate-pulse" />
-                        <span className="text-[11px] text-dm-secondary">Getting ready...</span>
-                      </>
-                    ) : store.llmReady ? (
-                      <>
-                        <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                        <span className="text-[11px] text-dm-secondary">Active</span>
-                      </>
-                    ) : !llmDownloaded ? (
-                      <>
-                        <div className="h-1.5 w-1.5 rounded-full bg-chirp-amber-400" />
-                        <span className="text-[11px] text-chirp-amber-500">Model needed</span>
-                      </>
-                    ) : null}
-                  </span>
-                )}
-              </div>
-              <div className="text-[11px] text-dm-secondary mt-0.5">Polish grammar and filler words with local AI</div>
-            </div>
-            <Toggle
-              checked={store.aiCleanup}
-              onChange={handleCleanupToggle}
-              disabled={cleanupStarting}
-            />
-          </Row>
-
-          {store.aiCleanup && (
-            <Row>
-              <div>
-                <div className="text-[13px] font-medium text-dm-primary">Tone</div>
-                <div className="text-[11px] text-dm-secondary mt-0.5">
-                  {TONE_MODES.find(m => m.id === store.toneMode)?.description}
-                </div>
-              </div>
-              <div className="w-[180px]">
-                <Select
-                  options={TONE_MODES.map(m => ({ value: m.id, label: m.label }))}
-                  value={store.toneMode}
-                  onChange={(v) => store.updateSettings({ toneMode: String(v) })}
-                />
-              </div>
-            </Row>
-          )}
-
           <Row last>
             <div>
               <div className="text-[13px] font-medium text-dm-primary">Enhanced Recognition</div>
@@ -723,7 +553,7 @@ export function SettingsPage() {
         <SectionLabel>Models</SectionLabel>
         <Card>
           {/* Speech model */}
-          <Row>
+          <Row last>
             <div className="flex-1">
               <div className="flex items-center gap-2">
                 <div className="text-[13px] font-medium text-dm-primary">{currentModel?.name}</div>
@@ -759,71 +589,6 @@ export function SettingsPage() {
                 </Button>
               )}
             </div>
-          </Row>
-
-          {/* LLM model */}
-          <Row last>
-            <div className="flex-1">
-              <div className="flex items-center gap-2">
-                <div className="text-[13px] font-medium text-dm-primary">{LLM_MODEL.displayName} engine</div>
-                <span className="text-[11px] text-dm-secondary">{LLM_MODEL.friendlySize}</span>
-              </div>
-              <div className="text-[11px] text-dm-secondary mt-0.5">Polishes grammar and sentences locally</div>
-              <div className="text-[10px] text-chirp-stone-400 mt-0.5">{LLM_MODEL.attribution}</div>
-              {store.llmDownloadProgress !== null && (
-                <div className="mt-2">
-                  <div className="flex items-center gap-2">
-                    <div className="h-1 flex-1 overflow-hidden rounded-full bg-surface">
-                      <div
-                        className="h-full rounded-full bg-chirp-amber-400 transition-all duration-200"
-                        style={{ width: `${store.llmDownloadProgress}%` }}
-                      />
-                    </div>
-                    <span className="text-[11px] text-dm-secondary">{store.llmDownloadProgress}%</span>
-                  </div>
-                </div>
-              )}
-              {llmDownloadError && (
-                <p className="mt-1 text-[11px] text-chirp-error">{llmDownloadError}</p>
-              )}
-            </div>
-            <div className="ml-4">
-              {llmDownloaded ? (
-                <div className="flex items-center gap-1.5">
-                  <div className="h-1.5 w-1.5 rounded-full bg-chirp-success" />
-                  <span className="text-[12px] text-dm-muted">Ready</span>
-                </div>
-              ) : (
-                <Button onClick={handleLlmDownload} disabled={store.llmDownloadProgress !== null}>
-                  Download
-                </Button>
-              )}
-            </div>
-          </Row>
-        </Card>
-      </div>
-
-      {/* Privacy & Feedback */}
-      <div className="mt-6">
-        <SectionLabel>Privacy & Feedback</SectionLabel>
-        <Card>
-          <Row>
-            <div className="flex-1">
-              <div className="text-[13px] font-medium text-dm-primary">Help improve Chirp</div>
-              <div className="text-[11px] text-dm-secondary mt-0.5">
-                Share anonymous usage stats and crash reports
-              </div>
-              <div className="text-[10px] text-chirp-stone-400 mt-1">
-                Changes take effect on restart
-              </div>
-            </div>
-            <Toggle
-              checked={store.helpImprove}
-              onChange={(v) => store.updateSettings({ helpImprove: v })}
-            />
-          </Row>
-          <Row last>
-            <FeedbackSection />
           </Row>
         </Card>
       </div>

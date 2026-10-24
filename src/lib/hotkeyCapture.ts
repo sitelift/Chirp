@@ -1,5 +1,3 @@
-const IS_MAC = navigator.platform.includes('Mac')
-
 const MODIFIER_CODES = new Set([
   'ControlLeft', 'ControlRight',
   'ShiftLeft', 'ShiftRight',
@@ -17,8 +15,8 @@ const MODIFIER_ORDER = [
 export function codeToLabel(code: string): string {
   if (code === 'ControlLeft' || code === 'ControlRight') return 'Ctrl'
   if (code === 'ShiftLeft' || code === 'ShiftRight') return 'Shift'
-  if (code === 'AltLeft' || code === 'AltRight') return IS_MAC ? 'Option' : 'Alt'
-  if (code === 'MetaLeft' || code === 'MetaRight') return IS_MAC ? '\u2318' : 'Win'
+  if (code === 'AltLeft' || code === 'AltRight') return 'Alt'
+  if (code === 'MetaLeft' || code === 'MetaRight') return 'Win'
   if (code === 'Fn') return 'fn'
   if (code.startsWith('Key') && code.length === 4) return code[3]
   if (code.startsWith('Digit') && code.length === 6) return code[5]

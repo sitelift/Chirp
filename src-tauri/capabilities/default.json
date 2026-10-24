@@ -28,8 +28,6 @@
     "log:default",
     "autostart:default",
     "dialog:default",
-    "aptabase:default",
-    "sentry:default",
     "updater:default",
     "process:default",
     "shell:allow-open"

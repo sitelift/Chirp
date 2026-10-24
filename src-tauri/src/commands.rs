@@ -2,7 +2,6 @@ use crate::audio;
 use crate::cleanup;
 use crate::history;
 use crate::inject;
-use crate::llm;
 use crate::settings;
 use crate::snippets;
 use crate::state::*;
@@ -16,86 +15,6 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use tauri_plugin_autostart::ManagerExt;
 
 const CHIRP_SOUND: &[u8] = include_bytes!("../sounds/chirp.wav");
-const MIN_AI_CLEANUP_WORDS: usize = 7;
-
-/// Join VAD segments with boundary cleanup. When VAD splits mid-sentence,
-/// each segment starts with a capital letter and may end with a period that
-/// doesn't belong. This fixes the most obvious artifacts.
-///
-/// Currently unused — retained because the streaming cleanup path (v3) does
-/// per-segment LLM cleanup instead, but we may want this helper again if the
-/// streaming path is reverted.
-#[allow(dead_code)]
-fn join_vad_segments(segments: &[String]) -> String {
-    if segments.is_empty() {
-        return String::new();
-    }
-
-    let mut result = String::new();
-
-    for (i, seg) in segments.iter().enumerate() {
-        let trimmed = seg.trim();
-        if trimmed.is_empty() {
-            continue;
-        }
-
-        if i == 0 {
-            // First segment: keep as-is
-            result.push_str(trimmed);
-            continue;
-        }
-
-        // Check if previous segment ended with sentence-ending punctuation
-        let prev_ended_sentence =
-            result.ends_with('.') || result.ends_with('?') || result.ends_with('!');
-
-        // If previous segment ended with a period but was very short (1-3 words),
-        // it's likely a VAD artifact — strip the period
-        if result.ends_with('.') {
-            let last_segment_words = result
-                .rsplit(' ')
-                .take_while(|w| !w.ends_with('.') && !w.ends_with('?') && !w.ends_with('!'))
-                .count();
-            // If the trailing sentence fragment is 1-3 words, strip the period
-            // (e.g., "Time." or "Is like." are artifacts)
-            if last_segment_words <= 3 {
-                // Check the actual last "sentence" by finding the last sentence break before this one
-                let before_period = &result[..result.len() - 1];
-                let last_real_end = before_period.rfind(|c: char| c == '.' || c == '?' || c == '!');
-                let fragment = match last_real_end {
-                    Some(pos) => &before_period[pos + 1..],
-                    None => before_period,
-                };
-                let word_count = fragment.split_whitespace().count();
-                if word_count <= 3 {
-                    result.pop(); // remove the trailing period
-                }
-            }
-        }
-
-        result.push(' ');
-
-        let prev_ended_sentence_now = result.trim_end().ends_with('.')
-            || result.trim_end().ends_with('?')
-            || result.trim_end().ends_with('!');
-
-        if prev_ended_sentence_now {
-            // Previous was a real sentence end — keep the capitalization
-            result.push_str(trimmed);
-        } else {
-            // Mid-sentence join — lowercase the first character
-            let mut chars = trimmed.chars();
-            if let Some(first) = chars.next() {
-                for c in first.to_lowercase() {
-                    result.push(c);
-                }
-                result.push_str(chars.as_str());
-            }
-        }
-    }
-
-    result
-}
 
 /// Active audio stream handle — wrapped in an unsafe Send wrapper because
 /// cpal::Stream is !Send but we only access it from the main thread.
@@ -764,17 +683,7 @@ pub async fn stop_recording(
     // Grab what we need from state before entering blocking thread.
     // Clone the Arc<SherpaRecognizer> so we can release the state lock
     // before the expensive transcription step.
-    let (
-        recognizer,
-        smart_fmt,
-        vocab,
-        snips,
-        ai_cleanup,
-        llm_port,
-        tone_mode,
-        http_client,
-        vad_was_active,
-    ) = {
+    let (recognizer, smart_fmt, vocab, snips, vad_was_active) = {
         let mut s = state.lock().await;
         let rec = s.recognizer.clone().ok_or("model_not_loaded".to_string())?;
         let vad_was_active = s.vad_was_active;
@@ -785,15 +694,9 @@ pub async fn stop_recording(
             s.settings.smart_formatting,
             s.vocabulary.clone(),
             s.snippets.clone(),
-            s.settings.ai_cleanup,
-            s.llm_port,
-            s.settings.tone_mode.clone(),
-            s.http_client.clone(),
             vad_was_active,
         )
     };
-
-    let had_vocabulary = !vocab.is_empty();
 
     // Drain VAD transcripts accumulated by the receiver thread. Whether we
     // USE them is decided by vad_was_active, NOT by vad_texts.is_empty().
@@ -816,9 +719,8 @@ pub async fn stop_recording(
         !vad_was_active
     );
 
-    // The streaming path bypasses the blocking ASR fallback. It still runs the
-    // same single LLM cleanup pass after the hotkey is released.
-    let (formatted_opt, streaming_was_cleaned_up) = if use_vad {
+    // The streaming path bypasses the blocking ASR fallback.
+    let formatted_opt = if use_vad {
         if vad_cleaned_texts.is_empty() {
             log::warn!("VAD cleaned transcripts empty — returning empty result (no fallback)");
             let mut s = state.lock().await;
@@ -843,11 +745,9 @@ pub async fn stop_recording(
             vad_cleaned_texts.len(),
             joined.len()
         );
-        // VAD segments are pre-cleaned (regex/vocab/snippets) but LLM cleanup
-        // is deferred to the single post-release pass below.
-        (Some(joined), false)
+        Some(joined)
     } else {
-        (None, false)
+        None
     };
 
     let result = if let Some(text) = formatted_opt {
@@ -891,9 +791,6 @@ pub async fn stop_recording(
             // to its canonical `term`, case-insensitive at word boundaries.
             let after_replace = cleanup::apply_replacements(&formatted, &vocab);
 
-            // Snippet expansion is deferred to after LLM cleanup (below)
-            // so the LLM doesn't mangle URLs / emails / identifiers.
-
             log::info!("After regex+replace: '{after_replace}'");
             Ok(after_replace)
         })
@@ -911,49 +808,16 @@ pub async fn stop_recording(
         }
     };
 
-    // AI cleanup pass (if enabled and server is running). Both VAD and
-    // fallback paths arrive here after deterministic regex/vocabulary cleanup.
-    let mut was_cleaned_up = streaming_was_cleaned_up;
-    let formatted_word_count = formatted.split_whitespace().count();
-    let skip_ai_for_short_message =
-        tone_mode != "email" && formatted_word_count < MIN_AI_CLEANUP_WORDS;
-    let result = if !streaming_was_cleaned_up
-        && ai_cleanup
-        && llm_port.is_some()
-        && !skip_ai_for_short_message
-    {
-        let port = llm_port.unwrap();
-        let _ = app_handle.emit("recording-state", "polishing");
-        log::info!("Running AI cleanup on text...");
-        match llm::cleanup_text(port, &formatted, &tone_mode, &http_client).await {
-            Ok(cleaned) => {
-                log::info!("LLM cleanup: '{cleaned}'");
-                was_cleaned_up = true;
-                cleaned
-            }
-            Err(e) => {
-                log::warn!("AI cleanup failed, using regex-only result: {e}");
-                formatted
-            }
-        }
-    } else {
-        if !streaming_was_cleaned_up
-            && ai_cleanup
-            && llm_port.is_some()
-            && skip_ai_for_short_message
-        {
-            log::info!("Skipping AI cleanup for short message ({formatted_word_count} words)");
-        }
-        formatted
-    };
+    // Cloud LLM cleanup slots in here (see docs/v2/DIRECTION.md). Until then
+    // the deterministic regex + vocabulary result is final.
+    let was_cleaned_up = false;
 
-    // One last deterministic boundary pass catches artifacts the LLM may
-    // preserve from VAD splits, e.g. "that Much" or "and then Than".
-    let result = cleanup::repair_vad_boundary_artifacts(&result);
+    // One last deterministic boundary pass catches artifacts from VAD
+    // splits, e.g. "that Much" or "and then Than".
+    let result = cleanup::repair_vad_boundary_artifacts(&formatted);
 
-    // Snippet expansion happens AFTER LLM cleanup so expansions (URLs,
-    // emails, addresses) survive as literal text — the LLM would otherwise
-    // "correct" things like "chirptype.com" into "chirptype. Com".
+    // Snippet expansion runs last so expansions (URLs, emails, addresses)
+    // survive as literal text through any cleanup pass.
     let result = snippets::apply_snippets(&result, &snips);
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -978,10 +842,6 @@ pub async fn stop_recording(
         let mut s = state.lock().await;
         s.recording_state = RecordingState::Idle;
         log::error!("Injection failed: {e}");
-        // Pass through accessibility_denied so the frontend can show a specific message
-        if e == "accessibility_denied" {
-            return Err("accessibility_denied".into());
-        }
         return Err("injection_failed".into());
     }
 
@@ -1066,20 +926,6 @@ pub async fn stop_recording(
         }
     }
 
-    // Track dictation_completed telemetry (no-op if help_improve is off)
-    {
-        use tauri_plugin_aptabase::EventTracker;
-        let _ = app_handle.track_event(
-            "dictation_completed",
-            Some(serde_json::json!({
-                "duration_seconds": (duration_ms as f64 / 1000.0),
-                "word_count": word_count,
-                "used_ai_cleanup": was_cleaned_up,
-                "used_vocabulary": had_vocabulary,
-            })),
-        );
-    }
-
     // Notify all windows (including settings) that history changed
     if let Some(entry) = new_entry {
         let _ = app_handle.emit("history-updated", entry);
@@ -1102,7 +948,6 @@ pub async fn stop_recording(
 
 #[tauri::command]
 pub async fn cancel_recording(
-    app_handle: AppHandle,
     state: State<'_, SharedState>,
     buffer: State<'_, AudioBuffer>,
     stream_handle: State<'_, StreamHandle>,
@@ -1131,13 +976,6 @@ pub async fn cancel_recording(
     // Reset state
     let mut s = state.lock().await;
     s.recording_state = RecordingState::Idle;
-    drop(s);
-
-    // Track dictation_cancelled telemetry (no-op if help_improve is off)
-    {
-        use tauri_plugin_aptabase::EventTracker;
-        let _ = app_handle.track_event("dictation_cancelled", None);
-    }
 
     Ok(())
 }
@@ -1153,17 +991,6 @@ pub async fn download_model(
     // Download Silero VAD model alongside (small, ~2MB)
     if let Err(e) = settings::download_vad_model().await {
         log::warn!("VAD model download failed (non-fatal): {e}");
-    }
-
-    // Track model_downloaded telemetry (no-op if help_improve is off)
-    {
-        use tauri_plugin_aptabase::EventTracker;
-        let _ = app_handle.track_event(
-            "model_downloaded",
-            Some(serde_json::json!({
-                "model": &model,
-            })),
-        );
     }
 
     // Load the recognizer into app state immediately so recording works
@@ -1256,120 +1083,6 @@ pub async fn test_microphone(
     Ok(wav_bytes)
 }
 
-// ── LLM commands ──────────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn get_llm_status(state: State<'_, SharedState>) -> Result<llm::LlmStatus, String> {
-    let mut s = state.lock().await;
-    let mut server_running = s.llm_port.is_some();
-
-    let child_status = s.llm_process.as_mut().map(|child| child.try_wait());
-    match child_status {
-        Some(Ok(Some(status))) => {
-            log::warn!("llama-server exited unexpectedly: {status}");
-            s.llm_process = None;
-            s.llm_port = None;
-            llm::clear_server_pid();
-            server_running = false;
-        }
-        Some(Ok(None)) => {}
-        Some(Err(e)) => {
-            log::warn!("Failed to check llama-server status: {e}");
-            s.llm_process = None;
-            s.llm_port = None;
-            llm::clear_server_pid();
-            server_running = false;
-        }
-        None if s.llm_port.is_some() => {
-            s.llm_port = None;
-            llm::clear_server_pid();
-            server_running = false;
-        }
-        None => {}
-    }
-
-    Ok(llm::LlmStatus {
-        binary_downloaded: llm::binary_exists(),
-        model_downloaded: llm::model_exists(),
-        server_running,
-    })
-}
-
-#[tauri::command]
-pub async fn download_llm(
-    app_handle: AppHandle,
-    state: State<'_, SharedState>,
-) -> Result<(), String> {
-    llm::download_binary(&app_handle).await?;
-    llm::download_model(&app_handle).await?;
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn start_llm(state: State<'_, SharedState>) -> Result<(), String> {
-    {
-        let s = state.lock().await;
-        if s.llm_port.is_some() {
-            return Ok(()); // Already running
-        }
-    }
-
-    // Pick a random port in the ephemeral range
-    let port = {
-        let listener = std::net::TcpListener::bind("127.0.0.1:0")
-            .map_err(|e| format!("Failed to find free port: {e}"))?;
-        listener
-            .local_addr()
-            .map_err(|e| format!("Failed to get local address: {e}"))?
-            .port()
-    };
-
-    let child = llm::start_server(port).await?;
-
-    let mut s = state.lock().await;
-    if let Some(pid) = child.id() {
-        llm::save_server_pid(pid);
-    }
-    s.llm_process = Some(child);
-    s.llm_port = Some(port);
-
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn stop_llm(state: State<'_, SharedState>) -> Result<(), String> {
-    let mut s = state.lock().await;
-    if let Some(ref mut child) = s.llm_process {
-        llm::stop_server(child).await;
-    }
-    s.llm_process = None;
-    s.llm_port = None;
-    llm::clear_server_pid();
-    Ok(())
-}
-
-#[tauri::command]
-pub async fn test_llm_cleanup(
-    text: String,
-    mode: Option<String>,
-    state: State<'_, SharedState>,
-) -> Result<String, String> {
-    let (port, http_client) = {
-        let s = state.lock().await;
-        (
-            s.llm_port.ok_or("LLM server is not running")?,
-            s.http_client.clone(),
-        )
-    };
-    llm::cleanup_text(
-        port,
-        &text,
-        &mode.unwrap_or_else(|| "message".to_string()),
-        &http_client,
-    )
-    .await
-}
-
 #[tauri::command]
 pub async fn play_completion_sound() -> Result<(), String> {
     tokio::task::spawn_blocking(|| {
@@ -1394,99 +1107,8 @@ pub async fn get_hotkey_status(state: State<'_, SharedState>) -> Result<String, 
         crate::state::HotkeyStatus::Retrying => "retrying",
         crate::state::HotkeyStatus::Active => "active",
         crate::state::HotkeyStatus::Failed => "failed",
-        crate::state::HotkeyStatus::AccessibilityRequired => "accessibility_required",
     };
     Ok(status.to_string())
-}
-
-// ── Mic permission (macOS early-trigger) ───────────────────────────────
-
-#[tauri::command]
-pub async fn request_mic_permission() -> Result<bool, String> {
-    // Briefly open the default audio input to trigger the macOS permission dialog.
-    // On Windows/Linux this is a no-op (permissions granted by default).
-    use cpal::traits::{DeviceTrait, HostTrait};
-    let host = cpal::default_host();
-    match host.default_input_device() {
-        Some(device) => {
-            // Try to get the default config — this triggers the permission dialog on macOS
-            match device.default_input_config() {
-                Ok(_) => Ok(true),
-                Err(_) => Ok(false),
-            }
-        }
-        None => Ok(false),
-    }
-}
-
-// ── Announcements commands ─────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn get_announcements() -> Result<Vec<crate::announcements::Announcement>, String> {
-    let app_version = env!("CARGO_PKG_VERSION");
-    Ok(crate::announcements::fetch_announcements(app_version).await)
-}
-
-#[tauri::command]
-pub async fn dismiss_announcement(id: String) -> Result<(), String> {
-    let mut seen = crate::announcements::load_seen();
-    if !seen.contains(&id) {
-        seen.push(id);
-        crate::announcements::save_seen(&seen)?;
-    }
-    Ok(())
-}
-
-// ── Feedback command ───────────────────────────────────────────────────
-
-#[tauri::command]
-pub async fn send_feedback(text: String, state: State<'_, SharedState>) -> Result<(), String> {
-    crate::feedback::send_feedback_command(text, state.inner()).await
-}
-
-// ── Accessibility permission (macOS) ──────────────────────────────────
-
-#[tauri::command]
-pub async fn check_accessibility_permission() -> Result<bool, String> {
-    #[cfg(target_os = "macos")]
-    {
-        extern "C" {
-            fn AXIsProcessTrusted() -> bool;
-        }
-        Ok(unsafe { AXIsProcessTrusted() })
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok(true)
-    }
-}
-
-#[tauri::command]
-pub async fn request_accessibility_permission() -> Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        use cocoa::base::nil;
-        use cocoa::foundation::{NSDictionary, NSString};
-        use objc::class;
-        use objc::msg_send;
-        use objc::runtime::Object;
-        use objc::sel;
-        use objc::sel_impl;
-        extern "C" {
-            fn AXIsProcessTrustedWithOptions(options: *const Object) -> bool;
-        }
-        unsafe {
-            let key = NSString::alloc(nil).init_str("AXTrustedCheckOptionPrompt");
-            let value: *mut Object = msg_send![class!(NSNumber), numberWithBool: true];
-            let options = NSDictionary::dictionaryWithObject_forKey_(nil, value, key);
-            AXIsProcessTrustedWithOptions(options as *const Object);
-        }
-        Ok(())
-    }
-    #[cfg(not(target_os = "macos"))]
-    {
-        Ok(())
-    }
 }
 
 // ── System-level key capture ──────────────────────────────────────────

@@ -144,14 +144,6 @@ export function AboutModal() {
               <p className="font-body text-sm text-dm-muted">
                 Couldn't check for updates.
               </p>
-              {navigator.platform.includes('Mac') && (
-                <button
-                  onClick={() => open('https://github.com/sitelift/Chirp/releases/latest/download/Chirp.dmg')}
-                  className="mt-1 font-body text-[13px] text-chirp-info hover:underline"
-                >
-                  Download latest DMG
-                </button>
-              )}
             </div>
           )}
 

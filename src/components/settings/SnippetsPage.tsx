@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { trackEvent } from '@aptabase/tauri'
 import { Pencil, Check, X } from 'lucide-react'
 import { useAppStore } from '../../stores/appStore'
 import { Button } from '../shared/Button'
@@ -23,7 +22,6 @@ export function SnippetsPage() {
     addSnippet(trigger, expansion)
     setNewTrigger('')
     setNewExpansion('')
-    trackEvent('feature_used', { feature: 'snippet_add' })
   }
 
   const handleKeyDown = (e: React.KeyboardEvent) => {

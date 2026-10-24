@@ -24,10 +24,7 @@ fn migrate_hotkey(hotkey: &str) -> String {
 
     for part in parts {
         let migrated = match part.trim() {
-            "CmdOrCtrl" => {
-                if cfg!(target_os = "macos") { "MetaLeft" } else { "ControlLeft" }
-            }
-            "Ctrl" | "Control" => "ControlLeft",
+            "CmdOrCtrl" | "Ctrl" | "Control" => "ControlLeft",
             "Cmd" | "Command" | "Meta" | "Super" => "MetaLeft",
             "Shift" => "ShiftLeft",
             "Alt" | "Option" => "Alt",
@@ -73,53 +70,25 @@ fn vocabulary_path() -> PathBuf {
     config_dir().join("vocabulary.json")
 }
 
-/// Remove old cleanup-model files from previous versions. The current cleanup
-/// model is Qwen 3 1.7B Q4_K_M (~1.1 GB); everything below was used in some
-/// earlier release or v1.3.0-dev iteration and should be reclaimed on upgrade.
-///   - `qwen2.5-3b-instruct-q4_k_m.gguf` — v1.2.5 cleanup model (~1.9 GB)
-///   - `chirp-cleanup-0.6b-q4_k_m.gguf` — chirp-cleanup-v2 fine-tune
-///   - `Qwen3-0.6B-Q4_K_M.gguf` — superseded by Qwen 3 1.7B
-///   - `Ministral-3-8B-Instruct-2512-Q4_K_M.gguf` — tried in v1.3.0 dev
-///   - `gemma-4-E2B-it-Q4_K_M.gguf` — v1.2.6 cleanup model (~3.1 GB)
-///   - FLAN-T5 chirp-cleanup directory — pre-Qwen experimental backend
+/// Remove files left behind by earlier versions: the local cleanup LLM
+/// (llama-server + GGUF models, 1-3 GB) and its log, the FLAN-T5
+/// experiment, and the shelved Moonshine streaming model.
 fn cleanup_old_models() {
-    let llm_dir = config_dir().join("llm");
-
-    let old_files = [
-        "qwen2.5-3b-instruct-q4_k_m.gguf",
-        "chirp-cleanup-0.6b-q4_k_m.gguf",
-        "Qwen3-0.6B-Q4_K_M.gguf",
-        "Ministral-3-8B-Instruct-2512-Q4_K_M.gguf",
-        "gemma-4-E2B-it-Q4_K_M.gguf",
+    let dirs = [
+        config_dir().join("llm"),
+        config_dir().join("chirp-cleanup"),
+        models_dir().join("sherpa").join("sherpa-onnx-moonshine-base-en-int8"),
     ];
-    for name in old_files {
-        let path = llm_dir.join(name);
-        if path.exists() {
-            match std::fs::remove_file(&path) {
-                Ok(_) => log::info!("Cleaned up old cleanup model ({})", path.display()),
-                Err(e) => log::warn!("Failed to remove {name}: {e}"),
+    for dir in dirs {
+        if dir.exists() {
+            match std::fs::remove_dir_all(&dir) {
+                Ok(_) => log::info!("Removed old model dir {}", dir.display()),
+                Err(e) => log::warn!("Failed to remove {}: {e}", dir.display()),
             }
         }
     }
 
-    let chirp_cleanup_dir = config_dir().join("chirp-cleanup");
-    if chirp_cleanup_dir.exists() {
-        match std::fs::remove_dir_all(&chirp_cleanup_dir) {
-            Ok(_) => log::info!("Cleaned up old chirp-cleanup T5 dir"),
-            Err(e) => log::warn!("Failed to remove chirp-cleanup dir: {e}"),
-        }
-    }
-
-    // Shelved Moonshine streaming experiment — free ~272 MB on upgrade.
-    let moonshine_dir = models_dir()
-        .join("sherpa")
-        .join("sherpa-onnx-moonshine-base-en-int8");
-    if moonshine_dir.exists() {
-        match std::fs::remove_dir_all(&moonshine_dir) {
-            Ok(_) => log::info!("Cleaned up shelved Moonshine model dir"),
-            Err(e) => log::warn!("Failed to remove Moonshine model dir: {e}"),
-        }
-    }
+    let _ = std::fs::remove_file(config_dir().join("llm-server.log"));
 }
 
 /// Load settings from disk, returning defaults if file doesn't exist
@@ -145,16 +114,7 @@ pub fn load_settings() -> Settings {
         let _ = save_settings(&settings);
     }
 
-    // Force the cleanup_model identifier to "chirp-v2" — the only value the
-    // app currently understands. The actual model bytes are Qwen 3 1.7B
-    // (see llm::MODEL_FILENAME); the setting field is kept as a forward-compat
-    // hook so we can swap the underlying model without a migration dance.
-    if settings.cleanup_model != "chirp-v2" {
-        log::info!("Migrated cleanup_model '{}' → 'chirp-v2'", settings.cleanup_model);
-        settings.cleanup_model = "chirp-v2".into();
-    }
-
-    // Clean up old model files (Qwen, chirp-cleanup) in background
+    // Reclaim disk from local cleanup models that v2 no longer uses
     cleanup_old_models();
 
     // Migrate old Tauri shortcut format to new event.code-based format

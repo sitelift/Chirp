@@ -1,13 +1,12 @@
 import type { TranscriptionEntry } from '../stores/appStore'
 
 export function formatHotkey(hotkey: string): string[] {
-  const IS_MAC = navigator.platform.includes('Mac')
   return hotkey.split('+').map(c => {
     c = c.trim()
     if (c === 'ControlLeft' || c === 'ControlRight') return 'Ctrl'
     if (c === 'ShiftLeft' || c === 'ShiftRight') return 'Shift'
-    if (c === 'AltLeft' || c === 'AltRight') return IS_MAC ? 'Option' : 'Alt'
-    if (c === 'MetaLeft' || c === 'MetaRight') return IS_MAC ? '\u2318' : 'Win'
+    if (c === 'AltLeft' || c === 'AltRight') return 'Alt'
+    if (c === 'MetaLeft' || c === 'MetaRight') return 'Win'
     if (c === 'Fn') return 'fn'
     if (c.startsWith('Key') && c.length === 4) return c[3]
     if (c.startsWith('Digit') && c.length === 6) return c[5]
@@ -16,7 +15,7 @@ export function formatHotkey(hotkey: string): string[] {
     if (c === 'ArrowLeft') return 'Left'
     if (c === 'ArrowRight') return 'Right'
     // Legacy format fallback
-    if (c === 'CmdOrCtrl') return IS_MAC ? '\u2318' : 'Ctrl'
+    if (c === 'CmdOrCtrl') return 'Ctrl'
     return c
   })
 }
