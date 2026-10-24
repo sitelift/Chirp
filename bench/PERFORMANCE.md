@@ -1,6 +1,105 @@
 # Performance track — 2026-10-24
 
-## Decision
+## Final state: collect real dictations before more tuning
+
+The SAPI corpus is a development fixture, not representative human speech.
+Performance tuning stops here per the user's direction; hotword measurement is
+deferred. Opt-in local capture and a private draft importer are ready.
+
+- `ceaade6`: merged the completed global hotkey rewrite into v2.
+- `fe03a02` / `ad6ab4a`: one speculative cleanup request at a time, coalescing,
+  exact-input reuse, and no queued replacement starting after release.
+- `53889a0`: capture browser context at press; resolve once at the first cleanup
+  request or release; reuse it; prewarm UI Automation at startup.
+- `922a45e`: default-off local capture, plus one frozen dictionary term list for
+  prewarm, speculative and release-time calls. The same list is in metadata.
+- `407fa09`: private human-draft importer, float-audio replay, and draft-reference
+  scoring guard. No pushes were made.
+
+Final validation: **111 Rust tests passed**, one interactive context test ignored;
+**two importer tests passed**; `npm run build` passed. The earlier Application
+Control test-executable block did not recur on these final builds. No security
+settings were changed. Live capture/paste behavior still needs human dogfooding.
+
+## Final paired speculation comparison
+
+45 clips per variant, 39 Haiku items, one measured paced pass per variant after
+startup warmup. These results end at **final text availability, excluding paste
+dispatch**. Both variants use the same compiled prompt/client and the same
+45 original inputs. The interrupted trimmed run was restarted using a recovered
+manifest whose source fingerprint exactly matched the original run; only WAV
+paths were made absolute. Its local snapshot is `results/spec-45-manifest.json`.
+
+| Ending | Without speculation p50 / p95 / max ms | With speculation p50 / p95 / max ms | Exact-match hit rate | Speculative calls / Haiku item |
+|---|---:|---:|---:|---:|
+| Original quiet | 779 / 1430 / 1710 | 661 / 1609 / 1710 | 30/39 (76.9%) | 47/39 (1.21) |
+| Digital silence trimmed to 50 ms | 996 / 1991 / 2151 | 996 / 1991 / 2151 | 0/39 (0%) | 17/39 (0.44) |
+
+No cleanup errors occurred in either path. Excluding unchanged prewarm calls and
+the benchmark-only paired controls, production-equivalent cleanup requests are
+56/39 = **1.44 per Haiku item** in each variant (speculative calls plus misses).
+The original-ending median improved by 118 ms, but p95 did not improve. This is
+not evidence of reliably instant cloud cleanup. The unchanged 700 ms Silero
+pause threshold limits the available head start; near-immediate release had no
+hits. One pass and variable cloud response times limit tail conclusions.
+
+Paired controls share audio/ASR. On hits they issue a separate ordinary request
+at release while the speculative path is independently timed; on misses both
+paths use the same release-time request. Thus misses have identical measured
+latency by construction. Earlier work occurred while talking and is excluded
+from the release metric. See README for the exact harness semantics.
+
+Artifacts:
+- `results/20261024T215850.552Z-spec-45-original.json`
+- `results/20261024T221223.255Z-spec-45-trim50.json`
+- Prompt fingerprint: `fnv1a64:bb7976741d1b5922`
+- Client fingerprint: `fnv1a64:967528f8c43041b5`
+
+The quality track subsequently changed the prompt and added dictionary-aware
+cleanup. These are historical measured snapshots, not fresh latency claims for
+every subsequent prompt edit.
+
+## Turn on real-world capture
+
+Default is off. In the shell launching the app:
+
+```powershell
+$env:CHIRP_CAPTURE_DICTATIONS = '1'
+npx.cmd tauri dev
+```
+
+Alternatively, close the app, set `"captureDictations": true` in
+`%APPDATA%/com.chirp.app/settings.json`, and restart. The Rust field is
+`capture_dictations`; that snake-case spelling is also accepted when loading.
+Set the environment override to `0` to force capture off on the next launch.
+
+Each folder under `%APPDATA%/com.chirp.app/captures/<timestamp>-<id>/` contains
+the full resampled `audio.wav` (16 kHz mono float32, no requantization), exact
+per-recognizer-call `asr-input-NNN.wav` files, and `meta.json`. Metadata includes
+raw/deterministic/final/pasted text, router decision, selected LLM output/error,
+resolved context, dictionary terms, configuration, speculation use and timing.
+The full waveform preserves pauses for replay; exact input files preserve VAD
+segmentation and overlapping chunks. Successful metadata includes the eventual
+clipboard-restoration timing. Failure/cancel captures are marked accordingly.
+
+```powershell
+node bench/tools/import_captures.mjs --list
+node bench/tools/import_captures.mjs "<selected-folder-name>"
+```
+
+The importer copies audio into `bench/corpus/wav/human-*.wav` and appends to
+`bench/corpus/manifest.local.json`, initially copied from the normal manifest.
+Both are gitignored. Existing entries remain byte-identical; the tracked
+manifest is untouched. `spoken` starts as raw ASR, `ideal` as pasted text, and
+`needs_review` is true. Correct both references and set it false before scoring.
+Context and dictionary terms are preserved. Capture/import adds no network
+operation; normal user-enabled cloud cleanup is unchanged.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bench/run.ps1 -Manifest bench/corpus/manifest.local.json -Provider cuda -Iterations 2 -Llm
+```
+
+## ASR decision
 
 Use **Parakeet TDT 0.6b v3 FP32 with CUDA**, with int8 CPU fallback. On this
 Windows 11 / RTX 4080 SUPER / NVIDIA 617.42 machine, median offline ASR is 3.2×
@@ -31,7 +130,7 @@ final text availability, **not clipboard dispatch**. No live paste cost is added
 
 12 skipped and 78 Haiku warm observations. One Haiku timeout preserved the
 deterministic text; it remains included in end-to-end and LLM distributions.
-Raw ASR WER: 0% skipped, 11.84% Haiku group, 11.66% overall. Corpus is already
+All 77 successful warm calls read 4,318 cached prompt tokens. Raw ASR WER: 0% skipped, 11.84% Haiku group, 11.66% overall. Corpus is already
 16 kHz; this baseline decodes the full waveform at release without VAD.
 Startup warmup decode: 270.3 ms, excluded from release timing. Cloud latency
 clearly dominates the routed end-to-end result; the <200 ms goal is not met
@@ -159,20 +258,60 @@ Artifact: `results/20261024T211227.366Z-mic-lifecycle.json`.
 - `npm install`, frontend build/lint, Rust checks, 61 Rust tests, release bench
   build, and CPU/CUDA `npx tauri dev` startup were verified.
 
-## Remaining validation
+## Known open issues
 
-1. Real maintainer recordings and live key-release-to-paste traces. WAV results
-   cannot establish target-app paste/paint latency or first-key reliability.
-2. Long/tail recordings: offline full-corpus p95 is still above 200 ms. Measure
-   how much the existing VAD worker removes from the live release path.
-3. CPU fallback on a machine without NVIDIA hardware, device disconnect/reopen,
-   rapid cancel/restart and clipboard behavior in target apps.
-4. CUDA installer packaging and model-download UX. The development runtime and
-   optional setup script work; the portable installer still uses CPU DLLs.
-
+1. No real maintainer dictation dataset or live key-release-to-paste measurements
+   were collected in this task. Capture is ready for that next step.
+2. Speculation did not improve p95 in the original-ending sample and had no hits
+   at 50 ms trailing silence. Further tuning is deferred until human data exists.
+3. Capture writes run in the background after paste/restoration; abrupt exit or
+   disk errors can leave incomplete folders (no meta.json completion marker).
+   There is no automatic capture retention or capture UI; manage local files manually.
+4. CUDA installer packaging remains separate from the tested development runtime.
+   CPU fallback on non-NVIDIA machines and rapid restart/device-disconnect/paste
+   behavior still require manual validation.
+5. Hotword biasing measurement was explicitly skipped at the user's request.
+   Dictionary terms are wired into the LLM path, not claimed as measured ASR biasing.
 See [README.md](README.md) for exact reproduction commands and measurement
 definitions. JSON artifacts are in `results/` (gitignored).
 
 Sources: [sherpa 1.12.36 binaries](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.12.36),
 [official ASR exports](https://github.com/k2-fsa/sherpa-onnx/releases/tag/asr-models),
 [maintainer's v3 FP32 export](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3).
+
+## Hotkey merge validation
+
+Performance snapshot `e173a67`; clean merge `ceaade6` of
+`t3/rewrite-global-hotkey-system`; timestamp integration `4869adc` uses the
+hook's original event time for the release boundary, including dispatch delay.
+The merge passed 83 library tests plus one benchmark test and `npm run build`.
+After the timestamp integration, all 83 library tests passed again; Windows
+Application Control blocked launching the benchmark test EXE (error 4551),
+including a normal retry. Security settings were not changed.
+## Long-clip incremental ASR comparison
+
+Same nine 15–45 second clips, two warm passes (18 observations), paced 10 ms
+input through the app's Silero segmenter. The app already had an incremental
+ASR worker; this work preserves it, repairs its tail/drain, and measures it.
+
+| Metric | Full waveform at release p50 / p95 / max ms | Incremental p50 / p95 / max ms |
+|---|---:|---:|
+| Remaining ASR / finalization | 213.24 / 352.62 / 352.62 | 0.50 / 16.85 / 16.85 |
+| End-of-audio to final text, including Haiku | 1125.16 / 2637.24 / 2637.24 | 841.14 / 1140.13 / 1140.13 |
+| LLM stage | 908.52 / 2504.33 / 2504.33 | 832.23 / 1139.46 / 1139.46 |
+| Total ASR compute, including work during recording | 213.24 / 352.62 / 352.62 | 178.42 / 1130.85 / 1130.85 |
+
+Raw WER: 10.98% full waveform, 8.49% segmented. The baseline includes one cloud
+timeout; incremental had none. The prompt changed between runs (4,318 versus
+4,376 cached tokens), so the e2e difference is not solely attributable to ASR.
+Use the remaining-ASR row to assess the local latency improvement.
+
+The synthetic WAVs contain roughly 0.98–1.15 seconds of trailing quiet at a
+100/32768 amplitude threshold. That gives decoding time before file end. The
+16.85 ms worst remaining tail includes paced-feed backlog; all VAD segments had
+been dispatched before the final explicit flush. These are not immediate
+last-syllable hotkey-release measurements. New app traces split ASR compute
+using the actual release timestamp; the harness now also splits work that
+crosses the scheduled file-end boundary.
+
+Artifact: `results/20261024T214004.002Z-e2e-long-incremental.json`.

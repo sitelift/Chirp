@@ -113,8 +113,26 @@ The first Windows run uses the 45-file synthetic SAPI corpus, not maintainer rec
 
 The app defaults to automatic selection: FP32/CUDA when that model and runtime are installed, otherwise int8/CPU (up to six threads). Silero stays on CPU. Keep the microphone and VAD warm; warm ASR and deterministic regexes at model load. The FP32 model is available through the maintainer's Hugging Face export; `bench/setup-native.ps1 -Fp32Model` installs it alongside the switchable native runtimes. See `bench/README.md` and `bench/PERFORMANCE.md` for reproduction and limitations.
 
-The <200 ms aspiration is not yet established end to end: offline ASR's full-corpus p95 exceeds it, and actual key-release-to-paste needs live dictation validation. History/log timing now records that boundary through clipboard restoration. Do not infer live latency from the WAV harness.
+The full 45-file routed benchmark (two warm passes, prewarm per item) measures end-of-audio to final text at p50/p95 52.5/55.4 ms for the six short commands that skip Haiku, versus 895.9/1824.3 ms for the 39 Haiku-routed items. One warm call timed out at 2.5 s and used deterministic text. All 77 successful warm calls hit the prompt cache. Thus the <200 ms aspiration is not met for cloud-cleaned text; ASR speed alone does not establish end-to-end performance. Actual key-release-to-paste still needs live validation: the WAV harness excludes clipboard dispatch. History/log timing records the original input timestamp through paste dispatch and restoration.
 
+### Stop tuning synthetic speech; collect human data (2026-10-24)
+
+Latency is sufficient for the next development step; cleanup quality needs real
+maintainer dictations. Capture is a default-off, local-only development feature
+(`capture_dictations`, JSON `captureDictations`, or `CHIRP_CAPTURE_DICTATIONS`).
+It preserves full resampled float audio, exact ASR chunks, intermediate/final
+texts, context, dictionary terms and timing under the app-data captures folder.
+The importer appends selected examples to a gitignored local corpus manifest;
+raw-ASR and pasted-text references are drafts requiring manual correction.
+Capture adds no upload, telemetry or extra cloud request.
+
+Speculative cleanup is implemented at closed VAD segments, one request at a
+time, with exact-input reuse at release. The paired synthetic run improved the
+original-ending median (779 to 661 ms), but not p95; 50 ms trailing silence had
+zero hits. Keep the feature, measure real behavior, and defer further latency
+and hotword tuning. Browser context is captured at press and resolved once;
+the same dictionary term snapshot is used for prewarm and every cleanup call.
+See bench/PERFORMANCE.md for the measured scope and known open issues.
 ## Keep, port, drop
 
 **Port into v2 (re-read and clean up, don't copy blindly):**

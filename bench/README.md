@@ -116,3 +116,85 @@ Full routed e2e run (45 files, initial pass plus two warm passes):
 powershell -ExecutionPolicy Bypass -File bench/run.ps1 -Provider cuda -Iterations 2 -Llm -Label e2e-fp32-cuda-45
 powershell -ExecutionPolicy Bypass -File bench/run.ps1 -SkipBuild -Provider cuda -Iterations 2 -Llm -Vad "$env:APPDATA/com.chirp.app/models/silero_vad.onnx" -MinSeconds 15 -MaxSeconds 45 -Label e2e-long-incremental
 ```
+## Speculative cleanup at pauses
+
+The app uses the router on each deterministic prefix after a closed VAD segment.
+Only one speculative request can be in flight. Newer prefixes coalesce; release
+seals the queue before the final VAD flush. An exact final-input match reuses the
+completed result or waits for the remaining request. A mismatch cancels the stale
+request and uses ordinary release-time cleanup. Matching errors use deterministic
+text, just like release-time errors. History includes hit/miss, calls, stale
+completions, release wait, and observed request time overlapped with recording.
+`time_saved_ms` measures that overlap; it is not a promise about a hypothetical
+second request's network latency.
+
+```powershell
+# ANTHROPIC_API_KEY must already be set in this shell.
+$vad = "$env:APPDATA/com.chirp.app/models/silero_vad.onnx"
+powershell -ExecutionPolicy Bypass -File bench/run.ps1 -Provider cuda -Iterations 1 -WarmOnly -Llm -CompareSpeculation -Vad $vad -Label spec-45-original
+powershell -ExecutionPolicy Bypass -File bench/run.ps1 -SkipBuild -Provider cuda -Iterations 1 -WarmOnly -Llm -CompareSpeculation -Vad $vad -TrailingSilenceMs 50 -Label spec-45-trim50
+```
+
+`-CompareSpeculation` creates paired controls with shared, paced audio/ASR.
+At release it records independent completion times for ordinary cleanup and
+speculative reuse. A stale speculation uses the same ordinary request as the
+control, avoiding duplicate identical fallback calls. Matching speculations and
+controls may have concurrent cloud calls: this measures paired paths, not an
+isolated network service latency test. Paired waiting does not inflate the
+speculative path's recorded completion time. Use `-Speculate` instead for an
+unpaired app-like run; omit both flags for ordinary cleanup.
+
+`-TrailingSilenceMs 50` removes only trailing digital-zero PCM samples, retaining
+50 ms after the last nonzero sample. WAV files remain unchanged. `-WarmOnly`
+omits the initial full-corpus pass; startup model/regex warmup still runs, but
+shape-specific cold effects can remain. Set `-Iterations 2` for two measured
+passes. Source fingerprints identify the loaded manifest and compiled prompt
+and client. `groups_warm.haiku` contains the routed comparison, hit/call counts,
+and errors for both paths. Paste dispatch remains outside this harness.
+## Real-world dictation captures (opt-in, local)
+
+Capture is off by default. Launch from a shell with
+`$env:CHIRP_CAPTURE_DICTATIONS = '1'`, or set `captureDictations: true` in the
+app's settings.json while the app is closed. An environment value of `0` forces
+it off. The files go to `%APPDATA%/com.chirp.app/captures/<timestamp>-<id>/`.
+There is no capture UI or automatic retention.
+
+- `audio.wav`: complete 16 kHz mono float32 recording after resampling, preserving
+  pauses and sample precision.
+- `asr-input-NNN.wav`: exact float samples supplied to each ASR call, preserving
+  VAD segmentation and any chunk overlaps.
+- `meta.json`: completion marker with raw ASR, deterministic text, router choice,
+  final/pasted text, selected LLM output/error, resolved context, dictionary terms,
+  settings used, speculation use and timings. Pasted means input was dispatched,
+  not that a target app acknowledged it. Failed/cancelled captures are marked.
+
+Writes happen in the background; an interrupted write can leave an incomplete
+folder. Capture adds no upload or telemetry and does not alter normal cloud
+cleanup routing. The dictionary list is snapshotted once per recording and
+shared by prewarm, speculation and release cleanup.
+
+```powershell
+node bench/tools/import_captures.mjs --list
+node bench/tools/import_captures.mjs "<selected-folder-name>"
+```
+
+Only explicitly selected captures are imported. The default output is the
+**gitignored** `bench/corpus/manifest.local.json`, initially copied from the
+tracked manifest; WAVs are copied unchanged to gitignored `wav/human-*.wav`.
+Existing manifest entries remain byte-identical. The importer never commits,
+transmits, or deletes source captures. An incomplete/unpasted selection is
+rejected. Re-importing an unchanged capture is a no-op.
+
+`spoken` starts as raw ASR, `ideal` as pasted text, and `needs_review` is true.
+Correct both references against the recording, then set `needs_review` to false.
+The harness refuses to score unreviewed drafts: ASR-derived text is not ground
+truth. Imported context and dictionary terms are reused by the LLM benchmark.
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bench/run.ps1 -Manifest bench/corpus/manifest.local.json -Provider cuda -Iterations 2 -Llm
+node --test bench/tools/import_captures.test.mjs
+```
+
+For an isolated import/test location use `--root`, `--manifest`,
+`--base-manifest` and `--wav-dir`. Audio may be PCM16 or float32, always mono
+16 kHz. Corpus file conversion is not performed.
