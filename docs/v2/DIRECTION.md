@@ -183,24 +183,37 @@ Also drop:
 4. **UX redesign.** First-principles design using Mobbin references: overlay, settings, onboarding, brand system.
 5. **Public polish.** README, contributing guide, Windows-only release pipeline, updater.
 
-## Design direction: the pill is the app (2026-10-24)
+## Design direction: the pill is the app (2026-10-24, built)
 
-Supersedes the north-star list below. Designs: Paper file "Chirp v2" (artboards "Overlay / v2", "The pill is the app / Light" and "/ Dark"; "Overlay / Current (v1)" is the before).
+Supersedes the north-star list below. Designs: Paper file "Chirp v2" (artboards "Overlay / v2" and 01 Idle through 13 Keyboard, each in Light and Dark; "Overlay / Current (v1)" is the before). Implemented on `v2`; `http://localhost:5173/?preview=1` (dev only, `&section=03` for one artboard) renders every state in both themes for side-by-side review.
 
-Clean, minimal, usable. Every surface has to justify existing. There is **one surface**: the pill, bottom-center above the taskbar. It grows only to show what you need, then shrinks back. There is no settings window, no onboarding wizard and no tray popup.
+Clean, minimal, usable. Every surface has to justify existing. There is **one surface**: the pill, bottom-center just above the taskbar. It grows only to show what you need, then shrinks back. There is no settings window, no onboarding wizard and no tray popup.
 
-- **The pill:** 32 px tall, fully opaque (no translucency or blur), follows the Windows light/dark theme. No logo. Click-through while dictating.
-  - **Listening:** amber level bars follow your voice.
-  - **Working:** bars settle to a slow pulse until the text lands (the Haiku path; the skip path is too fast to show).
-  - **No microphone / Didn't catch that:** a short label. No "done", word-count or spinner states; the text appearing is the confirmation.
-- **Grows to:**
-  - **First run:** "Hold [Right Ctrl] and say hi." with the mic level and model download inline. Gone after the first dictation. The API key is optional (raw text works without it) and is asked for in place when relevant.
-  - **Opened** (click the tray icon; Esc or click away closes): recent dictations, then rows for Hold to talk, Hands-free, Microphone, Words and AI cleanup. Rows drill in within the same surface.
-  - **Fix in place:** problems open just enough to solve them (e.g. an unplugged mic shows the other mics to pick from).
-- **Tray:** the icon opens the pill. Right-click shows the native Windows menu (Open, Pause, Quit).
-- **Merged/cut:** Vocabulary + Snippets become **Words** (say X, get Y). History becomes the recent list in the opened pill. About becomes a version line. The tray popup window, onboarding wizard and settings window are removed.
-- **Color:** amber only for the level bars (#F0B723 on dark, #C9900A on light for contrast). Everything else is neutral. Type: Segoe UI Variable.
-- **Sound:** a soft start chirp and a done chirp; a distinct sound when text was pasted without AI cleanup.
+- **One window.** The `overlay` window is the only window. It is always sized to its content plus a transparent margin for shadows (40 px top and sides; the bottom 12 px is the gap above the taskbar) and anchored bottom-center on the work area of a monitor: the foreground window's monitor when a dictation starts, the tray's monitor when opened from the tray, the primary monitor at startup. It grows before a morph and shrinks after it; CSS does the morph. Never full-screen.
+- **The pill:** ink (`#1A1917`) in both themes, 36 px high, radius 18. No logo.
+  - **Listening:** 11 amber level bars follow the mic. **Hands-free:** latched with an amber ring and a stop button (clickable, never takes focus). **Working:** the bars settle to dots with a sweeping bright dot.
+  - **Text pills,** 1.6 s: Didn't catch that, No microphone › (opens the mic picker), Pasted without AI · reason (offline, slow, key invalid…), Copied. Press Ctrl+V (paste was blocked; the text is on the clipboard), Cancelled (Esc), Paused · Resume. Success shows nothing: the text appearing is the confirmation.
+- **Idle:** after first run a near-invisible resting tick marks the spot; it turns into a small pill under the pointer and opens on click. The window is click-through then, so hover is detected in Rust (a 20 Hz cursor poll that only runs while the tick is shown).
+- **Click-through rules:** click-through while dictating and at rest; the latched hands-free pill and action pills take clicks but never focus (`WS_EX_NOACTIVATE`); only the opened surface takes focus, and it hands focus back to the previous app when it closes.
+- **Opened** (click the tick or the tray icon; Esc, × or click away closes): last dictation (click to copy), Hold to talk and Hands-free key caps (hover offers Change), Microphone, Words, AI cleanup with live status (On, Off, Key invalid, Offline), Recent, Pause (1 hour or until resumed) / Resume, Restart to update when one is ready. Rows drill in within the same surface.
+  - **Rebind** in place: Press keys, live keys as you hold them, Saved, or refused ("Used by Windows", "Used by Hands-free") and listening again. Esc cancels.
+  - **Microphone:** every input with a live level; an unplugged selected device shows as Unplugged.
+  - **Words:** one list, "you say → Chirp types", over vocabulary (single terms: hotwords, find/replace, LLM dictionary) and snippets (anything with punctuation or more than three words). Add, edit, delete in place; Enter saves, Esc cancels, leaving the row saves.
+  - **AI cleanup:** optional. "Use Claude" is disabled until a key validates. Paste a key, Checking, Connected (Remove), Key not accepted, offline. The key is stored in **Windows Credential Manager** (generic credential `Chirp` / `anthropic-api-key`), validated with the `max_tokens: 0` prewarm request; `ANTHROPIC_API_KEY` stays a developer override and is never stored.
+  - **Recent:** the last 20; click to copy, or Add to Words.
+- **First run:** no wizard. Getting ready (model download with progress and an estimate) → Windows is blocking the mic (Open settings) if needed → "Hold [Right Ctrl] and talk" → after the first dictation, "You're set. Click me anytime." and the resting tick appears.
+- **Paused:** hotkeys stop triggering; pressing one shows the Paused pill instead of failing silently. The tray icon dims and gains a pause badge.
+- **Tray:** left click opens the surface. Right click is the native Windows menu: Restart to update (only when an update has downloaded), Open, Pause/Resume, Quit. Paused and update-ready icon variants are drawn in memory over the existing tray icon; brand files are untouched.
+- **Updates** download quietly (production builds only) and wait for a restart the user chooses.
+- **Keyboard:** opening focuses the first row; arrows move, Enter acts, Tab reaches ×; Esc cancels the innermost thing (key capture, then an edit, then a drill-in), then closes. Focus ring: 2 px amber, offset 2.
+- **Motion** (frame 12): pill appears 120 ms; text pills morph 180 ms; pill to surface 240 ms, all `cubic-bezier(0.2, 0, 0, 1)`; content fades in 120 ms after 80 ms; drill-ins slide 16 px in 160 ms; the paste fade is 140 ms to 0.96. Reduced motion turns morphs into 120 ms crossfades.
+- **Color:** amber only for meaning: level bars, toggles, focus, the latched ring, "Saved", Resume (`#F0B723` on dark, `#C9900A` / text `#8F6400` on light). Everything else is neutral. Surfaces follow the Windows theme (`#FFFFFF` / `#1A1917`). Type: Segoe UI Variable, 13 px rows, 15 px last dictation, 17 px first-run titles.
+- **Sound:** not changed yet. The existing completion chirp still plays when enabled; the distinct start/done/no-AI sounds are still to do.
+
+Deviations from the Paper file, on purpose:
+- The tray icon stays the existing amber bird (`src-tauri/icons/tray-icon.png`); the design's waveform tray glyph is not a brand asset we have.
+- "Not connected" microphones are not listed: Windows only enumerates present inputs. Only the selected-but-missing device shows (Unplugged).
+- The Words list shows vocabulary before snippets rather than one interleaved order.
 
 ## Brand north stars (first pass, 2026-10-24)
 
@@ -219,5 +232,4 @@ What stays is the bird mark (white bird on amber `#F0B723`), the lowercase "chir
 
 ## Open questions
 
-- API key storage: Windows Credential Manager (preferred) vs. settings file.
 - CPU fallback for contributors without an NVIDIA GPU: supported, best-effort, or unsupported?
