@@ -244,6 +244,20 @@ pub fn start_capture(
     app_handle: AppHandle,
     vad_state: Option<Arc<std::sync::Mutex<VadState>>>,
 ) -> Result<(Stream, StreamErrorFlag, StreamActiveFlag, ResamplerState), String> {
+    start_capture_impl(device_id, buffer, Some(app_handle), vad_state)
+}
+
+/// Same WASAPI/resampling path without UI events, for device lifecycle measurements.
+pub fn start_capture_headless(device_id: &str, buffer: AudioBuffer) -> Result<(Stream, StreamErrorFlag, StreamActiveFlag, ResamplerState), String> {
+    start_capture_impl(device_id, buffer, None, None)
+}
+
+fn start_capture_impl(
+    device_id: &str,
+    buffer: AudioBuffer,
+    app_handle: Option<AppHandle>,
+    vad_state: Option<Arc<std::sync::Mutex<VadState>>>,
+) -> Result<(Stream, StreamErrorFlag, StreamActiveFlag, ResamplerState), String> {
     let device = resolve_device(device_id)?;
     let config = device
         .default_input_config()
@@ -408,7 +422,7 @@ fn process_audio(
     chunk_size: usize,
     amp_counter: &Arc<std::sync::Mutex<u32>>,
     amp_interval: u32,
-    app_handle: &AppHandle,
+    app_handle: &Option<AppHandle>,
     vad_state: &Option<Arc<std::sync::Mutex<VadState>>>,
 ) {
     // Downmix to mono
@@ -458,7 +472,7 @@ fn process_audio(
         *counter = 0;
         let buf = buffer.lock().unwrap_or_else(|e| e.into_inner());
         let bars = compute_amplitude_bars(&buf, BAR_COUNT);
-        let _ = app_handle.emit("amplitude-data", AmplitudeData { bars });
+        if let Some(app) = app_handle { let _ = app.emit("amplitude-data", AmplitudeData { bars }); }
     }
 }
 

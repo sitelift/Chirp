@@ -50,3 +50,7 @@ target/
 
 # Flat DLL copies for Windows bundling
 src-tauri/*.dll
+
+# Switchable CUDA runtime (downloaded)
+src-tauri/sherpa-onnx-lib-cuda/
+bench/results/

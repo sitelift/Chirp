@@ -57,7 +57,39 @@ pub fn load_model(
     beam_search: bool,
     vocabulary: &[VocabEntry],
 ) -> Result<SherpaRecognizer, String> {
-    let dir = model_dir(model);
+    let requested = std::env::var("CHIRP_ASR_PROVIDER").unwrap_or_else(|_| "auto".into());
+    if !matches!(requested.as_str(), "auto" | "cpu" | "cuda") { return Err("CHIRP_ASR_PROVIDER must be auto, cpu or cuda".into()); }
+    let fp32 = models_dir().join("sherpa/sherpa-onnx-nemo-parakeet-tdt-0.6b-v3");
+    let fp32_ready = ["encoder.onnx", "encoder.weights", "decoder.onnx", "joiner.onnx", "tokens.txt"].iter().all(|f| fp32.join(f).exists());
+    let provider = if requested == "auto" { if fp32_ready && cuda_runtime_available() { "cuda" } else { "cpu" } } else { requested.as_str() };
+    let default_threads = if provider == "cuda" { 4 } else { std::thread::available_parallelism().map(|n| (n.get()/2).clamp(2,6) as i32).unwrap_or(4) };
+    let threads = std::env::var("CHIRP_ASR_THREADS").ok().and_then(|s| s.parse().ok()).unwrap_or(default_threads);
+    let dir = std::env::var_os("CHIRP_ASR_MODEL_DIR").map(PathBuf::from).unwrap_or_else(|| if provider == "cuda" && fp32_ready { fp32 } else { model_dir(model) });
+    let load_start = std::time::Instant::now();
+    let (rec, effective_provider) = match load_model_config(&dir, beam_search, vocabulary, provider, threads, false) {
+        Ok(rec) => (rec, provider),
+        Err(e) if provider == "cuda" => {
+            log::warn!("CUDA load failed ({e}); falling back to CPU int8");
+            (load_model_config(&model_dir(model), beam_search, vocabulary, "cpu", threads, false)?, "cpu")
+        }
+        Err(e) => return Err(e),
+    };
+    log::info!("ASR model load: {:.1}ms (requested={requested}, selected={effective_provider})", load_start.elapsed().as_secs_f64()*1000.0);
+    let start = std::time::Instant::now();
+    transcribe(&rec, &vec![0.0; 16000])?;
+    log::info!("ASR warmup: {:.1}ms", start.elapsed().as_secs_f64() * 1000.0);
+    let _ = crate::cleanup::cleanup_text("warm up the deterministic cleanup", true);
+    Ok(rec)
+}
+
+/// Explicit configuration for reproducible benchmarks; fallback may be disabled.
+pub fn load_model_config(dir: &std::path::Path, beam_search: bool, vocabulary: &[VocabEntry], provider: &str, n_threads: i32, fallback: bool) -> Result<SherpaRecognizer, String> {
+    if !matches!(provider, "cpu" | "cuda") || n_threads < 1 { return Err("Expected cpu/cuda and positive thread count".into()); }
+    let provider = if provider == "cuda" && !cuda_runtime_available() {
+        if !fallback { return Err("CUDA provider/driver dependencies cannot be loaded; use bench/run.ps1 -Provider cuda".into()); }
+        log::warn!("CUDA runtime unavailable; using CPU");
+        "cpu"
+    } else { provider };
     if !dir.exists() {
         return Err(format!("Model directory not found: {}", dir.display()));
     }
@@ -67,12 +99,6 @@ pub fn load_model(
         return Err("tokens.txt not found".to_string());
     }
 
-    // Use at most half the available threads (min 2, max 6) so the LLM server
-    // and OS have headroom. On the Intel Core Ultra 7 256V (8 threads) this
-    // gives sherpa 4 threads instead of 8.
-    let n_threads = std::thread::available_parallelism()
-        .map(|n| (n.get() / 2).clamp(2, 6) as i32)
-        .unwrap_or(4);
 
     // Parakeet TDT uses transducer (encoder/decoder/joiner)
     let encoder = find_model_file(&dir, "encoder")
@@ -144,7 +170,7 @@ pub fn load_model(
         },
         tokens: Some(tokens.to_string_lossy().into_owned()),
         num_threads: n_threads,
-        provider: Some("cpu".to_string()),
+        provider: Some(provider.to_string()),
         debug: false,
         ..Default::default()
     };
@@ -159,7 +185,7 @@ pub fn load_model(
         );
     }
 
-    let config = OfflineRecognizerConfig {
+    let mut config = OfflineRecognizerConfig {
         model_config: mc,
         decoding_method: Some(decoding_method.to_string()),
         max_active_paths: if beam_search { 8 } else { 4 },
@@ -171,22 +197,49 @@ pub fn load_model(
         hotwords_score: if hotwords_active { 1.5 } else { 0.0 },
         ..Default::default()
     };
-    OfflineRecognizer::create(&config)
-        .map(SherpaRecognizer)
+    let rec = OfflineRecognizer::create(&config);
+    let rec = if rec.is_none() && provider == "cuda" && fallback {
+        log::warn!("CUDA failed; retrying CPU");
+        config.model_config.provider = Some("cpu".into());
+        OfflineRecognizer::create(&config)
+    } else { rec };
+    rec.map(SherpaRecognizer)
         .ok_or_else(|| "Failed to create sherpa-onnx recognizer — check model files".to_string())
+}
+
+/// Catch absent driver/runtime DLLs before constructing ONNX sessions. A native
+/// inference crash cannot be caught by Rust; incompatible models remain opt-in.
+pub fn cuda_runtime_available() -> bool {
+    use windows_sys::Win32::System::LibraryLoader::{LoadLibraryW, GetModuleHandleW, GetProcAddress};
+    use windows_sys::Win32::Foundation::FreeLibrary;
+    // A CPU rebuild may leave old CUDA dependency files beside the executable.
+    // Check the loaded ORT core too (the pinned CPU build lacks this export).
+    let ort_name: Vec<u16> = "onnxruntime.dll".encode_utf16().chain(Some(0)).collect();
+    let ort = unsafe { GetModuleHandleW(ort_name.as_ptr()) };
+    if ort.is_null() || unsafe { GetProcAddress(ort, b"OrtSessionOptionsAppendExecutionProvider_CUDA\0".as_ptr()) }.is_none() { return false; }
+    // ORT must initialize its shared provider host before loading the CUDA
+    // provider itself. Loading that DLL as a preflight can fail even on a
+    // working runtime; inspect its presence and probe only standalone deps.
+    let Some(exe_dir) = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_owned())) else { return false; };
+    if !exe_dir.join("onnxruntime_providers_cuda.dll").is_file() { return false; }
+    for name in ["nvcuda.dll", "cublasLt64_12.dll", "cublas64_12.dll", "cufft64_11.dll", "cudart64_12.dll", "cudnn64_9.dll"] {
+        let name: Vec<u16> = name.encode_utf16().chain(Some(0)).collect();
+        let module = unsafe { LoadLibraryW(name.as_ptr()) };
+        if module.is_null() { return false; }
+        unsafe { FreeLibrary(module); }
+    }
+    true
 }
 
 /// Find a model file matching a prefix (e.g. "encoder") with .onnx extension
 fn find_model_file(dir: &std::path::Path, prefix: &str) -> Option<PathBuf> {
-    if let Ok(entries) = std::fs::read_dir(dir) {
-        for entry in entries.flatten() {
-            let name = entry.file_name().to_string_lossy().to_lowercase();
-            if name.contains(prefix) && name.ends_with(".onnx") {
-                return Some(entry.path());
-            }
-        }
-    }
-    None
+    let mut matches = std::fs::read_dir(dir).ok()?.flatten().map(|entry| entry.path()).filter(|path| {
+        let name = path.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
+        name.contains(prefix) && name.ends_with(".onnx")
+    });
+    let first = matches.next()?;
+    if matches.next().is_some() { return None; } // Never choose precision by directory iteration order.
+    Some(first)
 }
 
 /// Download a model archive and extract it
@@ -305,6 +358,7 @@ pub fn transcribe(
     recognizer: &SherpaRecognizer,
     audio: &[f32],
 ) -> Result<String, String> {
+    let total_start = std::time::Instant::now();
     let stream = recognizer.0.create_stream();
     stream.accept_waveform(16000, audio);
 
@@ -317,6 +371,7 @@ pub fn transcribe(
         .get_result()
         .ok_or_else(|| "No recognition result".to_string())?;
 
+    if let Some(trace) = crate::performance::Trace::current() { trace.asr(total_start); }
     Ok(result.text.trim().to_string())
 }
 
