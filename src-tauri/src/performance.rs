@@ -11,6 +11,10 @@ pub struct Breakdown {
     pub llm: Option<serde_json::Value>,
     pub stages_ms: BTreeMap<String, f64>,
     pub asr_chunks_ms: Vec<f64>,
+    #[serde(default)]
+    pub asr_before_release_ms: f64,
+    #[serde(default)]
+    pub asr_after_release_ms: f64,
     pub release_to_paste_ms: Option<f64>,
     pub clipboard_restored: Option<bool>,
     pub release_to_restore_ms: Option<f64>,
@@ -62,12 +66,15 @@ impl Trace {
             .or_default() += start.elapsed().as_secs_f64() * 1000.0;
     }
     pub fn asr(&self, start: Instant) {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .data
-            .asr_chunks_ms
-            .push(start.elapsed().as_secs_f64() * 1000.0);
+        let end = Instant::now();
+        let elapsed = end.duration_since(start).as_secs_f64() * 1000.0;
+        let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let before = inner.release.map_or(elapsed, |release| {
+            release.min(end).saturating_duration_since(start).as_secs_f64() * 1000.0
+        });
+        inner.data.asr_chunks_ms.push(elapsed);
+        inner.data.asr_before_release_ms += before;
+        inner.data.asr_after_release_ms += elapsed - before;
     }
     pub fn pasted(&self) {
         let mut inner = self.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -104,6 +111,20 @@ impl Trace {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decode_crossing_release_splits_compute_at_the_input_boundary() {
+        let trace = Trace(Arc::new(Mutex::new(Inner {
+            data: Breakdown::default(), release: None, hold: true,
+        })), Arc::new(tokio::sync::Notify::new()));
+        let start = Instant::now() - std::time::Duration::from_millis(20);
+        trace.0.lock().unwrap().release = Some(start + std::time::Duration::from_millis(10));
+        trace.asr(start);
+        let data = trace.snapshot();
+        assert_eq!(data.asr_before_release_ms, 10.0);
+        assert!(data.asr_after_release_ms >= 10.0);
+        assert!((data.asr_before_release_ms + data.asr_after_release_ms - data.asr_chunks_ms[0]).abs() < 0.001);
+    }
 
     #[test]
     fn hold_and_toggle_use_the_correct_input_boundary() {

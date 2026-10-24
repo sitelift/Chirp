@@ -20,6 +20,7 @@ struct Item {
 }
 #[derive(Serialize)]
 struct Run {
+    route: String,
     llm: Option<serde_json::Value>,
     id: String,
     category: String,
@@ -156,11 +157,40 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     if iterations == 0 {
         return Err("iterations must be positive".into());
     }
-    let provider = arg("--provider", "cpu");
-    let threads: i32 = arg("--threads", "4").parse()?;
-    let dir = PathBuf::from(arg(
+    let requested = arg("--provider", "auto");
+    let fp32 = transcribe::model_dir("parakeet-tdt-0.6b")
+        .parent()
+        .unwrap()
+        .join("sherpa-onnx-nemo-parakeet-tdt-0.6b-v3");
+    let mut provider = if requested == "auto" {
+        if [
+            "encoder.onnx",
+            "encoder.weights",
+            "decoder.onnx",
+            "joiner.onnx",
+            "tokens.txt",
+        ]
+        .iter()
+        .all(|f| fp32.join(f).exists())
+            && transcribe::cuda_runtime_available()
+        {
+            "cuda"
+        } else {
+            "cpu"
+        }
+        .to_string()
+    } else {
+        requested.clone()
+    };
+    let threads: i32 = arg("--threads", if provider == "cuda" { "4" } else { "6" }).parse()?;
+    let mut dir = PathBuf::from(arg(
         "--model-dir",
-        &transcribe::model_dir("parakeet-tdt-0.6b").to_string_lossy(),
+        &if provider == "cuda" {
+            fp32
+        } else {
+            transcribe::model_dir("parakeet-tdt-0.6b")
+        }
+        .to_string_lossy(),
     ));
     let online = args.iter().any(|a| a == "--online");
     let paced = !args.iter().any(|a| a == "--unpaced");
@@ -177,6 +207,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         return Err("--llm requires ANTHROPIC_API_KEY".into());
     }
     let mut corpus: Vec<Item> = serde_json::from_slice(&std::fs::read(&manifest)?)?;
+    let min_seconds: f64 = arg("--min-seconds", "0").parse()?;
+    let max_seconds: f64 = arg("--max-seconds", "100000").parse()?;
+    let mut filtered = Vec::new();
+    for item in corpus {
+        let wav = hound::WavReader::open(manifest.parent().unwrap().join(&item.wav))?;
+        let seconds = wav.duration() as f64 / wav.spec().sample_rate as f64;
+        if seconds >= min_seconds && seconds <= max_seconds {
+            filtered.push(item);
+        }
+    }
+    corpus = filtered;
     let limit: usize = arg("--limit", "0").parse()?;
     if limit > 0 {
         corpus.truncate(limit);
@@ -187,14 +228,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gpu_before = gpu();
     let load = Instant::now();
     let offline = if !online {
-        Some(transcribe::load_model_config(
-            &dir,
-            false,
-            &[],
-            &provider,
-            threads,
-            false,
-        )?)
+        let loaded = transcribe::load_model_config(&dir, false, &[], &provider, threads, false);
+        Some(match loaded {
+            Ok(rec) => rec,
+            Err(e) if requested == "auto" && provider == "cuda" => {
+                eprintln!("CUDA load failed: {e}; falling back to CPU int8");
+                provider = "cpu".into();
+                dir = transcribe::model_dir("parakeet-tdt-0.6b");
+                transcribe::load_model_config(&dir, false, &[], "cpu", threads, false)?
+            }
+            Err(e) => return Err(e.into()),
+        })
     } else {
         None
     };
@@ -216,6 +260,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     let model_load_ms = ms(load);
+    let warmup = Instant::now();
+    if let Some(rec) = &offline {
+        transcribe::transcribe(rec, &vec![0.0; 16000])?;
+        let _ = cleanup::cleanup_text("warm up the deterministic cleanup", true);
+    }
+    let warmup_ms = ms(warmup);
     let gpu_loaded = gpu();
     let mut runs = Vec::new();
     println!("Model load: {model_load_ms:.1}ms; {provider}, {threads} threads; online={online}");
@@ -247,19 +297,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .collect::<Result<_, _>>()?;
             stages.insert("wav_read".into(), ms(t));
             stages.insert("resample".into(), 0.0); // Corpus is already 16 kHz mono.
-            let (raw, asr, tail) = if let Some(rec) = &streaming {
-                online_decode(rec, &samples, paced)
+            let (raw, asr, tail, precleaned) = if let Some(rec) = &streaming {
+                let (raw, asr, tail) = online_decode(rec, &samples, paced);
+                (raw, asr, tail, None)
             } else {
                 let rec = offline.as_ref().unwrap();
                 let mut texts = Vec::new();
+                let mut cleaned_segments = Vec::new();
                 let mut asr_ms = 0.0;
+                let mut asr_capture_ms = 0.0;
+                let mut cleanup_capture_ms = 0.0;
                 let mut vad_ms = 0.0;
-                let mut decode = |segment: &[f32]| -> Result<(), String> {
+                let mut decode = |segment: &[f32], during_capture: bool| -> Result<(), String> {
                     let t = Instant::now();
+                    let mut chunks = Vec::new();
                     for chunk in transcribe::chunk_audio(segment, 16000, 30.0, 1.0) {
-                        texts.push(transcribe::transcribe(rec, chunk)?);
+                        chunks.push(transcribe::transcribe(rec, chunk)?);
                     }
-                    asr_ms += ms(t);
+                    let elapsed = ms(t);
+                    asr_ms += elapsed;
+                    if during_capture {
+                        asr_capture_ms += elapsed;
+                    }
+                    let raw = transcribe::merge_transcriptions(chunks);
+                    if vad_path.is_some() && !raw.is_empty() {
+                        let t = Instant::now();
+                        cleaned_segments.push(cleanup::apply_replacements(
+                            &cleanup::cleanup_text(&raw, true),
+                            &[],
+                        ));
+                        cleanup_capture_ms += ms(t);
+                    }
+                    texts.push(raw);
                     Ok(())
                 };
                 let tail_ms;
@@ -281,7 +350,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                         audio::feed_vad(chunk, &state);
                         vad_ms += ms(t);
                         for segment in rx.try_iter() {
-                            decode(&segment)?;
+                            decode(&segment, true)?;
                         }
                     }
                     let backlog = if paced {
@@ -294,27 +363,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     audio::flush_vad(&state);
                     vad_ms += ms(t);
                     for segment in rx.try_iter() {
-                        decode(&segment)?;
+                        decode(&segment, false)?;
                     }
                     tail_ms = backlog + ms(tail);
                 } else {
-                    decode(&samples)?;
+                    decode(&samples, false)?;
                     tail_ms = asr_ms;
                 }
                 stages.insert("vad".into(), vad_ms);
-                (transcribe::merge_transcriptions(texts), asr_ms, tail_ms)
+                stages.insert("asr_during_capture".into(), asr_capture_ms);
+                stages.insert("asr_at_release".into(), asr_ms - asr_capture_ms);
+                stages.insert("segment_cleanup".into(), cleanup_capture_ms);
+                let precleaned = if vad_path.is_some() {
+                    Some(cleaned_segments)
+                } else {
+                    None
+                };
+                (texts.join(" "), asr_ms, tail_ms, precleaned)
             };
             stages.insert("asr".into(), asr);
             stages.insert("end_of_audio_to_text".into(), tail);
+            let post_asr = Instant::now();
             let t = Instant::now();
-            let cleaned = cleanup::cleanup_text(&raw, true);
+            let cleaned = if let Some(segments) = precleaned {
+                cleanup::join_cleaned_segments_with_formatting(&segments, true)
+            } else {
+                cleanup::cleanup_text(&raw, true)
+            };
             stages.insert("cleanup".into(), ms(t));
             let t = Instant::now();
             let cleaned = cleanup::apply_replacements(&cleaned, &[]);
             stages.insert("vocabulary".into(), ms(t));
+            let t = Instant::now();
+            let cleaned = cleanup::repair_vad_boundary_artifacts(&cleaned);
+            stages.insert("boundary_and_snippets".into(), ms(t)); // Empty snippet configuration.
+            let route = if cleaned.split_whitespace().count() <= 6 {
+                "skip"
+            } else {
+                "haiku"
+            };
             let mut llm = None;
             let t = Instant::now();
-            let cleaned = if use_llm {
+            let cleaned = if use_llm && route == "haiku" {
                 let ctx = app_lib::llm::AppContext {
                     app: item.context["app"].as_str().unwrap_or_default().into(),
                     title: item.context["title"].as_str().unwrap_or_default().into(),
@@ -325,6 +415,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Duration::from_millis(2500),
                 )) {
                     Ok(out) => {
+                        stages.insert("llm_ttft".into(), out.ttft_ms as f64);
+                        stages.insert("llm_service_total".into(), out.total_ms as f64);
                         llm = Some(serde_json::to_value(&out)?);
                         out.text
                     }
@@ -338,10 +430,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
             stages.insert("llm".into(), ms(t));
             stages.insert("pipeline_wall".into(), ms(pipeline_start));
-            stages.insert(
-                "end_of_audio_to_final".into(),
-                tail + stages["cleanup"] + stages["vocabulary"] + stages["llm"],
-            );
+            stages.insert("end_of_audio_to_final".into(), tail + ms(post_asr));
             let (errors, reference, wer) = wer(&item.spoken, &raw);
             println!(
                 "{:24} {:>5} {:>10.2} {:>10.2} {:>10.2} {:>7.1}%",
@@ -354,6 +443,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             );
             let _ = (&item.ideal, &item.context); // retained in the input manifest; no cloud cleanup in this bench.
             runs.push(Run {
+                route: route.into(),
                 llm,
                 id: item.id.clone(),
                 category: item.category.clone(),
@@ -385,9 +475,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let errors: usize = selected.iter().map(|r| r.word_errors).sum();
         let words: usize = selected.iter().map(|r| r.reference_words).sum();
-        json!({"stages_ms":stages,"wer":errors as f64/words.max(1) as f64,"word_errors":errors,"reference_words":words})
+        json!({"samples":selected.len(),"llm_errors":selected.iter().filter(|r| r.llm.as_ref().is_some_and(|v| v.get("error").is_some())).count(),"stages_ms":stages,"wer":if words>0 {Some(errors as f64/words as f64)}else{None},"word_errors":errors,"reference_words":words})
     };
     let warm = aggregate(runs.iter().filter(|r| r.iteration > 0).collect());
+    let groups = json!({"skip":aggregate(runs.iter().filter(|r|r.iteration>0 && r.route=="skip").collect()),"haiku":aggregate(runs.iter().filter(|r|r.iteration>0 && r.route=="haiku").collect())});
     let mut per_file = BTreeMap::new();
     for item in &corpus {
         per_file.insert(
@@ -418,7 +509,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         "{}-{label}.json",
         chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
     ));
-    let result = json!({"model_dir":dir,"provider_requested":provider,"threads":threads,"online":online,"paced":paced,"manifest":manifest,"iterations":iterations,"limit":limit,"llm_enabled":use_llm,"vad_model":vad_path,"model_load_ms":model_load_ms,"gpu_before":gpu_before,"gpu_loaded":gpu_loaded,"gpu_after":gpu(),"aggregate_warm":warm,"per_file_warm":per_file,"runs":runs,"notes":"GPU memory is device-wide snapshots, not process peak. First corpus pass excluded from warm aggregates. WAV loading excluded from tail. VAD simulation uses the real segmenter; ASR runs synchronously between feeds, so paced tail conservatively includes backlog. No clipboard or microphone in this harness. LLM is opt-in. Zero resample cost: corpus is already 16 kHz."});
+    let result = json!({"model_dir":dir,"provider_requested":provider,"threads":threads,"online":online,"paced":paced,"manifest":manifest,"iterations":iterations,"limit":limit,"llm_enabled":use_llm,"vad_model":vad_path,"model_load_ms":model_load_ms,"warmup_ms":warmup_ms,"gpu_before":gpu_before,"gpu_loaded":gpu_loaded,"gpu_after":gpu(),"aggregate_warm":warm,"groups_warm":groups,"provider_selected":provider,"provider_option":requested,"per_file_warm":per_file,"runs":runs,"notes":"GPU memory is device-wide snapshots, not process peak. First corpus pass excluded from warm aggregates. WAV loading excluded from tail. VAD simulation uses the real segmenter; ASR runs synchronously between feeds, so paced tail conservatively includes backlog. No clipboard or microphone in this harness. LLM is opt-in. Zero resample cost: corpus is already 16 kHz."});
     std::fs::write(&path, serde_json::to_vec_pretty(&result)?)?;
     println!(
         "Warm stages (ms): {}",

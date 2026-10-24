@@ -2,7 +2,7 @@
 
 Run from the repository root on Windows. The Rust binary calls the application's
 actual ASR, chunk merging, deterministic cleanup and (with `-Vad`) Silero segmenter.
-It never opens a microphone or pastes text. `corpus/` is owned by the corpus track;
+The WAV benchmark never opens a microphone or pastes text. `corpus/` is owned by the corpus track;
 the benchmark reads it without modifying it.
 
 ## Prepare and run
@@ -44,6 +44,17 @@ Options: `--model-dir PATH`, `--online`, `--unpaced`, `--vad PATH`, `--llm`,
 `--limit N`. All model directories must contain exactly one encoder, decoder and
 joiner ONNX file plus `tokens.txt` (and any external weights referenced by ONNX).
 
+For a separate device lifecycle measurement, run:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File bench/run.ps1 -SkipBuild -MicLifecycle
+```
+
+This explicitly opens the default microphone for short captures, discards all
+audio, and measures cold open/first-sample/drop versus warm activation,
+first-sample arrival and callback synchronization. It performs no ASR or paste.
+The direct binary flag is `--mic-lifecycle`.
+
 ## Interpreting results
 
 - JSON goes to `bench/results/<UTC timestamp>-<label>.json`; stdout prints each
@@ -67,8 +78,7 @@ joiner ONNX file plus `tokens.txt` (and any external weights referenced by ONNX)
 - GPU memory fields are **device-wide snapshots**, not isolated process usage
   or peak VRAM. Close competing workloads for stable comparisons.
 - `--llm` prewarms before each item and uses a 2.5 s timeout. Errors are recorded
-  and preserve deterministic text. It sends every benchmark output to cleanup;
-  the live app skips keyed cleanup at six words or fewer.
+  and preserve deterministic text. The benchmark and app skip cleanup at six words or fewer.
 
 ## Live pipeline instrumentation
 
@@ -92,8 +102,17 @@ ASR and deterministic-regex warmup run at model load.
 
 App configuration uses `CHIRP_ASR_PROVIDER=auto|cpu|cuda` (default `auto`), `CHIRP_ASR_THREADS`, and
 `CHIRP_ASR_MODEL_DIR`. Missing CUDA runtime dependencies fall back to CPU in the
-app; the benchmark refuses this fallback so a CPU run is not mislabeled CUDA.
+app and auto benchmark mode; explicit benchmark providers refuse fallback.
 Native model/runtime crashes cannot be recovered by a Rust `Result`; do not
 enable an export that has not passed the benchmark.
 
 Auto selects v3 FP32/CUDA when both its files and CUDA DLLs are available; otherwise it uses v3 int8/CPU (up to six threads). To launch the app with the CUDA runtime after setup, set `SHERPA_ONNX_LIB_DIR` to the absolute `src-tauri/sherpa-onnx-lib-cuda` directory before `npx tauri dev`. The sherpa build script copies runtime DLLs next to the executable. CPU release bundling remains the portable default; CUDA installer packaging is not part of this performance change.
+
+Default bench mode selects FP32 CUDA when available, with CPU fallback. Use -Llm for routed end-to-end cleanup and -MinSeconds 15 -MaxSeconds 45 for long clips. JSON groups_warm separates skip/Haiku routes; empty groups have no latency distribution. End-of-audio-to-final excludes clipboard dispatch and WAV loading. Model-load and warmup are separate.
+
+Full routed e2e run (45 files, initial pass plus two warm passes):
+```powershell
+# ANTHROPIC_API_KEY is already set in this shell; do not put it in command history.
+powershell -ExecutionPolicy Bypass -File bench/run.ps1 -Provider cuda -Iterations 2 -Llm -Label e2e-fp32-cuda-45
+powershell -ExecutionPolicy Bypass -File bench/run.ps1 -SkipBuild -Provider cuda -Iterations 2 -Llm -Vad "$env:APPDATA/com.chirp.app/models/silero_vad.onnx" -MinSeconds 15 -MaxSeconds 45 -Label e2e-long-incremental
+```
