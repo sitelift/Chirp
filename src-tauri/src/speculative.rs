@@ -52,10 +52,19 @@ pub struct RecordingSpeculation(pub Mutex<Option<Speculation>>);
 
 impl Speculation {
     pub fn new(client: LlmClient, context: AppContext, timeout: Duration) -> Self {
+        Self::new_with_terms(client, context, Vec::new(), timeout)
+    }
+    pub fn new_with_terms(
+        client: LlmClient,
+        context: AppContext,
+        terms: Vec<String>,
+        timeout: Duration,
+    ) -> Self {
         Self::new_deferred(
             client,
             context.app.clone(),
             move || context.clone(),
+            terms,
             timeout,
         )
     }
@@ -63,15 +72,17 @@ impl Speculation {
         client: LlmClient,
         app: String,
         resolve: impl Fn() -> AppContext + Send + Sync + 'static,
+        terms: Vec<String>,
         timeout: Duration,
     ) -> Self {
         let enabled = client.has_key();
         let cleanup: Cleanup = Arc::new(move |text| {
             let client = client.clone();
             let context = resolve();
+            let terms = terms.clone();
             Box::pin(async move {
                 client
-                    .cleanup(&text, &context, timeout)
+                    .cleanup_with(&text, &context, &terms, timeout)
                     .await
                     .map_err(|e| e.to_string())
             })

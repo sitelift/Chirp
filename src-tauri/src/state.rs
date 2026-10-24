@@ -42,6 +42,8 @@ pub struct Settings {
     pub play_sound_on_complete: bool,
     pub auto_dismiss_overlay: bool,
     pub smart_formatting: bool,
+    #[serde(default, alias = "capture_dictations")]
+    pub capture_dictations: bool,
     pub input_device: String,
     #[serde(alias = "whisperModel")]
     pub model: String,
@@ -75,6 +77,7 @@ impl Default for Settings {
             play_sound_on_complete: false,
             auto_dismiss_overlay: true,
             smart_formatting: true,
+            capture_dictations: false,
             input_device: "default".into(),
             model: "parakeet-tdt-0.6b".into(),
             onboarding_complete: false,

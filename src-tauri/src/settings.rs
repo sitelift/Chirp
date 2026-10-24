@@ -7,6 +7,37 @@ pub fn config_dir() -> PathBuf {
     base.join("com.chirp.app")
 }
 
+/// A development override, checked per recording. Never persisted or enabled
+/// implicitly; explicit 0/false/off also overrides a saved opt-in.
+pub fn capture_dictations_enabled(settings: &Settings) -> bool {
+    capture_override(settings.capture_dictations, std::env::var("CHIRP_CAPTURE_DICTATIONS").ok().as_deref())
+}
+fn capture_override(saved: bool, value: Option<&str>) -> bool {
+    match value.map(str::trim) {
+        Some("1" | "true" | "on") => true,
+        Some("0" | "false" | "off") => false,
+        _ => saved,
+    }
+}
+
+#[cfg(test)]
+mod capture_tests {
+    use super::*;
+    #[test]
+    fn capture_requires_opt_in_and_dev_off_overrides_saved_opt_in() {
+        let mut old = serde_json::to_value(Settings::default()).unwrap();
+        old.as_object_mut().unwrap().remove("captureDictations");
+        assert!(!serde_json::from_value::<Settings>(old.clone()).unwrap().capture_dictations);
+        old["capture_dictations"] = serde_json::json!(true);
+        assert!(serde_json::from_value::<Settings>(old).unwrap().capture_dictations);
+        assert!(!capture_override(false, None));
+        assert!(!capture_override(false, Some("unknown")));
+        assert!(capture_override(false, Some("1")));
+        assert!(capture_override(true, None));
+        assert!(!capture_override(true, Some("0")));
+    }
+}
+
 /// Get the models directory
 pub fn models_dir() -> PathBuf {
     config_dir().join("models")

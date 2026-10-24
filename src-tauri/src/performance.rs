@@ -22,6 +22,7 @@ pub struct Breakdown {
     pub release_to_restore_ms: Option<f64>,
 }
 struct Inner {
+    capture: Option<crate::capture::Session>,
     data: Breakdown,
     release: Option<Instant>,
     hold: bool,
@@ -33,6 +34,7 @@ impl Trace {
     pub fn start() -> Self {
         let trace = Self(
             Arc::new(Mutex::new(Inner {
+                capture: None,
                 data: Breakdown::default(),
                 release: None,
                 hold: true,
@@ -44,6 +46,12 @@ impl Trace {
     }
     pub fn current() -> Option<Self> {
         ACTIVE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    pub fn set_capture(&self, session: crate::capture::Session) {
+        self.0.lock().unwrap_or_else(|e|e.into_inner()).capture = Some(session);
+    }
+    pub fn capture(&self) -> Option<crate::capture::Session> {
+        self.0.lock().unwrap_or_else(|e|e.into_inner()).capture.clone()
     }
     pub fn set_hold(&self, hold: bool) { self.0.lock().unwrap_or_else(|e|e.into_inner()).hold = hold; }
     pub fn input(&self, key_up: bool) {
@@ -123,6 +131,7 @@ mod tests {
     #[test]
     fn decode_crossing_release_splits_compute_at_the_input_boundary() {
         let trace = Trace(Arc::new(Mutex::new(Inner {
+            capture: None,
             data: Breakdown::default(), release: None, hold: true,
         })), Arc::new(tokio::sync::Notify::new()));
         let start = Instant::now() - std::time::Duration::from_millis(20);

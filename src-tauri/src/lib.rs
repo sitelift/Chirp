@@ -1,4 +1,5 @@
 pub mod audio;
+mod capture;
 pub mod performance;
 pub mod cleanup;
 mod clipboard_win;

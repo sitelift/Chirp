@@ -44,6 +44,7 @@ pub struct RecordingContext(pub std::sync::Mutex<Option<Arc<DictationContext>>>,
 /// A dictation's prompt prefix is frozen at its first cleanup request. Resolving
 /// at recording start would put the browser lookup on the microphone hot path.
 pub struct DictationContext {
+    terms: Vec<String>,
     pending: std::sync::Mutex<Option<crate::context::PendingContext>>,
     resolved: std::sync::OnceLock<crate::llm::AppContext>,
 }
@@ -310,12 +311,23 @@ pub async fn start_recording(
 ) -> Result<(), String> {
     let (capture_start, pending) = app_handle.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()).take().unwrap_or_else(|| (Instant::now(), crate::context::capture()));
     let context_app = pending.context().app.clone();
-    let context = Arc::new(DictationContext { pending: std::sync::Mutex::new(Some(pending)), resolved: std::sync::OnceLock::new() });
+    let vocabulary_at_press = state.lock().await.vocabulary.clone();
+    let dictionary_terms: Vec<String> = vocabulary_at_press.iter().map(|v|v.term.clone()).collect();
+    let context = Arc::new(DictationContext { terms:dictionary_terms.clone(), pending: std::sync::Mutex::new(Some(pending)), resolved: std::sync::OnceLock::new() });
     *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = Some(context.clone());
-    app_handle.state::<crate::llm::LlmClient>().prewarm();
+    app_handle.state::<crate::llm::LlmClient>().prewarm_with(&dictionary_terms);
     let trace = crate::performance::Trace::start();
+    let context_trace = trace.clone();
     let speculation = crate::speculative::Speculation::new_deferred(
-        app_handle.state::<crate::llm::LlmClient>().inner().clone(), context_app, move || context.resolve(),
+        app_handle.state::<crate::llm::LlmClient>().inner().clone(), context_app, move || {
+            let resolved = context.resolve();
+            if let Some(capture) = context_trace.capture() {
+                capture.set("context", &resolved);
+                capture.set("context_sent", true);
+            }
+            resolved
+        },
+        dictionary_terms.clone(),
         std::time::Duration::from_millis(2500),
     );
     if let Some(old) = app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()).replace(speculation.clone()) { old.cancel(); }
@@ -379,6 +391,16 @@ pub async fn start_recording(
     if s.recognizer.is_none() {
         return Err("model_not_loaded".into());
     }
+    if settings::capture_dictations_enabled(&s.settings) {
+        let capture = crate::capture::Session::new(serde_json::json!({
+            "model":s.settings.model,"beam_search":s.settings.beam_search,
+            "smart_formatting":s.settings.smart_formatting,
+            "vocabulary":vocabulary_at_press,"snippets":s.snippets,
+            "provider_requested":std::env::var("CHIRP_ASR_PROVIDER").unwrap_or_else(|_|"auto".into())
+        }));
+        capture.set("dictionary_terms", &dictionary_terms);
+        trace.set_capture(capture);
+    }
 
     // NOTE: vocab-dirty rebuild does NOT happen here. Rebuilding the
     // recognizer takes ~3 seconds (loads onnx files), and doing that inside
@@ -420,7 +442,7 @@ pub async fn start_recording(
     let device_id = s.settings.input_device.clone();
     let recognizer_for_vad = s.recognizer.clone();
     let smart_fmt_for_vad = s.settings.smart_formatting;
-    let vocab_for_vad = s.vocabulary.clone();
+    let vocab_for_vad = vocabulary_at_press;
     let snippets_for_vad = s.snippets.clone();
     s.recording_state = RecordingState::Recording;
     s.vad_was_active = false;
@@ -624,6 +646,7 @@ pub async fn stop_recording(
     let start_time = Instant::now();
     let trace = crate::performance::Trace::current().unwrap_or_else(crate::performance::Trace::start);
     trace.release();
+    let mut capture_guard = crate::capture::Guard::new(&trace);
     let speculation = app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()).take();
     if let Some(speculation) = &speculation { speculation.seal(); }
     let _ = &stream_handle;
@@ -734,6 +757,11 @@ pub async fn stop_recording(
     };
 
     let sample_count = audio_data.len();
+    if let Some(capture) = capture_guard.session() {
+        let t = Instant::now();
+        capture.audio(&audio_data);
+        trace.stage("capture_audio_snapshot", t);
+    }
     let duration_secs = sample_count as f32 / 16000.0;
     let speech_duration_ms = (duration_secs * 1000.0) as u64;
 
@@ -806,6 +834,9 @@ pub async fn stop_recording(
         std::mem::take(&mut *vc)
     };
     let use_vad = vad_was_active;
+    if use_vad {
+        if let Some(capture) = capture_guard.session() { capture.set("raw_asr_text", vad_texts.join(" ")); }
+    }
     log::info!(
         "transcription path: vad_was_active={}, vad_texts_count={}, vad_cleaned_count={}, fallback_used={}",
         vad_was_active,
@@ -846,6 +877,7 @@ pub async fn stop_recording(
         None
     };
 
+    let fallback_capture = capture_guard.session();
     let result = if let Some(text) = formatted_opt {
         Ok(text)
     } else {
@@ -868,6 +900,7 @@ pub async fn stop_recording(
             }
 
             let merged = crate::transcribe::merge_transcriptions(transcriptions);
+            if let Some(capture) = &fallback_capture { capture.set("raw_asr_text", &merged); }
             if merged.is_empty() {
                 log::warn!("Transcription returned empty text");
                 return Err("transcription_failed".to_string());
@@ -921,27 +954,40 @@ pub async fn stop_recording(
     let llm_start = Instant::now();
     let client = app_handle.state::<crate::llm::LlmClient>().inner().clone();
     let context = app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let dictionary_terms = context.as_ref().map(|context|context.terms.clone()).unwrap_or_default();
     let ctx = context.map(|context|context.resolve()).unwrap_or_else(crate::context::foreground);
+    let needs_llm = client.has_key() && crate::router::needs_llm(&result, &ctx.app);
+    if let Some(capture) = capture_guard.session() {
+        capture.set("deterministic_text", &result);
+        capture.set("context", &ctx);
+        capture.set("context_sent", needs_llm);
+        capture.set("router_decision", serde_json::json!({"needs_llm":crate::router::needs_llm(&result, &ctx.app),"has_key":client.has_key(),"route":if needs_llm {"llm"} else {"skip"}}));
+    }
     let speculative_outcome = if let Some(speculation) = speculation {
         let (outcome, metrics) = speculation.finish(&result).await;
         trace.speculation(metrics);
         outcome
     } else { None };
-    let result = if client.has_key() && crate::router::needs_llm(&result, &ctx.app) {
+    let result = if needs_llm {
         let outcome = match speculative_outcome {
             Some(outcome) => outcome,
-            None => client.cleanup(&result, &ctx, std::time::Duration::from_millis(2500)).await.map_err(|e|e.to_string()),
+            None => client.cleanup_with(&result, &ctx, &dictionary_terms, std::time::Duration::from_millis(2500)).await.map_err(|e|e.to_string()),
         };
         match outcome {
             Ok(out) => {
+                if let Some(capture) = capture_guard.session() { capture.set("llm", &out); }
                 trace.llm(serde_json::json!({"ttft_ms":out.ttft_ms,"total_ms":out.total_ms,"cache_read_tokens":out.cache_read_tokens,"cache_write_tokens":out.cache_write_tokens,"input_tokens":out.input_tokens,"output_tokens":out.output_tokens}));
                 was_cleaned_up = true; out.text
             }
-            Err(err) => { log::warn!("LLM cleanup failed: {err}; using deterministic text"); trace.llm(serde_json::json!({"error":err.to_string()})); result }
+            Err(err) => {
+                if let Some(capture) = capture_guard.session() { capture.set("llm", serde_json::json!({"error":err.to_string()})); }
+                log::warn!("LLM cleanup failed: {err}; using deterministic text"); trace.llm(serde_json::json!({"error":err.to_string()})); result
+            }
         }
     } else { result };
     trace.stage("llm", llm_start);
     let word_count = result.split_whitespace().count();
+    if let Some(capture) = capture_guard.session() { capture.set("final_text", &result); }
 
     // Inject text at cursor
     log::debug!("Injecting transcribed text: '{result}'");
@@ -959,6 +1005,7 @@ pub async fn stop_recording(
     };
 
     if let Err(e) = inject_result {
+        if let Some(capture) = capture_guard.session() { capture.set("error", &e); }
         let mut s = state.lock().await;
         s.recording_state = RecordingState::Idle;
         log::error!("Injection failed: {e}");
@@ -966,6 +1013,11 @@ pub async fn stop_recording(
     }
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
+    if let Some(capture) = capture_guard.session() {
+        capture.set("pasted_text", &result);
+        capture.set("status", "pasted");
+        capture.set("paste_confirmation", "SendInput dispatched; target application acknowledgement is not measured");
+    }
     // Save to history and reset state
     let mut s = state.lock().await;
     s.history.push(TranscriptionEntry {
@@ -988,11 +1040,14 @@ pub async fn stop_recording(
         let timestamp = entry.timestamp.clone();
         let history_state = state.inner().clone();
         let restore_trace = trace.clone();
+        let capture = capture_guard.handoff();
         tauri::async_runtime::spawn(async move {
             restore_trace.wait_restored().await;
             let mut s = history_state.lock().await;
             if let Some(entry) = s.history.iter_mut().find(|e| e.timestamp == timestamp) { entry.timings = restore_trace.snapshot(); }
             let _ = history::save_history(&s.history);
+            drop(s);
+            if let Some(capture) = capture { capture.save(restore_trace.snapshot()); }
         });
     }
     s.recording_state = RecordingState::Idle;
@@ -1105,8 +1160,18 @@ pub async fn cancel_recording(
         *handle = None;
     }
 
-    // Clear buffer
-    buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    // Save cancelled opt-in recordings as incomplete examples, never as pasted text.
+    {
+        let mut audio = buffer.lock().unwrap_or_else(|e|e.into_inner());
+        if let Some(trace) = crate::performance::Trace::current() {
+            if let Some(capture) = trace.capture() {
+                capture.audio(&audio);
+                capture.set("status", "cancelled");
+                capture.save(trace.snapshot());
+            }
+        }
+        audio.clear();
+    }
 
     // Reset state
     let mut s = state.lock().await;

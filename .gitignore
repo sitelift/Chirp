@@ -54,3 +54,8 @@ src-tauri/*.dll
 # Switchable CUDA runtime (downloaded)
 src-tauri/sherpa-onnx-lib-cuda/
 bench/results/
+
+# Opt-in private dictation captures and imported human drafts stay local.
+**/captures/
+bench/corpus/manifest.local.json
+bench/corpus/wav/human-*.wav

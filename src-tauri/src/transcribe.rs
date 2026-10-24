@@ -367,11 +367,16 @@ pub fn transcribe(
     let elapsed = start.elapsed();
     log::info!("Sherpa-onnx inference took {:.0}ms", elapsed.as_millis());
 
-    let result = stream
-        .get_result()
-        .ok_or_else(|| "No recognition result".to_string())?;
-
-    if let Some(trace) = crate::performance::Trace::current() { trace.asr(total_start); }
+    let result = stream.get_result();
+    if let Some(trace) = crate::performance::Trace::current() {
+        trace.asr(total_start);
+        if let Some(capture) = trace.capture() {
+            let t = std::time::Instant::now();
+            capture.asr_input(audio, result.as_ref().map(|r|r.text.trim()), if result.is_none() {Some("No recognition result")} else {None});
+            trace.stage("capture_copy", t);
+        }
+    }
+    let result = result.ok_or_else(|| "No recognition result".to_string())?;
     Ok(result.text.trim().to_string())
 }
 
