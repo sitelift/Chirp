@@ -9,9 +9,20 @@ export function capLabel(label: string): string {
     .replace(/Control/i, 'Ctrl')
 }
 
+const MODIFIER_ORDER = [/ctrl/i, /shift/i, /alt/i, /win/i]
+function capRank(label: string): number {
+  const i = MODIFIER_ORDER.findIndex((re) => re.test(label))
+  return i < 0 ? MODIFIER_ORDER.length : i
+}
+
+/** Key caps in the usual reading order: Ctrl, Shift, Alt, Win, then the key. */
+export function sortCaps(labels: string[]): string[] {
+  return [...labels].sort((a, b) => capRank(a) - capRank(b))
+}
+
 export function bindingCaps(binding: Binding | null): string[] {
   if (!binding || !binding.label) return []
-  return binding.label.split(' + ').map(capLabel)
+  return sortCaps(binding.label.split(' + ').map(capLabel))
 }
 
 /** The hold key as written in "Hold [Right Ctrl] and talk". */

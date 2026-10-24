@@ -13,7 +13,10 @@ use windows_sys::Win32::{
     Foundation::{HWND, POINT, RECT},
     Graphics::Gdi::{GetMonitorInfoW, MonitorFromPoint, MonitorFromWindow, HMONITOR, MONITORINFO, MONITOR_DEFAULTTONEAREST, MONITOR_DEFAULTTOPRIMARY},
     UI::HiDpi::{GetDpiForMonitor, MDT_EFFECTIVE_DPI},
-    UI::WindowsAndMessaging::{GetCursorPos, GetForegroundWindow, GetWindowRect, SetWindowPos, ShowWindow, HWND_TOPMOST, SWP_NOACTIVATE, SW_SHOWNOACTIVATE},
+    UI::WindowsAndMessaging::{
+        GetCursorPos, GetForegroundWindow, GetWindowLongPtrW, GetWindowRect, IsWindowVisible, SetForegroundWindow, SetWindowLongPtrW, SetWindowPos, ShowWindow, GWL_EXSTYLE,
+        HWND_TOPMOST, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SWP_NOZORDER, SW_HIDE, SW_SHOWNOACTIVATE, WS_EX_LAYERED, WS_EX_NOACTIVATE, WS_EX_TRANSPARENT,
+    },
 };
 
 pub const LABEL: &str = "overlay";
@@ -52,6 +55,8 @@ struct Geometry {
     inset: [f64; 4],
     hovering: bool,
     last_blur: Option<Instant>,
+    /// The app that had focus before the surface opened; it gets focus back on close.
+    prev_foreground: isize,
 }
 // HMONITOR is a plain handle value.
 unsafe impl Send for Geometry {}
@@ -114,23 +119,48 @@ fn place(win: &WebviewWindow, g: &Geometry) {
     }
 }
 
+/// Click-through and focusability as extended styles, set directly. tao's
+/// setters re-apply all of its window flags on every change, including an
+/// activating `SW_SHOW` (or `SW_HIDE`), which would steal focus from the app
+/// being dictated into.
+fn set_styles(h: HWND, click_through: bool, no_activate: bool) {
+    unsafe {
+        let ex = GetWindowLongPtrW(h, GWL_EXSTYLE) as u32;
+        let mut next = ex & !(WS_EX_TRANSPARENT | WS_EX_LAYERED | WS_EX_NOACTIVATE);
+        if click_through {
+            next |= WS_EX_TRANSPARENT | WS_EX_LAYERED;
+        }
+        if no_activate {
+            next |= WS_EX_NOACTIVATE;
+        }
+        if next != ex {
+            SetWindowLongPtrW(h, GWL_EXSTYLE, next as isize);
+            SetWindowPos(h, std::ptr::null_mut(), 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE | SWP_FRAMECHANGED);
+        }
+    }
+}
+
+/// Before the frontend draws anything: click-through, non-activating, shown
+/// once through tao so its idea of visibility stays "visible".
+pub fn init(win: &WebviewWindow) {
+    if let Some(h) = hwnd(win) {
+        set_styles(h, true, true);
+    }
+    let _ = win.show();
+}
+
 fn apply_mode(win: &WebviewWindow, mode: Mode, hovering: bool) {
-    match mode {
-        Mode::Hidden => {
-            let _ = win.hide();
-        }
-        _ => {
-            if !win.is_visible().unwrap_or(false) {
-                if let Some(h) = hwnd(win) {
-                    unsafe { ShowWindow(h, SW_SHOWNOACTIVATE) };
-                }
-            }
-            let ignore = matches!(mode, Mode::Tick | Mode::Passive) && !hovering;
-            let _ = win.set_ignore_cursor_events(ignore);
-            if mode == Mode::Focused {
-                let _ = win.set_focus();
-            }
-        }
+    let Some(h) = hwnd(win) else { return };
+    if mode == Mode::Hidden {
+        unsafe { ShowWindow(h, SW_HIDE) };
+        return;
+    }
+    set_styles(h, matches!(mode, Mode::Tick | Mode::Passive) && !hovering, mode != Mode::Focused);
+    if unsafe { IsWindowVisible(h) } == 0 {
+        unsafe { ShowWindow(h, SW_SHOWNOACTIVATE) };
+    }
+    if mode == Mode::Focused {
+        let _ = win.set_focus();
     }
 }
 
@@ -144,6 +174,7 @@ pub fn surface_update(
     anchor: Option<Anchor>,
     inset: Option<[f64; 4]>,
 ) -> Result<(), String> {
+    log::debug!("surface_update {mode:?} {width}x{height} anchor={anchor:?}");
     let win = app.get_webview_window(LABEL).ok_or("no window")?;
     let own = hwnd(&win);
     let mut guard = GEOMETRY.lock().unwrap_or_else(|e| e.into_inner());
@@ -155,6 +186,7 @@ pub fn surface_update(
         inset: [0.0; 4],
         hovering: false,
         last_blur: None,
+        prev_foreground: 0,
     });
     if let Some(anchor) = anchor {
         g.monitor = monitor_for(anchor, own);
@@ -163,6 +195,15 @@ pub fn surface_update(
     g.height = height.clamp(1.0, 2000.0);
     if mode != Mode::Tick {
         g.hovering = false;
+    }
+    unsafe {
+        let fg = GetForegroundWindow();
+        if mode == Mode::Focused && g.mode != Mode::Focused && Some(fg) != own {
+            g.prev_foreground = fg as isize;
+        }
+        if g.mode == Mode::Focused && mode != Mode::Focused && Some(fg) == own && g.prev_foreground != 0 {
+            SetForegroundWindow(g.prev_foreground as HWND);
+        }
     }
     g.mode = mode;
     g.inset = inset.unwrap_or([0.0; 4]);
@@ -234,7 +275,7 @@ pub fn start_hover_poll(app: AppHandle) {
         if inside != g.hovering {
             g.hovering = inside;
             drop(guard);
-            let _ = win.set_ignore_cursor_events(!inside);
+            set_styles(h, !inside, true);
             let _ = app.emit("surface-hover", inside);
         }
     });

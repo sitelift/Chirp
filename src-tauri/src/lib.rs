@@ -167,8 +167,9 @@ pub fn run() {
                 }
             }
 
-            // The window is shown by the frontend once it knows what to draw.
+            // Shown once, click-through and empty; the frontend sizes and places it.
             if let Some(win) = app.get_webview_window(crate::surface::LABEL) {
+                crate::surface::init(&win);
                 let handle_for_blur = handle.clone();
                 win.on_window_event(move |event| {
                     if let WindowEvent::Focused(false) = event {

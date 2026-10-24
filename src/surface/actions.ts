@@ -1,6 +1,6 @@
 import { setUi, type SurfaceContextValue, type SurfaceState } from './store'
 import type { Binding, BindingTarget, Settings, View } from './types'
-import { capLabel } from './format'
+import { capLabel, sortCaps } from './format'
 import type { WordStores } from './words'
 
 type Ctx = Pick<SurfaceContextValue, 'store' | 'api'>
@@ -117,7 +117,7 @@ export async function startRebind(ctx: Ctx, target: BindingTarget) {
   try {
     const binding = await api.call<Binding>('record_binding', { target })
     await saveSettings(ctx, target === 'hold' ? { holdBinding: binding } : { toggleBinding: binding })
-    setUi(store, { rebind: { target, phase: 'saved', keys: binding.label.split(' + ').map(capLabel) } })
+    setUi(store, { rebind: { target, phase: 'saved', keys: sortCaps(binding.label.split(' + ').map(capLabel)) } })
     later('rebind', TIMING.savedHold, () => setUi(store, { rebind: null }))
   } catch (e) {
     const current = store.getState().ui.rebind

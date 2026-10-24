@@ -10,7 +10,7 @@ import {
   TIMING,
 } from './actions'
 import type { AiStatus, AudioDevice, HistoryEntry, PauseState, Settings, SnippetEntry, Theme, VocabEntry } from './types'
-import { capLabel } from './format'
+import { capLabel, sortCaps } from './format'
 import { checkForUpdate, installUpdate } from './updates'
 
 /** Lets the hands-free pill's stop button reach the controller. */
@@ -175,7 +175,7 @@ export function useLiveBackend(ctx: Ctx) {
       api.on<boolean>('surface-hover', (hover) => set({ tickHover: hover })),
       api.on<string[]>('binding-capture-keys', (labels) => {
         const r = get().ui.rebind
-        if (r?.phase === 'listening') set({ ui: { ...get().ui, rebind: { ...r, keys: labels.map(capLabel) } } })
+        if (r?.phase === 'listening') set({ ui: { ...get().ui, rebind: { ...r, keys: sortCaps(labels.map(capLabel)) } } })
       }),
       api.on<Record<string, unknown>>('settings-changed', (raw) => set({ settings: pickSettings(raw, get().settings) })),
       api.on<HistoryEntry>('history-updated', (entry) => set({ history: [...get().history, entry].slice(-1000) })),

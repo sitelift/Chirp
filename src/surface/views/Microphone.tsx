@@ -14,7 +14,6 @@ function DeviceRow({ id, label, selected, missing, level }: { id: string; label:
       type="button"
       data-nav=""
       disabled={missing}
-      title={id === 'default' ? 'Windows default input' : id}
       onClick={() => saveSettings(ctx, { inputDevice: id })}
       className="nav flex h-[40px] w-full shrink-0 items-center gap-[8px] rounded-row pl-[8px] pr-[14px] text-left enabled:hover:bg-hover enabled:active:bg-press data-[force-hover]:bg-hover"
       {...forced}
