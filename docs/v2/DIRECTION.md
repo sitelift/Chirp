@@ -163,19 +163,24 @@ Also drop:
 4. **UX redesign.** First-principles design using Mobbin references: overlay, settings, onboarding, brand system.
 5. **Public polish.** README, contributing guide, Windows-only release pipeline, updater.
 
-## Design direction: magic, not visibility (2026-10-24)
+## Design direction: the pill is the app (2026-10-24)
 
-Supersedes the north-star list below. Prototype: `docs/v2/design/magic.html` (hold Space).
+Supersedes the north-star list below. Designs: Paper file "Chirp v2" (artboards "Overlay / v2", "The pill is the app / Light" and "/ Dark"; "Overlay / Current (v1)" is the before).
 
-Simple and bold. The best dictation UI is almost none: you talk, and your words appear. (A first "Sonogram" concept with receipts, latency readouts and diffs was rejected as visibility for its own sake.)
+Clean, minimal, usable. Every surface has to justify existing. There is **one surface**: the pill, bottom-center above the taskbar. It grows only to show what you need, then shrinks back. There is no settings window, no onboarding wizard and no tray popup.
 
-- **While you talk:** a single amber dot next to the text caret, gently swelling with your voice. No pill, no waveform, no text. Caret position from `GetGUIThreadInfo`, then UI Automation, falling back to near the mouse; the dot is a tiny window sized to content.
-- **Waiting for polish:** the dot breathes.
-- **Release:** the dot vanishes and the words arrive, blooming in amber out of a slight blur and settling to ink within about 0.5 s. (In real apps we paste; the bloom is drawn by our overlay over the pasted text's position, or skipped where we can't locate it.)
-- **Sound:** one soft rising chirp when listening starts, one falling chirp when the words land.
-- **The app window:** full amber, the white bird, one giant ink key cap showing your hotkey (click it to rebind), "Hold it and say something." Microphone, API key and Words are small links at the bottom. Onboarding is this same screen.
-- **Color:** amber `#F0B723`, ink `#0E0D0B`, white. Type: Segoe UI Variable (native Windows), heavy weights for anything that matters.
-- Latency, history and diagnostics exist (logs, dev tooling) but are not part of the everyday UI.
+- **The pill:** 32 px tall, fully opaque (no translucency or blur), follows the Windows light/dark theme. No logo. Click-through while dictating.
+  - **Listening:** amber level bars follow your voice.
+  - **Working:** bars settle to a slow pulse until the text lands (the Haiku path; the skip path is too fast to show).
+  - **No microphone / Didn't catch that:** a short label. No "done", word-count or spinner states; the text appearing is the confirmation.
+- **Grows to:**
+  - **First run:** "Hold [Right Ctrl] and say hi." with the mic level and model download inline. Gone after the first dictation. The API key is optional (raw text works without it) and is asked for in place when relevant.
+  - **Opened** (click the tray icon; Esc or click away closes): recent dictations, then rows for Hold to talk, Hands-free, Microphone, Words and AI cleanup. Rows drill in within the same surface.
+  - **Fix in place:** problems open just enough to solve them (e.g. an unplugged mic shows the other mics to pick from).
+- **Tray:** the icon opens the pill. Right-click shows the native Windows menu (Open, Pause, Quit).
+- **Merged/cut:** Vocabulary + Snippets become **Words** (say X, get Y). History becomes the recent list in the opened pill. About becomes a version line. The tray popup window, onboarding wizard and settings window are removed.
+- **Color:** amber only for the level bars (#F0B723 on dark, #C9900A on light for contrast). Everything else is neutral. Type: Segoe UI Variable.
+- **Sound:** a soft start chirp and a done chirp; a distinct sound when text was pasted without AI cleanup.
 
 ## Brand north stars (first pass, 2026-10-24)
 
