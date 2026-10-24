@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import { useAppStore } from '../stores/appStore'
 
 const SYNCED_KEYS = [
-  'hotkey', 'hotkeyMode', 'launchAtLogin', 'playSoundOnComplete',
+  'holdBinding', 'toggleBinding', 'launchAtLogin', 'playSoundOnComplete',
   'autoDismissOverlay', 'smartFormatting',
   'inputDevice', 'model', 'onboardingComplete',
   'beamSearch',

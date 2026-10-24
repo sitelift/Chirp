@@ -7,7 +7,7 @@ import { useTauri } from './useTauri'
 
 // Settings keys that should be synced to the backend
 const SYNCED_KEYS = [
-  'hotkey', 'hotkeyMode', 'launchAtLogin', 'playSoundOnComplete',
+  'holdBinding', 'toggleBinding', 'launchAtLogin', 'playSoundOnComplete',
   'autoDismissOverlay', 'smartFormatting',
   'inputDevice', 'model', 'onboardingComplete',
   'beamSearch',

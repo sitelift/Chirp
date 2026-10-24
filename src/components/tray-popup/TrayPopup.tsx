@@ -43,7 +43,7 @@ export function TrayPopup() {
   }, [])
 
   const darkMode = useAppStore((s) => s.darkMode)
-  const hotkey = useAppStore((s) => s.hotkey)
+  const hotkey = useAppStore((s) => s.holdBinding ?? s.toggleBinding)
   const hotkeyStatus = useAppStore((s) => s.hotkeyStatus)
   const history = useAppStore((s) => s.history)
   const modelDownloaded = useAppStore((s) => s.modelDownloaded)

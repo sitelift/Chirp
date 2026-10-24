@@ -1,23 +1,7 @@
 import type { TranscriptionEntry } from '../stores/appStore'
 
-export function formatHotkey(hotkey: string): string[] {
-  return hotkey.split('+').map(c => {
-    c = c.trim()
-    if (c === 'ControlLeft' || c === 'ControlRight') return 'Ctrl'
-    if (c === 'ShiftLeft' || c === 'ShiftRight') return 'Shift'
-    if (c === 'AltLeft' || c === 'AltRight') return 'Alt'
-    if (c === 'MetaLeft' || c === 'MetaRight') return 'Win'
-    if (c === 'Fn') return 'fn'
-    if (c.startsWith('Key') && c.length === 4) return c[3]
-    if (c.startsWith('Digit') && c.length === 6) return c[5]
-    if (c === 'ArrowUp') return 'Up'
-    if (c === 'ArrowDown') return 'Down'
-    if (c === 'ArrowLeft') return 'Left'
-    if (c === 'ArrowRight') return 'Right'
-    // Legacy format fallback
-    if (c === 'CmdOrCtrl') return 'Ctrl'
-    return c
-  })
+export function formatHotkey(binding: import('./hotkeyCapture').Binding | null): string[] {
+  return binding ? [binding.label] : ['Disabled']
 }
 
 export function formatRelativeTime(isoString: string): string {

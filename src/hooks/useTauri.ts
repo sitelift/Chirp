@@ -32,8 +32,8 @@ export function useTauri() {
 }
 
 function createTauriApi() {
-  const startRecording = async (): Promise<void> => {
-    await invoke('start_recording')
+  const startRecording = async (hold = false): Promise<void> => {
+    await invoke('start_recording', { hold })
   }
 
   const stopRecording = async (): Promise<TranscriptionResult> => {
