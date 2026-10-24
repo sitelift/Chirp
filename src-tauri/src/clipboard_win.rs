@@ -207,9 +207,11 @@ pub fn verify_clipboard_text(expected: &str) -> Result<bool, String> {
 }
 
 /// Restore previously saved clipboard contents
-pub fn restore_clipboard(saved: SavedClipboard) -> Result<(), String> {
+pub fn restore_clipboard(saved: SavedClipboard, expected_sequence: u32) -> Result<bool, String> {
     unsafe {
         open_clipboard_retry()?;
+        // Check while holding the clipboard lock: never overwrite a newer copy/dictation.
+        if GetClipboardSequenceNumber() != expected_sequence { CloseClipboard(); return Ok(false); }
         EmptyClipboard();
 
         for (fmt, data) in &saved.formats {
@@ -220,6 +222,6 @@ pub fn restore_clipboard(saved: SavedClipboard) -> Result<(), String> {
 
         CloseClipboard();
         log::debug!("Clipboard restored ({} formats)", saved.formats.len());
-        Ok(())
+        Ok(true)
     }
 }

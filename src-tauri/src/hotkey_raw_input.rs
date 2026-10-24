@@ -250,6 +250,7 @@ unsafe fn handle_raw_input(hri: HRAWINPUT) {
             if state.combo_active && state.combo.contains(&id) {
                 state.combo_active = false;
                 state.active_combo.store(false);
+                if let Some(trace) = crate::performance::Trace::current() { trace.release(); }
                 log::info!("Hotkey released");
                 let _ = state.app.emit("hotkey-released", ());
             }

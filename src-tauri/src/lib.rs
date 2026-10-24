@@ -1,16 +1,19 @@
-mod audio;
-mod cleanup;
+pub mod audio;
+pub mod performance;
+pub mod cleanup;
 mod clipboard_win;
 mod commands;
+mod context;
 mod history;
 mod hotkey;
 mod hotkey_ll_suppress;
 mod hotkey_raw_input;
 mod inject;
+pub mod llm;
 mod settings;
 mod snippets;
 mod state;
-mod transcribe;
+pub mod transcribe;
 
 
 use commands::{RecordingStartTime, ResamplerFlushState, StreamActiveState, StreamErrorState, StreamHandle};
@@ -60,6 +63,8 @@ pub fn run() {
             )))
         })
         .manage::<AudioBuffer>(Arc::new(std::sync::Mutex::new(Vec::new())))
+        .manage(crate::llm::LlmClient::from_env())
+        .manage(commands::RecordingContext::default())
         .manage(StreamHandle(std::sync::Mutex::new(None)))
         .manage(StreamErrorState(std::sync::Mutex::new(None)))
         .manage(ResamplerFlushState(std::sync::Mutex::new(None)))
@@ -112,6 +117,8 @@ pub fn run() {
                     }
                 }
             }
+
+            commands::warm_microphone(&handle);
 
             // Load speech model if available (all sync operations, no async needed)
             {

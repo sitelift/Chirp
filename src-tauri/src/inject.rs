@@ -153,11 +153,15 @@ fn foreground_is_console() -> bool {
 
 /// Send Ctrl+V via SendInput using scan codes, avoiding enigo entirely.
 #[cfg(windows)]
-fn send_ctrl_v() {
-    send_key_event(VK_CONTROL, false);
-    send_key_event(VK_V, false);
-    send_key_event(VK_V, true);
-    send_key_event(VK_CONTROL, true);
+fn send_ctrl_v() -> Result<(), String> {
+    let inputs = [(VK_CONTROL, false), (VK_V, false), (VK_V, true), (VK_CONTROL, true)].map(|(vk, up)| INPUT {
+        r#type: INPUT_KEYBOARD,
+        Anonymous: INPUT_0 { ki: KEYBDINPUT { wVk: vk, wScan: unsafe { MapVirtualKeyW(vk as u32, MAPVK_VK_TO_VSC) } as u16,
+            dwFlags: KEYEVENTF_SCANCODE | if up { KEYEVENTF_KEYUP } else { 0 }, time: 0, dwExtraInfo: 0 } },
+    });
+    let sent = unsafe { SendInput(inputs.len() as u32, inputs.as_ptr(), std::mem::size_of::<INPUT>() as i32) };
+    if sent != inputs.len() as u32 { return Err(format!("SendInput inserted {sent}/4 events")); }
+    Ok(())
 }
 
 /// Send a single right-click at the current cursor position.
@@ -198,6 +202,8 @@ fn send_right_click() {
 /// Windows: Win32 clipboard with exclusion flags, wait-for-release modifiers, Ctrl+V paste.
 #[cfg(windows)]
 fn inject_text_windows(text: &str) -> Result<(), String> {
+    let trace = crate::performance::Trace::current();
+    let clipboard_start = std::time::Instant::now();
     // 1. Save current clipboard
     let saved = clipboard_win::save_clipboard()?;
 
@@ -210,7 +216,7 @@ fn inject_text_windows(text: &str) -> Result<(), String> {
             continue;
         }
 
-        thread::sleep(Duration::from_millis(30));
+        // SetClipboardData/CloseClipboard are synchronous; verify immediately.
 
         match clipboard_win::verify_clipboard_text(text) {
             Ok(true) => {
@@ -233,23 +239,30 @@ fn inject_text_windows(text: &str) -> Result<(), String> {
         return Err("Failed to set clipboard — text did not persist after 5 attempts".into());
     }
 
+    if let Some(t) = &trace { t.stage("clipboard_write", clipboard_start); }
+    let modifier_start = std::time::Instant::now();
     // 3. Wait for the user to physically release the hotkey modifiers before pasting.
     wait_for_modifiers_released(300);
 
+    if let Some(t) = &trace { t.stage("modifier_wait", modifier_start); }
+    let paste_start = std::time::Instant::now();
     // 4. Paste. cmd.exe legacy console doesn't respond to Ctrl+V; right-click pastes in QuickEdit mode.
     if foreground_is_console() {
         // TODO: ConsoleWindowClass paste — right-click only works with QuickEdit enabled.
         send_right_click();
     } else {
-        send_ctrl_v();
+        send_ctrl_v()?;
     }
 
+    if let Some(t) = &trace { t.stage("paste_dispatch", paste_start); t.pasted(); }
+    let clipboard_sequence = unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() };
     // 5. Restore clipboard after short delay (background thread)
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(800));
-        if let Err(e) = clipboard_win::restore_clipboard(saved) {
-            log::warn!("Failed to restore clipboard: {e}");
-        }
+        let restore_start = std::time::Instant::now();
+        let restored = clipboard_win::restore_clipboard(saved, clipboard_sequence);
+        if let Err(e) = &restored { log::warn!("Failed to restore clipboard: {e}"); }
+        if let Some(t) = &trace { t.stage("clipboard_restore", restore_start); t.restored(matches!(restored, Ok(true))); }
     });
 
     Ok(())

@@ -16,19 +16,31 @@ const VAD_FORCE_SPLIT_SECS: usize = 20;
 
 /// Holds resampler state so callers can flush remaining samples on stop.
 pub struct ResamplerState {
+    pub device_id: String,
+    pub gate: Arc<std::sync::Mutex<()>>,
+    pub vad_slot: Arc<std::sync::Mutex<Option<Arc<std::sync::Mutex<VadState>>>>>,
     pub resampler: Option<Arc<std::sync::Mutex<FftFixedIn<f32>>>>,
     pub buffer: Arc<std::sync::Mutex<Vec<f32>>>,
     pub chunk_size: usize,
 }
 
 impl ResamplerState {
+    /// Wait for the callback that observed active=true to finish before draining.
+    pub fn quiesce(&self) { drop(self.gate.lock().unwrap_or_else(|e| e.into_inner())); }
+    pub fn prepare(&self, vad: Option<Arc<std::sync::Mutex<VadState>>>) {
+        let _guard = self.gate.lock().unwrap_or_else(|e| e.into_inner());
+        self.buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        if let Some(r) = &self.resampler { r.lock().unwrap_or_else(|e| e.into_inner()).reset(); }
+        *self.vad_slot.lock().unwrap_or_else(|e| e.into_inner()) = vad;
+    }
     /// Flush any leftover samples in the resampler buffer by zero-padding to a full chunk.
-    pub fn flush(&self, output: &AudioBuffer) {
-        let Some(resampler) = &self.resampler else { return };
+    pub fn flush(&self, output: &AudioBuffer) -> Vec<f32> {
+        let mut tail = Vec::new();
+        let Some(resampler) = &self.resampler else { return tail };
         let mut rbuf = self.buffer.lock().unwrap_or_else(|e| e.into_inner());
         let remaining = rbuf.len();
         if remaining == 0 {
-            return;
+            return tail;
         }
         log::info!("Flushing {remaining} resampler samples (chunk_size={})", self.chunk_size);
         // Zero-pad to fill the chunk
@@ -41,10 +53,12 @@ impl ResamplerState {
                     let useful_samples = (remaining as f64 / self.chunk_size as f64 * out.len() as f64).round() as usize;
                     let useful = &out[..useful_samples.min(out.len())];
                     output.lock().unwrap_or_else(|e| e.into_inner()).extend_from_slice(useful);
+                    tail.extend_from_slice(useful);
                     log::info!("Flushed resampler: {remaining} input → {useful_len} output samples", useful_len = useful.len());
                 }
             }
         }
+        tail
     }
 }
 
@@ -108,12 +122,13 @@ pub fn create_vad_state(model_path: &str, segment_tx: Sender<Vec<f32>>) -> Optio
 
 /// Feed resampled 16kHz samples to VAD. When a speech segment completes,
 /// sends the segment audio over the channel for background transcription.
-fn feed_vad(samples: &[f32], vad_state: &Arc<std::sync::Mutex<VadState>>) {
+pub fn feed_vad(samples: &[f32], vad_state: &Arc<std::sync::Mutex<VadState>>) {
     let mut vs = match vad_state.try_lock() {
         Ok(guard) => guard,
         Err(_) => return, // Skip if locked (shouldn't happen, but don't block callback)
     };
 
+    let stage = std::time::Instant::now();
     vs.vad_buf.extend_from_slice(samples);
     vs.samples_since_split += samples.len();
 
@@ -139,12 +154,18 @@ fn feed_vad(samples: &[f32], vad_state: &Arc<std::sync::Mutex<VadState>>) {
             vs.samples_since_split = 0;
         }
     }
+    if let Some(trace) = crate::performance::Trace::current() { trace.stage("vad_capture", stage); }
 }
 
 /// Flush the VAD to force-end any in-progress speech segment.
 /// Call this after recording stops to capture the final utterance.
 pub fn flush_vad(vad_state: &Arc<std::sync::Mutex<VadState>>) {
-    let vs = vad_state.lock().unwrap_or_else(|e| e.into_inner());
+    let mut vs = vad_state.lock().unwrap_or_else(|e| e.into_inner());
+    if !vs.vad_buf.is_empty() {
+        let mut tail = std::mem::take(&mut vs.vad_buf);
+        tail.resize(vs.window_size, 0.0);
+        vs.vad.accept_waveform(&tail);
+    }
     vs.vad.flush();
     while let Some(segment) = vs.vad.front() {
         let audio = segment.samples().to_vec();
@@ -273,14 +294,18 @@ pub fn start_capture(
     let active_i16 = stream_active.clone();
     let active_u16 = stream_active.clone();
 
-    let vad_f32 = vad_state.clone();
-    let vad_i16 = vad_state.clone();
-    let vad_u16 = vad_state;
+    let vad_slot = Arc::new(std::sync::Mutex::new(vad_state));
+    let vad_f32 = vad_slot.clone();
+    let vad_i16 = vad_slot.clone();
+    let vad_u16 = vad_slot.clone();
+    let gate = Arc::new(std::sync::Mutex::new(()));
+    let gate_f32 = gate.clone(); let gate_i16 = gate.clone(); let gate_u16 = gate.clone();
 
     let stream = match sample_format {
         SampleFormat::F32 => device.build_input_stream(
             &stream_config,
             move |data: &[f32], _: &cpal::InputCallbackInfo| {
+                let _guard = gate_f32.lock().unwrap_or_else(|e| e.into_inner());
                 if !active_f32.load(Ordering::Relaxed) { return; }
                 process_audio(
                     data,
@@ -292,7 +317,7 @@ pub fn start_capture(
                     &amp_counter,
                     amp_interval,
                     &app_handle,
-                    &vad_f32,
+                    &vad_f32.lock().unwrap_or_else(|e| e.into_inner()),
                 );
             },
             err_fn,
@@ -301,6 +326,7 @@ pub fn start_capture(
         SampleFormat::I16 => device.build_input_stream(
             &stream_config,
             move |data: &[i16], _: &cpal::InputCallbackInfo| {
+                let _guard = gate_i16.lock().unwrap_or_else(|e| e.into_inner());
                 if !active_i16.load(Ordering::Relaxed) { return; }
                 let float_data: Vec<f32> = data
                     .iter()
@@ -316,7 +342,7 @@ pub fn start_capture(
                     &amp_counter,
                     amp_interval,
                     &app_handle,
-                    &vad_i16,
+                    &vad_i16.lock().unwrap_or_else(|e| e.into_inner()),
                 );
             },
             err_fn,
@@ -325,6 +351,7 @@ pub fn start_capture(
         SampleFormat::U16 => device.build_input_stream(
             &stream_config,
             move |data: &[u16], _: &cpal::InputCallbackInfo| {
+                let _guard = gate_u16.lock().unwrap_or_else(|e| e.into_inner());
                 if !active_u16.load(Ordering::Relaxed) { return; }
                 let float_data: Vec<f32> = data
                     .iter()
@@ -340,7 +367,7 @@ pub fn start_capture(
                     &amp_counter,
                     amp_interval,
                     &app_handle,
-                    &vad_u16,
+                    &vad_u16.lock().unwrap_or_else(|e| e.into_inner()),
                 );
             },
             err_fn,
@@ -353,6 +380,7 @@ pub fn start_capture(
     stream.play().map_err(|e| format!("Failed to start stream: {e}"))?;
 
     let resampler_state = ResamplerState {
+        device_id: device_id.into(), gate, vad_slot,
         resampler,
         buffer: resample_buf,
         chunk_size,
@@ -392,7 +420,10 @@ fn process_audio(
         while rbuf.len() >= chunk_size {
             let chunk: Vec<f32> = rbuf.drain(..chunk_size).collect();
             if let Ok(mut rs) = resampler.lock() {
-                if let Ok(resampled) = rs.process(&[chunk], None) {
+                let stage = std::time::Instant::now();
+                let resampled = rs.process(&[chunk], None);
+                if let Some(trace) = crate::performance::Trace::current() { trace.stage("resample_capture", stage); }
+                if let Ok(resampled) = resampled {
                     if let Some(output) = resampled.first() {
                         // Feed resampled 16kHz samples to VAD
                         if let Some(vs) = vad_state {

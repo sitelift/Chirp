@@ -164,6 +164,8 @@ pub struct TranscriptionResult {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptionEntry {
+    #[serde(default)]
+    pub timings: crate::performance::Breakdown,
     pub text: String,
     pub timestamp: String,
     pub word_count: usize,

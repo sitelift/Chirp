@@ -38,7 +38,28 @@ pub struct ResamplerFlushState(pub std::sync::Mutex<Option<audio::ResamplerState
 pub struct RecordingStartTime(pub std::sync::Mutex<Option<Instant>>);
 
 /// Holds the active flag for the current audio stream so we can deactivate zombie callbacks.
+#[derive(Default)]
+pub struct RecordingContext(pub std::sync::Mutex<crate::llm::AppContext>);
+
 pub struct StreamActiveState(pub std::sync::Mutex<Option<audio::StreamActiveFlag>>);
+
+/// Open the selected device once at startup. Idle callbacks discard audio.
+pub fn warm_microphone(app: &AppHandle) {
+    let device = app.state::<SharedState>().blocking_lock().settings.input_device.clone();
+    let buffer = app.state::<AudioBuffer>().inner().clone();
+    match audio::start_capture(&device, buffer.clone(), app.clone(), None) {
+        Ok((stream, error, active, resampler)) => {
+            active.store(false, Ordering::SeqCst);
+            resampler.quiesce();
+            buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
+            *app.state::<StreamHandle>().0.lock().unwrap_or_else(|e| e.into_inner()) = Some(StreamWrapper(stream));
+            *app.state::<StreamErrorState>().0.lock().unwrap_or_else(|e| e.into_inner()) = Some(error);
+            *app.state::<StreamActiveState>().0.lock().unwrap_or_else(|e| e.into_inner()) = Some(active);
+            *app.state::<ResamplerFlushState>().0.lock().unwrap_or_else(|e| e.into_inner()) = Some(resampler);
+        }
+        Err(e) => log::warn!("Mic prewarm unavailable; will retry on press: {e}"),
+    }
+}
 
 #[tauri::command]
 pub fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
@@ -260,6 +281,10 @@ pub async fn start_recording(
     vad_sender: State<'_, VadSender>,
     vad_flush_handle: State<'_, VadFlushHandle>,
 ) -> Result<(), String> {
+    let capture_start = Instant::now();
+    *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = crate::context::foreground();
+    app_handle.state::<crate::llm::LlmClient>().prewarm();
+    let trace = crate::performance::Trace::start();
     // Self-heal: if we're already in a Recording/Processing state, a prior
     // session got stuck (e.g. stop_recording never fired due to a press/release
     // race). Tear down the stale stream + buffer and proceed fresh rather than
@@ -341,6 +366,7 @@ pub async fn start_recording(
         }
     }
 
+    { let rs = resampler_flush.0.lock().unwrap_or_else(|e| e.into_inner()); if let Some(rs) = &*rs { rs.quiesce(); } }
     // Clear audio buffer and VAD transcripts
     buffer.lock().unwrap_or_else(|e| e.into_inner()).clear();
     vad_transcripts
@@ -425,9 +451,13 @@ pub async fn start_recording(
                             // Regex/vocab pre-pass. Snippet expansion is
                             // deferred to after LLM cleanup so the LLM
                             // doesn't mangle URLs / emails / identifiers.
+                            let stage = Instant::now();
                             let after_regex = cleanup::cleanup_text(&raw, smart_fmt_for_vad);
+                            if let Some(t) = crate::performance::Trace::current() { t.stage("cleanup", stage); }
+                            let stage = Instant::now();
                             let after_vocab =
                                 cleanup::apply_replacements(&after_regex, &vocab_for_vad);
+                            if let Some(t) = crate::performance::Trace::current() { t.stage("vocabulary", stage); }
 
                             // No per-segment LLM cleanup — the joined text
                             // gets a single polish pass in stop_recording
@@ -459,7 +489,17 @@ pub async fn start_recording(
 
     // Start audio capture — convert Result to Option immediately so the
     // non-Send cpal::Stream doesn't live across an await point.
-    let capture_err = match audio::start_capture(
+    let reused = {
+        let rs = resampler_flush.0.lock().unwrap_or_else(|e| e.into_inner());
+        let error = stream_error_state.0.lock().unwrap_or_else(|e| e.into_inner());
+        let handle = stream_handle.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(rs) = rs.as_ref().filter(|rs| rs.device_id == device_id && handle.is_some() && !error.as_ref().is_some_and(|e| e.load(Ordering::SeqCst))) {
+            rs.prepare(vad_arc.clone());
+            if let Some(active) = stream_active_state.0.lock().unwrap_or_else(|e| e.into_inner()).as_ref() { active.store(true, Ordering::SeqCst); }
+            true
+        } else { false }
+    };
+    let capture_err = if reused { None } else { match audio::start_capture(
         &device_id,
         buffer.inner().clone(),
         app_handle.clone(),
@@ -487,7 +527,7 @@ pub async fn start_recording(
             };
             Some(msg)
         }
-    };
+    } };
 
     if let Some(err) = capture_err {
         // Reset state so future recordings aren't permanently blocked
@@ -496,6 +536,7 @@ pub async fn start_recording(
         return Err(err);
     }
 
+    trace.stage("capture_start", capture_start);
     // Bump recording generation and spawn a 10-minute safety timeout.
     // If the user forgets to release the hotkey, this prevents unbounded RAM usage.
     let generation = {
@@ -535,6 +576,9 @@ pub async fn stop_recording(
     vad_flush_handle: State<'_, VadFlushHandle>,
 ) -> Result<TranscriptionResult, String> {
     let start_time = Instant::now();
+    let trace = crate::performance::Trace::current().unwrap_or_else(crate::performance::Trace::start);
+    trace.release();
+    let _ = &stream_handle;
 
     // Grab wall-clock recording duration for sample rate sanity check
     let wall_clock_secs = recording_start
@@ -556,20 +600,25 @@ pub async fn stop_recording(
         }
     }
 
-    // Stop the audio stream
+    // Keep WASAPI open; synchronize with the callback before draining.
     {
-        let mut handle = stream_handle.0.lock().unwrap_or_else(|e| e.into_inner());
-        *handle = None; // Drop stream → stops capture
+        let rs = resampler_flush.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(rs) = &*rs { rs.quiesce(); }
     }
 
+    trace.stage("capture_stop", start_time);
+    let resample_start = Instant::now();
     // Flush any remaining resampler samples into the audio buffer
     {
         let flush_state = resampler_flush.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(ref rs) = *flush_state {
-            rs.flush(buffer.inner());
+            let tail = rs.flush(buffer.inner());
+            let vad = vad_flush_handle.0.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(vad) = &*vad { audio::feed_vad(&tail, vad); }
         }
     }
 
+    trace.stage("resample_flush", resample_start);
     // Check if the audio stream reported an error (e.g. device disconnected)
     let had_stream_error = stream_error_state
         .0
@@ -583,6 +632,7 @@ pub async fn stop_recording(
         );
     }
 
+    let vad_start = Instant::now();
     // Flush VAD to capture the final speech segment, then shut down receiver thread
     {
         let flush = vad_flush_handle.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -590,6 +640,8 @@ pub async fn stop_recording(
             audio::flush_vad(vad_arc);
         }
     }
+    trace.stage("vad_flush", vad_start);
+    let drain_start = Instant::now();
     // Send poison pill to stop receiver thread
     {
         let mut sender = vad_sender.0.lock().unwrap_or_else(|e| e.into_inner());
@@ -615,9 +667,8 @@ pub async fn stop_recording(
         *flush = None;
     }
 
-    // Audio callbacks run on a separate thread; give in-flight callbacks
-    // time to finish before we read the buffer.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    trace.stage("asr_drain", drain_start);
+    // The callback gate synchronizes the WASAPI worker before draining.
 
     {
         let mut s = state.lock().await;
@@ -720,6 +771,7 @@ pub async fn stop_recording(
     );
 
     // The streaming path bypasses the blocking ASR fallback.
+    let post_start = Instant::now();
     let formatted_opt = if use_vad {
         if vad_cleaned_texts.is_empty() {
             log::warn!("VAD cleaned transcripts empty — returning empty result (no fallback)");
@@ -783,13 +835,17 @@ pub async fn stop_recording(
             }
 
             // Regex pre-pass: remove fillers, spoken punctuation, format numbers
+            let stage = Instant::now();
             let formatted = cleanup::cleanup_text(&merged, smart_fmt);
+            if let Some(t) = crate::performance::Trace::current() { t.stage("cleanup", stage); }
 
             // Vocabulary find/replace: deterministic post-ASR fixup for things
             // hotword biasing can't fix (homophones, brand spellings, stable
             // mishearings). Each VocabEntry's `replaces` list maps mishearings
             // to its canonical `term`, case-insensitive at word boundaries.
+            let stage = Instant::now();
             let after_replace = cleanup::apply_replacements(&formatted, &vocab);
+            if let Some(t) = crate::performance::Trace::current() { t.stage("vocabulary", stage); }
 
             log::info!("After regex+replace: '{after_replace}'");
             Ok(after_replace)
@@ -810,7 +866,9 @@ pub async fn stop_recording(
 
     // Cloud LLM cleanup slots in here (see docs/v2/DIRECTION.md). Until then
     // the deterministic regex + vocabulary result is final.
-    let was_cleaned_up = false;
+    trace.stage("asr_and_cleanup_tail", post_start);
+    let mut was_cleaned_up = false;
+    let snippets_start = Instant::now();
 
     // One last deterministic boundary pass catches artifacts from VAD
     // splits, e.g. "that Much" or "and then Than".
@@ -820,7 +878,20 @@ pub async fn stop_recording(
     // survive as literal text through any cleanup pass.
     let result = snippets::apply_snippets(&result, &snips);
 
-    let duration_ms = start_time.elapsed().as_millis() as u64;
+    trace.stage("boundary_and_snippets", snippets_start);
+    let llm_start = Instant::now();
+    let client = app_handle.state::<crate::llm::LlmClient>().inner().clone();
+    let ctx = app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let result = if client.has_key() && result.split_whitespace().count() > 6 {
+        match client.cleanup(&result, &ctx, std::time::Duration::from_millis(2500)).await {
+            Ok(out) => {
+                trace.llm(serde_json::json!({"ttft_ms":out.ttft_ms,"total_ms":out.total_ms,"cache_read_tokens":out.cache_read_tokens,"cache_write_tokens":out.cache_write_tokens,"input_tokens":out.input_tokens,"output_tokens":out.output_tokens}));
+                was_cleaned_up = true; out.text
+            }
+            Err(err) => { log::warn!("LLM cleanup failed: {err}; using deterministic text"); trace.llm(serde_json::json!({"error":err.to_string()})); result }
+        }
+    } else { result };
+    trace.stage("llm", llm_start);
     let word_count = result.split_whitespace().count();
 
     // Inject text at cursor
@@ -845,9 +916,11 @@ pub async fn stop_recording(
         return Err("injection_failed".into());
     }
 
+    let duration_ms = start_time.elapsed().as_millis() as u64;
     // Save to history and reset state
     let mut s = state.lock().await;
     s.history.push(TranscriptionEntry {
+        timings: trace.snapshot(),
         text: result.clone(),
         timestamp: chrono::Utc::now().to_rfc3339(),
         word_count,
@@ -862,6 +935,17 @@ pub async fn stop_recording(
     }
     let _ = history::save_history(&s.history);
     let new_entry = s.history.last().cloned();
+    if let Some(entry) = &new_entry {
+        let timestamp = entry.timestamp.clone();
+        let history_state = state.inner().clone();
+        let restore_trace = trace.clone();
+        tauri::async_runtime::spawn(async move {
+            restore_trace.wait_restored().await;
+            let mut s = history_state.lock().await;
+            if let Some(entry) = s.history.iter_mut().find(|e| e.timestamp == timestamp) { entry.timings = restore_trace.snapshot(); }
+            let _ = history::save_history(&s.history);
+        });
+    }
     s.recording_state = RecordingState::Idle;
 
     // If vocabulary terms changed since the last recording, rebuild the
