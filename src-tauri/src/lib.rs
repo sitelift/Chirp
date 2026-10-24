@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod audio;
 mod capture;
 pub mod performance;
@@ -10,23 +11,22 @@ mod hotkey;
 mod hotkey_input;
 mod hotkey_migration;
 mod inject;
+mod levels;
 pub mod llm;
 pub mod router;
 pub mod speculative;
 mod settings;
 mod snippets;
 mod state;
+mod surface;
+mod tray;
 pub mod transcribe;
 
 
 use commands::{RecordingStartTime, ResamplerFlushState, StreamActiveState, StreamErrorState, StreamHandle};
 use state::{AppState, AudioBuffer, SharedState, VadCleanedTranscripts, VadFlushHandle, VadReceiverHandle, VadSender, VadTranscripts};
 use std::sync::Arc;
-use tauri::{
-    menu::{Menu, MenuItem},
-    tray::{TrayIconBuilder, TrayIconEvent, MouseButton, MouseButtonState},
-    Emitter, Manager, WindowEvent,
-};
+use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -46,12 +46,8 @@ pub fn run() {
         )
         .plugin(tauri_plugin_autostart::init(MacosLauncher::LaunchAgent, Some(vec!["--minimized"])))
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            // Focus existing settings window when second instance tries to launch
-            if let Some(win) = app.get_webview_window("settings") {
-                let _ = win.show();
-                let _ = win.unminimize();
-                let _ = win.set_focus();
-            }
+            // A second launch opens the surface of the running instance.
+            crate::surface::request_open(app, false);
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
@@ -66,7 +62,8 @@ pub fn run() {
             )))
         })
         .manage::<AudioBuffer>(Arc::new(std::sync::Mutex::new(Vec::new())))
-        .manage(crate::llm::LlmClient::from_env())
+        .manage(crate::llm::LlmClient::new(None))
+        .manage(crate::ai::AiState::default())
         .manage(commands::RecordingContext::default())
         .manage(crate::speculative::RecordingSpeculation::default())
         .manage(StreamHandle(std::sync::Mutex::new(None)))
@@ -101,8 +98,19 @@ pub fn run() {
             commands::get_hotkey_status,
             commands::record_binding,
             commands::cancel_record_binding,
-            commands::show_settings,
-            commands::quit_app,
+            commands::copy_text,
+            commands::probe_microphone,
+            commands::open_mic_privacy_settings,
+            ai::get_ai_status,
+            ai::set_api_key,
+            ai::remove_api_key,
+            surface::surface_update,
+            tray::get_pause_state,
+            tray::pause_hotkeys,
+            tray::set_update_ready,
+            tray::quit_app,
+            levels::start_level_monitor,
+            levels::stop_level_monitor,
         ])
         .setup(|app| {
             crate::context::prewarm();
@@ -144,87 +152,8 @@ pub fn run() {
 
             }
 
-            // Build system tray — left-click opens custom popup, right-click shows minimal menu
-            let version = env!("CARGO_PKG_VERSION");
-            let version_item =
-                MenuItem::new(app, &format!("Chirp v{version}"), false, None::<&str>)?;
-            let quit_item =
-                MenuItem::with_id(app, "quit", "Quit Chirp", true, None::<&str>)?;
-
-            let menu = Menu::with_items(
-                app,
-                &[
-                    &version_item,
-                    &tauri::menu::PredefinedMenuItem::separator(app)?,
-                    &quit_item,
-                ],
-            )?;
-
-            let tray_icon_bytes = include_bytes!("../icons/tray-icon.png");
-            let tray_icon = tauri::image::Image::from_bytes(tray_icon_bytes)
-                .expect("Failed to load tray icon");
-
-            TrayIconBuilder::new()
-                .icon(tray_icon)
-                .menu(&menu)
-                .menu_on_left_click(false)
-                .tooltip("Chirp — Voice to Text")
-                .on_menu_event(move |app, event| {
-                    if event.id().as_ref() == "quit" {
-                        app.exit(0);
-                    }
-                })
-                .on_tray_icon_event(|tray, event| {
-                    if let TrayIconEvent::Click {
-                        button: MouseButton::Left,
-                        button_state: MouseButtonState::Up,
-                        rect,
-                        ..
-                    } = event
-                    {
-                        let app = tray.app_handle();
-                        if let Some(win) = app.get_webview_window("tray-popup") {
-                            if win.is_visible().unwrap_or(false) {
-                                let _ = win.hide();
-                            } else {
-                                // Get the scale factor so we can normalize to logical coords.
-                                // Tray rect may arrive as physical pixels on Windows with DPI scaling.
-                                let scale = win.scale_factor().unwrap_or(1.0);
-
-                                let icon_x = match rect.position {
-                                    tauri::Position::Physical(p) => p.x as f64 / scale,
-                                    tauri::Position::Logical(p) => p.x,
-                                };
-                                let icon_y = match rect.position {
-                                    tauri::Position::Physical(p) => p.y as f64 / scale,
-                                    tauri::Position::Logical(p) => p.y,
-                                };
-                                let icon_w = match rect.size {
-                                    tauri::Size::Physical(s) => s.width as f64 / scale,
-                                    tauri::Size::Logical(s) => s.width,
-                                };
-
-                                let popup_w = 320.0_f64;
-                                let popup_h = 440.0_f64;
-                                let gap = 8.0_f64;
-
-                                // Center popup horizontally on the tray icon
-                                let x = icon_x + icon_w / 2.0 - popup_w / 2.0;
-                                // Above the taskbar
-                                let y = icon_y - popup_h - gap;
-
-                                let x = if x < 0.0 { 0.0 } else { x };
-                                let y = if y < 0.0 { 0.0 } else { y };
-
-                                let _ = win.set_position(tauri::LogicalPosition::new(x, y));
-                                let _ = win.show();
-                                let _ = win.set_focus();
-                                let _ = app.emit("tray-popup-shown", ());
-                            }
-                        }
-                    }
-                })
-                .build(app)?;
+            crate::tray::build(&handle)?;
+            crate::ai::init(&handle);
 
             // Start the global hotkey listener
             {
@@ -238,40 +167,16 @@ pub fn run() {
                 }
             }
 
-            // Show settings window unless launched with --minimized (autostart)
-            let minimized = std::env::args().any(|a| a == "--minimized");
-            if !minimized {
-                if let Some(win) = app.get_webview_window("settings") {
-                    let _ = win.show();
-                    let _ = win.maximize();
-                    let _ = win.set_focus();
-                }
-            }
-
-            // Prevent settings window from fully closing — hide to tray instead
-            if let Some(settings_win) = app.get_webview_window("settings") {
-                let handle_for_close = handle.clone();
-                settings_win.on_window_event(move |event| {
-                    if let WindowEvent::CloseRequested { api, .. } = event {
-                        api.prevent_close();
-                        if let Some(win) = handle_for_close.get_webview_window("settings") {
-                            let _ = win.hide();
-                        }
-                    }
-                });
-            }
-
-            // Hide tray popup when it loses focus (click outside)
-            if let Some(popup_win) = app.get_webview_window("tray-popup") {
-                let handle_for_popup = handle.clone();
-                popup_win.on_window_event(move |event| {
+            // The window is shown by the frontend once it knows what to draw.
+            if let Some(win) = app.get_webview_window(crate::surface::LABEL) {
+                let handle_for_blur = handle.clone();
+                win.on_window_event(move |event| {
                     if let WindowEvent::Focused(false) = event {
-                        if let Some(win) = handle_for_popup.get_webview_window("tray-popup") {
-                            let _ = win.hide();
-                        }
+                        crate::surface::on_blur(&handle_for_blur);
                     }
                 });
             }
+            crate::surface::start_hover_poll(handle.clone());
 
             Ok(())
         })

@@ -14,44 +14,18 @@
       {
         "label": "overlay",
         "title": "Chirp",
-        "width": 300,
-        "height": 64,
+        "width": 136,
+        "height": 96,
         "resizable": false,
         "decorations": false,
         "transparent": true,
         "alwaysOnTop": true,
-        "center": true,
         "visible": false,
         "skipTaskbar": true,
         "shadow": false,
-        "focus": false
-      },
-      {
-        "label": "settings",
-        "title": "Chirp",
-        "width": 1400,
-        "height": 900,
-        "resizable": true,
-        "minWidth": 900,
-        "minHeight": 600,
-        "decorations": false,
-        "visible": false,
-        "center": true,
-        "maximized": false
-      },
-      {
-        "label": "tray-popup",
-        "title": "Chirp",
-        "width": 320,
-        "height": 440,
-        "resizable": false,
-        "decorations": false,
-        "transparent": false,
-        "alwaysOnTop": true,
-        "visible": false,
-        "skipTaskbar": true,
-        "shadow": true,
-        "focus": true
+        "focus": false,
+        "maximizable": false,
+        "minimizable": false
       }
     ],
     "security": {

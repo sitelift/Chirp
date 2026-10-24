@@ -86,19 +86,47 @@ pub fn warm_microphone(app: &AppHandle) {
     }
 }
 
+fn arm_escape(armed: bool) {
+    crate::hotkey_input::ESCAPE_ARMED.store(armed, Ordering::SeqCst);
+}
+
+/// Copy text from Recent / the last dictation. Excluded from clipboard history
+/// like pasted dictations.
 #[tauri::command]
-pub fn show_settings(app: tauri::AppHandle) -> Result<(), String> {
-    if let Some(win) = app.get_webview_window("settings") {
-        let _ = win.unminimize();
-        let _ = win.show();
-        let _ = win.set_focus();
-    }
-    Ok(())
+pub fn copy_text(text: String) -> Result<(), String> {
+    crate::clipboard_win::set_clipboard_with_exclusion(&text).map(|_| ())
+}
+
+/// First-run microphone check: "ok", "none" (no input device) or "blocked"
+/// (Windows privacy settings deny access).
+#[tauri::command]
+pub async fn probe_microphone(state: State<'_, SharedState>) -> Result<String, String> {
+    let device = state.lock().await.settings.input_device.clone();
+    tokio::task::spawn_blocking(move || {
+        let buffer: AudioBuffer = Arc::new(std::sync::Mutex::new(Vec::new()));
+        match audio::start_capture_headless(&device, buffer) {
+            Ok((stream, _, _, _)) => {
+                drop(stream);
+                "ok".to_string()
+            }
+            Err(e) if e.contains("No default input") || e.contains("Device not found") => "none".into(),
+            Err(e) => {
+                log::warn!("Microphone probe failed: {e}");
+                "blocked".into()
+            }
+        }
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn quit_app(app: tauri::AppHandle) {
-    app.exit(0);
+pub fn open_mic_privacy_settings() -> Result<(), String> {
+    std::process::Command::new("explorer.exe")
+        .arg("ms-settings:privacy-microphone")
+        .spawn()
+        .map(|_| ())
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -311,15 +339,23 @@ pub async fn start_recording(
 ) -> Result<(), String> {
     let (capture_start, pending) = app_handle.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()).take().unwrap_or_else(|| (Instant::now(), crate::context::capture()));
     let context_app = pending.context().app.clone();
-    let vocabulary_at_press = state.lock().await.vocabulary.clone();
+    let (vocabulary_at_press, ai_on) = {
+        let s = state.lock().await;
+        (s.vocabulary.clone(), s.settings.ai_cleanup)
+    };
     let dictionary_terms: Vec<String> = vocabulary_at_press.iter().map(|v|v.term.clone()).collect();
     let context = Arc::new(DictationContext { terms:dictionary_terms.clone(), pending: std::sync::Mutex::new(Some(pending)), resolved: std::sync::OnceLock::new() });
     *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = Some(context.clone());
-    app_handle.state::<crate::llm::LlmClient>().prewarm_with(&dictionary_terms);
+    // AI cleanup switched off: same pool, no key, so prewarm and speculation stay silent.
+    let llm = {
+        let client = app_handle.state::<crate::llm::LlmClient>().inner().clone();
+        if ai_on { client } else { client.without_key() }
+    };
+    llm.prewarm_with(&dictionary_terms);
     let trace = crate::performance::Trace::start();
     let context_trace = trace.clone();
     let speculation = crate::speculative::Speculation::new_deferred(
-        app_handle.state::<crate::llm::LlmClient>().inner().clone(), context_app, move || {
+        llm, context_app, move || {
             let resolved = context.resolve();
             if let Some(capture) = context_trace.capture() {
                 capture.set("context", &resolved);
@@ -624,6 +660,7 @@ pub async fn start_recording(
         }
     });
 
+    arm_escape(true);
     Ok(())
 }
 
@@ -643,6 +680,7 @@ pub async fn stop_recording(
     vad_sender: State<'_, VadSender>,
     vad_flush_handle: State<'_, VadFlushHandle>,
 ) -> Result<TranscriptionResult, String> {
+    arm_escape(false);
     let start_time = Instant::now();
     let trace = crate::performance::Trace::current().unwrap_or_else(crate::performance::Trace::start);
     trace.release();
@@ -956,7 +994,9 @@ pub async fn stop_recording(
     let context = app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let dictionary_terms = context.as_ref().map(|context|context.terms.clone()).unwrap_or_default();
     let ctx = context.map(|context|context.resolve()).unwrap_or_else(crate::context::foreground);
-    let needs_llm = client.has_key() && crate::router::needs_llm(&result, &ctx.app);
+    let ai_on = state.lock().await.settings.ai_cleanup;
+    let needs_llm = ai_on && client.has_key() && crate::router::needs_llm(&result, &ctx.app);
+    let mut fallback_reason: Option<String> = None;
     if let Some(capture) = capture_guard.session() {
         capture.set("deterministic_text", &result);
         capture.set("context", &ctx);
@@ -969,19 +1009,29 @@ pub async fn stop_recording(
         outcome
     } else { None };
     let result = if needs_llm {
-        let outcome = match speculative_outcome {
-            Some(outcome) => outcome,
-            None => client.cleanup_with(&result, &ctx, &dictionary_terms, std::time::Duration::from_millis(2500)).await.map_err(|e|e.to_string()),
+        // Speculative outcomes arrive as strings; a fresh call keeps the typed
+        // error so the pill can say why AI cleanup was skipped.
+        let outcome: Result<crate::llm::LlmOutcome, (String, Option<crate::llm::LlmError>)> = match speculative_outcome {
+            Some(outcome) => outcome.map_err(|e| (e, None)),
+            None => client
+                .cleanup_with(&result, &ctx, &dictionary_terms, std::time::Duration::from_millis(2500))
+                .await
+                .map_err(|e| (e.to_string(), Some(e))),
         };
         match outcome {
             Ok(out) => {
+                crate::ai::report(&app_handle, Ok(()));
                 if let Some(capture) = capture_guard.session() { capture.set("llm", &out); }
                 trace.llm(serde_json::json!({"ttft_ms":out.ttft_ms,"total_ms":out.total_ms,"cache_read_tokens":out.cache_read_tokens,"cache_write_tokens":out.cache_write_tokens,"input_tokens":out.input_tokens,"output_tokens":out.output_tokens}));
                 was_cleaned_up = true; out.text
             }
-            Err(err) => {
-                if let Some(capture) = capture_guard.session() { capture.set("llm", serde_json::json!({"error":err.to_string()})); }
-                log::warn!("LLM cleanup failed: {err}; using deterministic text"); trace.llm(serde_json::json!({"error":err.to_string()})); result
+            Err((err, typed)) => {
+                fallback_reason = Some(match &typed {
+                    Some(e) => { crate::ai::report(&app_handle, Err(e)); e.reason().to_string() }
+                    None => reason_from_message(&err).to_string(),
+                });
+                if let Some(capture) = capture_guard.session() { capture.set("llm", serde_json::json!({"error":err})); }
+                log::warn!("LLM cleanup failed: {err}; using deterministic text"); trace.llm(serde_json::json!({"error":err})); result
             }
         }
     } else { result };
@@ -1004,12 +1054,17 @@ pub async fn stop_recording(
         rx.await.map_err(|e| format!("Channel failed: {e}"))?
     };
 
+    let mut paste_blocked = false;
     if let Err(e) = inject_result {
         if let Some(capture) = capture_guard.session() { capture.set("error", &e); }
-        let mut s = state.lock().await;
-        s.recording_state = RecordingState::Idle;
         log::error!("Injection failed: {e}");
-        return Err("injection_failed".into());
+        // Leave the text on the clipboard so the user can paste it themselves.
+        if crate::clipboard_win::set_clipboard_with_exclusion(&result).is_err() {
+            let mut s = state.lock().await;
+            s.recording_state = RecordingState::Idle;
+            return Err("injection_failed".into());
+        }
+        paste_blocked = true;
     }
 
     let duration_ms = start_time.elapsed().as_millis() as u64;
@@ -1126,12 +1181,34 @@ pub async fn stop_recording(
         duration_ms
     );
 
+    if paste_blocked {
+        return Err("paste_blocked".into());
+    }
+
     Ok(TranscriptionResult {
         text: result,
         word_count,
         duration_ms,
         was_cleaned_up,
+        fallback_reason,
     })
+}
+
+/// Map a stringified `LlmError` (speculative path) to the pill reason.
+fn reason_from_message(err: &str) -> &'static str {
+    if err.contains("timed out") {
+        "slow"
+    } else if err.starts_with("http error") {
+        "offline"
+    } else if err.starts_with("api error 401") || err.starts_with("api error 403") {
+        "key invalid"
+    } else if err.starts_with("api error 429") {
+        "rate limited"
+    } else if err.starts_with("api error") {
+        "API error"
+    } else {
+        "AI skipped"
+    }
 }
 
 #[tauri::command]
@@ -1142,6 +1219,7 @@ pub async fn cancel_recording(
     stream_handle: State<'_, StreamHandle>,
     stream_active_state: State<'_, StreamActiveState>,
 ) -> Result<(), String> {
+    arm_escape(false);
     if let Some(speculation) = app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()).take() { speculation.cancel(); }
     // Deactivate zombie callbacks before dropping the stream
     {

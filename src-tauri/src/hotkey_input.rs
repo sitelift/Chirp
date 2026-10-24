@@ -26,7 +26,15 @@ enum Output {
     Press(&'static str, Instant),
     Release(Instant),
     Capture(CaptureReply, Result<Vec<Key>, String>),
+    /// Keys held so far during a binding capture, for live display.
+    CaptureKeys(Vec<Key>),
+    /// Esc while a dictation is running: cancel it.
+    Escape,
 }
+
+/// Set while a dictation records, so Esc cancels it from any app. The Esc
+/// press is swallowed so it does not also reach the focused app.
+pub static ESCAPE_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 struct Capture {
     reply: CaptureReply,
     keys: Vec<Key>,
@@ -166,6 +174,7 @@ impl Input {
             } else {
                 if down && !c.keys.contains(&key) && c.keys.len() < 17 {
                     c.keys.push(key);
+                    let _ = self.output.send(Output::CaptureKeys(c.keys.clone()));
                 }
                 if !down && !c.keys.is_empty() && c.keys.iter().all(|k| !self.held.contains(k)) {
                     let c = self.capture.take().unwrap();
@@ -188,6 +197,15 @@ impl Input {
                 self.active = [false; 2];
             }
             return (was_swallowed, false);
+        }
+        if key.vk == VK_ESCAPE && ESCAPE_ARMED.load(std::sync::atomic::Ordering::Relaxed) {
+            if down && !repeated {
+                let _ = self.output.send(Output::Escape);
+            }
+            if down && !was_swallowed {
+                self.swallowed.push(key);
+            }
+            return (true, false);
         }
         let previous = self.active;
         self.edges(true);
@@ -350,9 +368,21 @@ pub fn start(settings: &crate::state::Settings, app: AppHandle) -> Result<(), St
             while let Ok(event) = events.recv() {
                 match event {
                     Output::Press(mode, at) => {
+                        if crate::tray::is_paused() {
+                            // Paused: say so instead of failing silently.
+                            let _ = app.emit("hotkey-paused", mode);
+                            continue;
+                        }
                         crate::commands::note_hotkey_press(&app, at);
                         let _ = app.emit("hotkey-pressed", mode);
                         log::debug!("Input dispatch: {:?}", at.elapsed());
+                    }
+                    Output::CaptureKeys(keys) => {
+                        let labels: Vec<String> = Binding::new(keys, false).keys.iter().map(|k| k.label()).collect();
+                        let _ = app.emit("binding-capture-keys", labels);
+                    }
+                    Output::Escape => {
+                        let _ = app.emit("dictation-escape", ());
                     }
                     Output::Release(at) => {
                         if let Some(trace) = crate::performance::Trace::current() {
@@ -638,7 +668,14 @@ mod tests {
         s.event(ctrl, true);
         s.event(key, true);
         s.event(ctrl, false);
-        assert!(rx.is_empty());
+        let progress: Vec<usize> = rx
+            .try_iter()
+            .map(|o| match o {
+                Output::CaptureKeys(keys) => keys.len(),
+                _ => panic!("capture must not complete while a recorded key is down"),
+            })
+            .collect();
+        assert_eq!(progress, vec![1, 2]);
         s.event(key, false);
         match rx.try_recv().unwrap() {
             Output::Capture(_, Ok(keys)) => assert_eq!(keys, vec![ctrl, key]),
@@ -661,10 +698,25 @@ mod tests {
         s.event(esc, true);
         s.event(esc, false);
         s.event(ctrl, false);
+        assert!(matches!(rx.try_recv(), Ok(Output::CaptureKeys(_))));
         assert!(matches!(rx.try_recv(), Ok(Output::Capture(_, Err(_)))));
         assert!(rx.is_empty());
         s.event(ctrl, true);
         assert!(matches!(rx.try_recv(), Ok(Output::Press("hold", _))));
+    }
+    #[test]
+    fn armed_escape_cancels_dictation_and_is_swallowed_with_its_release() {
+        let (mut s, rx) = engine(&[VK_RCONTROL], &[]);
+        let esc = Key::from_vk(VK_ESCAPE);
+        ESCAPE_ARMED.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(s.event(esc, true).0);
+        assert!(s.event(esc, true).0);
+        ESCAPE_ARMED.store(false, std::sync::atomic::Ordering::SeqCst);
+        assert!(s.event(esc, false).0, "the release pairs with the swallowed press");
+        assert!(matches!(rx.try_recv(), Ok(Output::Escape)));
+        assert!(rx.is_empty());
+        assert!(!s.event(esc, true).0, "unarmed Esc passes through");
+        assert!(!s.event(esc, false).0);
     }
 }
 

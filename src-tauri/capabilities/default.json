@@ -3,9 +3,7 @@
   "identifier": "default",
   "description": "enables the default permissions",
   "windows": [
-    "overlay",
-    "settings",
-    "tray-popup"
+    "overlay"
   ],
   "permissions": [
     "core:default",
@@ -13,15 +11,11 @@
     "core:window:allow-show",
     "core:window:allow-hide",
     "core:window:allow-set-focus",
-    "core:window:allow-close",
-    "core:window:allow-minimize",
-    "core:window:allow-toggle-maximize",
     "core:window:allow-set-size",
     "core:window:allow-set-position",
     "core:window:allow-current-monitor",
     "core:window:allow-primary-monitor",
     "core:window:allow-set-ignore-cursor-events",
-    "core:window:allow-start-dragging",
     "core:event:default",
     "core:event:allow-emit",
     "core:event:allow-listen",

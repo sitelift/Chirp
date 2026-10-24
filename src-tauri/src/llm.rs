@@ -70,10 +70,27 @@ impl std::fmt::Display for LlmError {
     }
 }
 
+impl LlmError {
+    /// Short, user-facing reason for the "Pasted without AI · reason" pill.
+    pub fn reason(&self) -> &'static str {
+        match self {
+            LlmError::NoApiKey => "no key",
+            LlmError::Timeout => "slow",
+            LlmError::Http(_) => "offline",
+            LlmError::Api { status: 401 | 403, .. } => "key invalid",
+            LlmError::Api { status: 429, .. } => "rate limited",
+            LlmError::Api { .. } => "API error",
+            LlmError::Refusal | LlmError::Truncated | LlmError::Runaway | LlmError::Empty => "AI skipped",
+        }
+    }
+}
+
+/// Clones share one connection pool and one key slot, so updating the key in
+/// settings reaches the speculative cleanup clones too.
 #[derive(Clone)]
 pub struct LlmClient {
     http: reqwest::Client,
-    api_key: Option<String>,
+    api_key: std::sync::Arc<std::sync::RwLock<Option<String>>>,
 }
 
 impl LlmClient {
@@ -87,7 +104,7 @@ impl LlmClient {
             .build()
             .expect("reqwest client");
         let api_key = api_key.filter(|k| !k.trim().is_empty());
-        Self { http, api_key }
+        Self { http, api_key: std::sync::Arc::new(std::sync::RwLock::new(api_key)) }
     }
 
     /// Reads `ANTHROPIC_API_KEY` from the environment.
@@ -95,8 +112,39 @@ impl LlmClient {
         Self::new(std::env::var("ANTHROPIC_API_KEY").ok())
     }
 
+    fn key(&self) -> Option<String> {
+        self.api_key.read().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    /// Replace the key used by every clone of this client.
+    pub fn set_key(&self, key: Option<String>) {
+        *self.api_key.write().unwrap_or_else(|e| e.into_inner()) = key.filter(|k| !k.trim().is_empty());
+    }
+
+    /// Same connection pool, no key: used when the user has turned AI cleanup off,
+    /// so prewarm and speculation stay silent.
+    pub fn without_key(&self) -> Self {
+        Self { http: self.http.clone(), api_key: std::sync::Arc::new(std::sync::RwLock::new(None)) }
+    }
+
     pub fn has_key(&self) -> bool {
-        self.api_key.is_some()
+        self.api_key.read().unwrap_or_else(|e| e.into_inner()).is_some()
+    }
+
+    /// Cheapest possible authenticated call: the prewarm request (`max_tokens: 0`).
+    /// `Ok` means the key is accepted; `Api { 401 | 403 }` means it is not;
+    /// `Http` means Anthropic could not be reached.
+    pub async fn validate(&self, key: &str) -> Result<(), LlmError> {
+        let mut body = request_body("", &AppContext::default(), &[], 0);
+        body["stream"] = json!(false);
+        let send = send(&self.http, key, &body);
+        let resp = tokio::time::timeout(Duration::from_secs(10), send).await.map_err(|_| LlmError::Timeout)??;
+        let status = resp.status();
+        if status.is_success() {
+            return Ok(());
+        }
+        let body = resp.text().await.unwrap_or_default();
+        Err(LlmError::Api { status: status.as_u16(), body })
     }
 
     /// Fire-and-forget warmup: connection + prompt cache. Call on hotkey press.
@@ -108,7 +156,7 @@ impl LlmClient {
     /// Prewarm with the user's dictionary terms. Pass the same terms as the
     /// following `cleanup_with` call, or the cached prefix will not match.
     pub fn prewarm_with(&self, dictionary: &[String]) {
-        let Some(key) = self.api_key.clone() else { return };
+        let Some(key) = self.key() else { return };
         let http = self.http.clone();
         let dictionary = dictionary.to_vec();
         tauri::async_runtime::spawn(async move {
@@ -151,8 +199,8 @@ impl LlmClient {
         dictionary: &[String],
         timeout: Duration,
     ) -> Result<LlmOutcome, LlmError> {
-        let key = self.api_key.as_deref().ok_or(LlmError::NoApiKey)?;
-        match tokio::time::timeout(timeout, self.cleanup_inner(key, transcript, ctx, dictionary)).await {
+        let key = self.key().ok_or(LlmError::NoApiKey)?;
+        match tokio::time::timeout(timeout, self.cleanup_inner(&key, transcript, ctx, dictionary)).await {
             Ok(r) => r,
             Err(_) => Err(LlmError::Timeout),
         }

@@ -58,6 +58,9 @@ pub struct Settings {
     pub beam_search: bool,
     #[serde(default)]
     pub dark_mode: bool,
+    /// "Use Claude" in AI cleanup. Only takes effect with a stored key.
+    #[serde(default = "default_true")]
+    pub ai_cleanup: bool,
 }
 
 fn default_overlay_position() -> serde_json::Value {
@@ -86,6 +89,7 @@ impl Default for Settings {
             history_retention_days: 0,
             beam_search: false,
             dark_mode: false,
+            ai_cleanup: true,
         }
     }
 }
@@ -148,6 +152,10 @@ pub struct TranscriptionResult {
     pub duration_ms: u64,
     #[serde(default)]
     pub was_cleaned_up: bool,
+    /// Set when AI cleanup was wanted but the deterministic text was pasted
+    /// instead ("offline", "slow", "key invalid", ...).
+    #[serde(default)]
+    pub fallback_reason: Option<String>,
 }
 
 /// Persisted transcription history entry
