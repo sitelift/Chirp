@@ -39,10 +39,26 @@ pub struct RecordingStartTime(pub std::sync::Mutex<Option<Instant>>);
 
 /// Holds the active flag for the current audio stream so we can deactivate zombie callbacks.
 #[derive(Default)]
-pub struct RecordingContext(pub std::sync::Mutex<crate::llm::AppContext>, pub std::sync::Mutex<Option<(Instant, crate::llm::AppContext)>>);
+pub struct RecordingContext(pub std::sync::Mutex<Option<Arc<DictationContext>>>, pub std::sync::Mutex<Option<(Instant, crate::context::PendingContext)>>);
+
+/// A dictation's prompt prefix is frozen at its first cleanup request. Resolving
+/// at recording start would put the browser lookup on the microphone hot path.
+pub struct DictationContext {
+    pending: std::sync::Mutex<Option<crate::context::PendingContext>>,
+    resolved: std::sync::OnceLock<crate::llm::AppContext>,
+}
+impl DictationContext {
+    fn resolve(&self) -> crate::llm::AppContext {
+        self.resolved.get_or_init(|| {
+            self.pending.lock().unwrap_or_else(|e|e.into_inner()).take()
+                .map(crate::context::PendingContext::resolve)
+                .unwrap_or_else(crate::context::foreground)
+        }).clone()
+    }
+}
 
 pub fn note_hotkey_press(app: &AppHandle, at: Instant) {
-    *app.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()) = Some((at, crate::context::foreground()));
+    *app.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()) = Some((at, crate::context::capture()));
     if let Some(trace) = crate::performance::Trace::current() { trace.input_at(false, at); }
 }
 
@@ -292,12 +308,14 @@ pub async fn start_recording(
     vad_sender: State<'_, VadSender>,
     vad_flush_handle: State<'_, VadFlushHandle>,
 ) -> Result<(), String> {
-    let (capture_start, context) = app_handle.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()).take().unwrap_or_else(|| (Instant::now(), crate::context::foreground()));
-    *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = context.clone();
+    let (capture_start, pending) = app_handle.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()).take().unwrap_or_else(|| (Instant::now(), crate::context::capture()));
+    let context_app = pending.context().app.clone();
+    let context = Arc::new(DictationContext { pending: std::sync::Mutex::new(Some(pending)), resolved: std::sync::OnceLock::new() });
+    *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = Some(context.clone());
     app_handle.state::<crate::llm::LlmClient>().prewarm();
     let trace = crate::performance::Trace::start();
-    let speculation = crate::speculative::Speculation::new(
-        app_handle.state::<crate::llm::LlmClient>().inner().clone(), context,
+    let speculation = crate::speculative::Speculation::new_deferred(
+        app_handle.state::<crate::llm::LlmClient>().inner().clone(), context_app, move || context.resolve(),
         std::time::Duration::from_millis(2500),
     );
     if let Some(old) = app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()).replace(speculation.clone()) { old.cancel(); }
@@ -408,8 +426,8 @@ pub async fn start_recording(
     s.vad_was_active = false;
     drop(s);
 
-    // Set up VAD streaming if the model is available. Segments are transcribed
-    // and AI-cleaned as they arrive so stop_recording has no LLM latency.
+    // Closed segments decode during recording. Matching speculative cleanup
+    // can overlap the remaining recording time.
     let vad_model = settings::vad_model_path();
     let vad_arc: Option<Arc<std::sync::Mutex<crate::audio::VadState>>> = if vad_model.exists() {
         let (tx, rx) = crossbeam_channel::unbounded::<Vec<f32>>();
@@ -474,9 +492,8 @@ pub async fn start_recording(
                                 .unwrap_or_else(|e| e.into_inner())
                                 .push(raw.clone());
 
-                            // Regex/vocab pre-pass. Snippet expansion is
-                            // deferred to after LLM cleanup so the LLM
-                            // doesn't mangle URLs / emails / identifiers.
+                            // Regex/vocab pre-pass. Snippets are expanded on
+                            // the joined prefix below, in the release order.
                             let stage = Instant::now();
                             let after_regex = cleanup::cleanup_text(&raw, smart_fmt_for_vad);
                             if let Some(t) = crate::performance::Trace::current() { t.stage("cleanup", stage); }
@@ -485,9 +502,8 @@ pub async fn start_recording(
                                 cleanup::apply_replacements(&after_regex, &vocab_for_vad);
                             if let Some(t) = crate::performance::Trace::current() { t.stage("vocabulary", stage); }
 
-                            // No per-segment LLM cleanup — the joined text
-                            // gets a single polish pass in stop_recording
-                            // after the hotkey is released.
+                            // Speculate on the entire deterministic prefix;
+                            // newer prefixes supersede older requests.
                             let text_so_far = {
                                 let mut segments = cleaned.lock().unwrap_or_else(|e| e.into_inner());
                                 segments.push(after_vocab);
@@ -904,7 +920,8 @@ pub async fn stop_recording(
     trace.stage("boundary_and_snippets", snippets_start);
     let llm_start = Instant::now();
     let client = app_handle.state::<crate::llm::LlmClient>().inner().clone();
-    let ctx = app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let context = app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()).clone();
+    let ctx = context.map(|context|context.resolve()).unwrap_or_else(crate::context::foreground);
     let speculative_outcome = if let Some(speculation) = speculation {
         let (outcome, metrics) = speculation.finish(&result).await;
         trace.speculation(metrics);

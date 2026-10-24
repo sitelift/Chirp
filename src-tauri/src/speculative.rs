@@ -52,11 +52,23 @@ pub struct RecordingSpeculation(pub Mutex<Option<Speculation>>);
 
 impl Speculation {
     pub fn new(client: LlmClient, context: AppContext, timeout: Duration) -> Self {
+        Self::new_deferred(
+            client,
+            context.app.clone(),
+            move || context.clone(),
+            timeout,
+        )
+    }
+    pub fn new_deferred(
+        client: LlmClient,
+        app: String,
+        resolve: impl Fn() -> AppContext + Send + Sync + 'static,
+        timeout: Duration,
+    ) -> Self {
         let enabled = client.has_key();
-        let app = context.app.clone();
         let cleanup: Cleanup = Arc::new(move |text| {
             let client = client.clone();
-            let context = context.clone();
+            let context = resolve();
             Box::pin(async move {
                 client
                     .cleanup(&text, &context, timeout)

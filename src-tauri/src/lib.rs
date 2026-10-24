@@ -104,6 +104,7 @@ pub fn run() {
             commands::quit_app,
         ])
         .setup(|app| {
+            crate::context::prewarm();
             let handle = app.handle().clone();
 
             // Sync autostart with the launch_at_login setting
