@@ -2,156 +2,252 @@
 @tailwind components;
 @tailwind utilities;
 
-:root {
-  --spring-bounce: cubic-bezier(0.34, 1.56, 0.64, 1);
-
-  /* Semantic color tokens — light mode */
-  --color-surface: #F5F4F0;
-  --color-card: #FFFFFF;
-  --color-card-border: #EDECE8;
-  --color-card-hover: #FAFAF8;
-  --color-text-primary: #1a1a1a;
-  --color-text-secondary: #aaaaaa;
-  --color-text-tertiary: #cccccc;
-  --color-text-muted: #888888;
-  --color-input-bg: #FFFFFF;
-  --color-row-separator: #F5F4F0;
-  --color-toggle-off: #dddddd;
-  --color-toggle-on: #1a1a1a;
-  --color-btn-primary-bg: #1a1a1a;
-  --color-btn-primary-text: #FFFFFF;
-  --color-btn-primary-hover: #333333;
-  --color-btn-disabled-bg: #cccccc;
-  --color-btn-disabled-text: #888888;
-  --color-segmented-bg: #F5F4F0;
-  --color-segmented-active: #FFFFFF;
-  --color-keybadge-bg: #F5F4F0;
-  --color-keybadge-text: #555555;
-  --color-scrollbar: #D6D3D1;
-  --color-scrollbar-hover: #78716C;
+/* Values from the Paper file "Chirp v2". Expanded surfaces follow the Windows
+   theme; the ink pill does not. */
+[data-theme='light'] {
+  --surface: #ffffff;
+  --surface-shadow: 0 12px 32px #00000024, 0 0 0 1px #0000001c;
+  --t1: #1a1a1a;
+  --t2: #6b6b6b;
+  --t3: #8a8a8a;
+  --t4: #9a9a9a;
+  --chev: #9a9a9a;
+  --arrow: #b5b5b5;
+  --divider: #eeeeee;
+  --hover: #f3f3f3;
+  --press: #eaeaea;
+  --key-bg: #f5f5f5;
+  --key-border: #dedede;
+  --key-bg-hover: #ffffff;
+  --key-border-hover: #bdbdbd;
+  --accent: #c9900a;
+  --accent-text: #8f6400;
+  --accent-soft: #fbf4e2;
+  --danger: #c42b1c;
+  --danger-soft: #fdf3f4;
+  --field: #ffffff;
+  --field-ring: #0000001f;
+  --field-ro: #f7f7f7;
+  --field-ro-ring: #00000014;
+  --toggle-border: #8a8a8a;
+  --toggle-thumb: #6b6b6b;
+  --toggle-disabled: #cfcfcf;
+  --toggle-disabled-thumb: #cfcfcf;
+  --toggle-on-thumb: #ffffff;
+  --level-idle: #c2c2c2;
+  --track: #eeeeee;
+  --fill: #1a1a1a;
+  --btn: #1a1a1a;
+  --btn-text: #ffffff;
+  --spinner-track: #e6e6e6;
+  --tick-opacity: 0.3;
+  --tick-ring: #ffffff2e;
+  color-scheme: light;
 }
 
-.dark {
-  --color-surface: #252320;
-  --color-card: #302d2a;
-  --color-card-border: #433f3b;
-  --color-card-hover: #3a3734;
-  --color-text-primary: #f0eee9;
-  --color-text-secondary: #9e9890;
-  --color-text-tertiary: #65605a;
-  --color-text-muted: #7d7870;
-  --color-input-bg: #2a2825;
-  --color-row-separator: #3a3734;
-  --color-toggle-off: #504c48;
-  --color-toggle-on: #F0B723;
-  --color-btn-primary-bg: #f0eee9;
-  --color-btn-primary-text: #1a1a1a;
-  --color-btn-primary-hover: #dddbd6;
-  --color-btn-disabled-bg: #504c48;
-  --color-btn-disabled-text: #7d7870;
-  --color-segmented-bg: #252320;
-  --color-segmented-active: #302d2a;
-  --color-keybadge-bg: #3a3734;
-  --color-keybadge-text: #c0bbb5;
-  --color-scrollbar: #504c48;
-  --color-scrollbar-hover: #7d7870;
+[data-theme='dark'] {
+  --surface: #1a1917;
+  --surface-shadow: 0 12px 32px #00000080, 0 0 0 1px #ffffff1a;
+  --t1: #ffffff;
+  --t2: #a3a29e;
+  --t3: #8f8e8a;
+  --t4: #7d7c78;
+  --chev: #7d7c78;
+  --arrow: #5e5d5a;
+  --divider: #ffffff14;
+  --hover: #ffffff0f;
+  --press: #ffffff1a;
+  --key-bg: #2a2926;
+  --key-border: #ffffff1a;
+  --key-bg-hover: #33322e;
+  --key-border-hover: #ffffff3d;
+  --accent: #f0b723;
+  --accent-text: #f0b723;
+  --accent-soft: #f0b7231f;
+  --danger: #ff99a4;
+  --danger-soft: #ff99a41a;
+  --field: #232220;
+  --field-ring: #ffffff1f;
+  --field-ro: #211f1d;
+  --field-ro-ring: #ffffff14;
+  --toggle-border: #8f8e8a;
+  --toggle-thumb: #a3a29e;
+  --toggle-disabled: #ffffff33;
+  --toggle-disabled-thumb: #ffffff38;
+  --toggle-on-thumb: #0e0d0b;
+  --level-idle: #5e5d5a;
+  --track: #ffffff1a;
+  --fill: #ffffff;
+  --btn: #ffffff;
+  --btn-text: #0e0d0b;
+  --spinner-track: #ffffff24;
+  --tick-opacity: 0.7;
+  --tick-ring: #ffffff24;
+  color-scheme: dark;
+}
+
+/* Motion (frame 12). */
+:root {
+  --ease-out: cubic-bezier(0.2, 0, 0, 1);
+  --ease-in: cubic-bezier(0.4, 0, 1, 1);
 }
 
 @layer base {
-  html, body, #root {
-    overflow: hidden;
+  html,
+  body,
+  #root {
     height: 100%;
     width: 100%;
+    margin: 0;
+    background: transparent;
   }
 
   body {
-    @apply font-body text-chirp-stone-700 bg-transparent;
-    margin: 0;
-    padding: 0;
+    @apply font-ui;
+    overflow: hidden;
     -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
-  /* Prevent text selection in app chrome */
-  .no-select {
     -webkit-user-select: none;
     user-select: none;
+    cursor: default;
   }
 
-  /* Enable native window drag on titlebar regions */
-  [data-tauri-drag-region] {
-    -webkit-app-region: drag;
-  }
-  [data-tauri-drag-region] button,
-  [data-tauri-drag-region] a,
-  [data-tauri-drag-region] input {
-    -webkit-app-region: no-drag;
+  input {
+    -webkit-user-select: text;
+    user-select: text;
   }
 
-  /* Make scrollbars subtle */
+  button {
+    cursor: default;
+  }
+
   ::-webkit-scrollbar {
     width: 6px;
   }
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
   ::-webkit-scrollbar-thumb {
-    background: var(--color-scrollbar);
+    background: var(--divider);
     border-radius: 3px;
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: var(--color-scrollbar-hover);
   }
 }
 
-@layer utilities {
-  /* Noise texture for sidebar */
-  .sidebar-noise::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)' opacity='0.03'/%3E%3C/svg%3E");
-    pointer-events: none;
+@layer components {
+  /* Keyboard focus (frame 13): 2 px amber, offset 2, radius matches the row. */
+  .nav:focus {
+    outline: none;
+  }
+  .nav:focus-visible,
+  .nav[data-force-focus] {
+    outline: 2px solid var(--accent);
+    outline-offset: 2px;
   }
 
-  /* Sidebar ambient glow */
-  .sidebar-glow::after {
-    content: '';
-    position: absolute;
-    top: -40px;
-    left: -20px;
-    width: 200px;
-    height: 120px;
-    background: radial-gradient(ellipse, rgba(240,183,35,0.12) 0%, transparent 70%);
-    pointer-events: none;
+  .keycap {
+    display: flex;
+    align-items: center;
+    height: 24px;
+    padding: 0 8px;
+    border-radius: 6px;
+    border: 1px solid var(--key-border);
+    border-bottom-width: 2px;
+    background: var(--key-bg);
+    color: var(--t1);
+    font-size: 12px;
+    line-height: 16px;
+    font-weight: 500;
+    white-space: nowrap;
   }
+  .group:hover .keycap-hover,
+  .group[data-force-hover] .keycap-hover {
+    background: var(--key-bg-hover);
+    border-color: var(--key-border-hover);
+  }
+}
 
-  /* Stagger delay utilities for entrance animations */
-  .stagger-1 { animation-delay: 80ms; }
-  .stagger-2 { animation-delay: 160ms; }
-  .stagger-3 { animation-delay: 240ms; }
-  .stagger-4 { animation-delay: 320ms; }
-  .stagger-5 { animation-delay: 400ms; }
-  .stagger-6 { animation-delay: 480ms; }
-  .stagger-7 { animation-delay: 560ms; }
-  .stagger-8 { animation-delay: 640ms; }
+/* The morphing container: pill, tick and surface are one object. */
+.morph {
+  transition-property: width, height, border-radius, background-color, box-shadow, opacity, transform;
+  transition-duration: 240ms;
+  transition-timing-function: var(--ease-out);
+}
+.morph[data-kind='tick'],
+.morph[data-kind='hover'] {
+  transition-duration: 120ms;
+}
+.morph[data-kind='pill'] {
+  transition-duration: 180ms;
+}
+.morph[data-leaving] {
+  opacity: 0;
+  transform: scale(0.96);
+  transition-duration: 140ms;
+  transition-timing-function: var(--ease-in);
+}
 
-  /* Card hover lift with spring easing */
-  .hover-lift {
-    transition: transform 250ms var(--spring-bounce), box-shadow 250ms ease;
+@keyframes content-in {
+  from {
+    opacity: 0;
   }
-  .hover-lift:hover {
-    transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0,0,0,0.08);
-  }
-  .dark .hover-lift:hover {
-    box-shadow: 0 8px 24px rgba(0,0,0,0.3);
-  }
+}
+.content-in {
+  animation: content-in 120ms var(--ease-out) 80ms both;
+}
 
-  /* Gradient text utility */
-  .text-gradient-white {
-    background: linear-gradient(180deg, #FFFFFF 0%, rgba(255,255,255,0.7) 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
+@keyframes drill-in {
+  from {
+    opacity: 0;
+    transform: translateX(16px);
+  }
+}
+@keyframes drill-back {
+  from {
+    opacity: 0;
+    transform: translateX(-16px);
+  }
+}
+.drill-in {
+  animation: drill-in 160ms var(--ease-out) 40ms both;
+}
+.drill-back {
+  animation: drill-back 160ms var(--ease-out) 40ms both;
+}
+
+/* Working: the bright dot sweeps every 900 ms. */
+@keyframes sweep {
+  0% {
+    opacity: 1;
+  }
+  14% {
+    opacity: 0.7;
+  }
+  28% {
+    opacity: 0.45;
+  }
+  42%,
+  100% {
+    opacity: 0.25;
+  }
+}
+.sweep {
+  animation: sweep 900ms ease-in-out infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+.spin {
+  animation: spin 800ms linear infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .morph,
+  .morph[data-kind] {
+    transition-property: opacity;
+    transition-duration: 120ms;
+  }
+  .drill-in,
+  .drill-back,
+  .content-in {
+    animation: content-in 120ms linear both;
   }
 }
