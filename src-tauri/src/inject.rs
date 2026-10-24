@@ -209,11 +209,15 @@ fn inject_text_windows(text: &str) -> Result<(), String> {
 
     // 2. Set clipboard with retry + verification
     let mut verified = false;
+    let mut clipboard_sequence = 0;
     for attempt in 0..5 {
-        if let Err(e) = clipboard_win::set_clipboard_with_exclusion(text) {
-            log::warn!("Clipboard set attempt {}/5: {e}", attempt + 1);
-            thread::sleep(Duration::from_millis(20));
-            continue;
+        match clipboard_win::set_clipboard_with_exclusion(text) {
+            Ok(sequence) => clipboard_sequence = sequence,
+            Err(e) => {
+                log::warn!("Clipboard set attempt {}/5: {e}", attempt + 1);
+                thread::sleep(Duration::from_millis(20));
+                continue;
+            }
         }
 
         // SetClipboardData/CloseClipboard are synchronous; verify immediately.
@@ -255,7 +259,6 @@ fn inject_text_windows(text: &str) -> Result<(), String> {
     }
 
     if let Some(t) = &trace { t.stage("paste_dispatch", paste_start); t.pasted(); }
-    let clipboard_sequence = unsafe { windows_sys::Win32::System::DataExchange::GetClipboardSequenceNumber() };
     // 5. Restore clipboard after short delay (background thread)
     thread::spawn(move || {
         thread::sleep(Duration::from_millis(800));

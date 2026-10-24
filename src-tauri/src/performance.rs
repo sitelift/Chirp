@@ -18,6 +18,7 @@ pub struct Breakdown {
 struct Inner {
     data: Breakdown,
     release: Option<Instant>,
+    hold: bool,
 }
 #[derive(Clone)]
 pub struct Trace(Arc<Mutex<Inner>>, Arc<tokio::sync::Notify>);
@@ -28,6 +29,7 @@ impl Trace {
             Arc::new(Mutex::new(Inner {
                 data: Breakdown::default(),
                 release: None,
+                hold: true,
             })),
             Arc::new(tokio::sync::Notify::new()),
         );
@@ -36,6 +38,11 @@ impl Trace {
     }
     pub fn current() -> Option<Self> {
         ACTIVE.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+    pub fn set_hold(&self, hold: bool) { self.0.lock().unwrap_or_else(|e|e.into_inner()).hold = hold; }
+    pub fn input(&self, key_up: bool) {
+        let mut inner = self.0.lock().unwrap_or_else(|e|e.into_inner());
+        if inner.hold == key_up { inner.release.get_or_insert_with(Instant::now); }
     }
     pub fn release(&self) {
         self.0
@@ -91,5 +98,32 @@ impl Trace {
             .unwrap_or_else(|e| e.into_inner())
             .data
             .clone()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hold_and_toggle_use_the_correct_input_boundary() {
+        let hold = Trace::start();
+        hold.input(false);
+        assert!(hold.0.lock().unwrap().release.is_none());
+        hold.input(true);
+        let release = hold.0.lock().unwrap().release.unwrap();
+        hold.release();
+        assert_eq!(hold.0.lock().unwrap().release, Some(release));
+        hold.pasted();
+        assert!(Trace::current().is_none());
+
+        let toggle = Trace::start();
+        toggle.set_hold(false);
+        toggle.input(true);
+        assert!(toggle.0.lock().unwrap().release.is_none());
+        toggle.input(false);
+        assert!(toggle.0.lock().unwrap().release.is_some());
+        toggle.pasted();
+        assert!(Trace::current().is_none());
     }
 }

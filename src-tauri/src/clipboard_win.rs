@@ -137,7 +137,7 @@ pub fn save_clipboard() -> Result<SavedClipboard, String> {
 }
 
 /// Set clipboard with plain text and exclusion flags
-pub fn set_clipboard_with_exclusion(plain: &str) -> Result<(), String> {
+pub fn set_clipboard_with_exclusion(plain: &str) -> Result<u32, String> {
     let ids = format_ids();
 
     unsafe {
@@ -168,9 +168,10 @@ pub fn set_clipboard_with_exclusion(plain: &str) -> Result<(), String> {
             SetClipboardData(ids.exclude_cloud, h);
         }
 
+        let sequence = GetClipboardSequenceNumber();
         CloseClipboard();
         log::info!("Clipboard set with exclusion flags");
-        Ok(())
+        Ok(sequence)
     }
 }
 

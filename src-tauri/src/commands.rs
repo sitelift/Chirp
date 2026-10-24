@@ -39,7 +39,12 @@ pub struct RecordingStartTime(pub std::sync::Mutex<Option<Instant>>);
 
 /// Holds the active flag for the current audio stream so we can deactivate zombie callbacks.
 #[derive(Default)]
-pub struct RecordingContext(pub std::sync::Mutex<crate::llm::AppContext>);
+pub struct RecordingContext(pub std::sync::Mutex<crate::llm::AppContext>, pub std::sync::Mutex<Option<(Instant, crate::llm::AppContext)>>);
+
+pub fn note_hotkey_press(app: &AppHandle) {
+    *app.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()) = Some((Instant::now(), crate::context::foreground()));
+    if let Some(trace) = crate::performance::Trace::current() { trace.input(false); }
+}
 
 pub struct StreamActiveState(pub std::sync::Mutex<Option<audio::StreamActiveFlag>>);
 
@@ -47,7 +52,10 @@ pub struct StreamActiveState(pub std::sync::Mutex<Option<audio::StreamActiveFlag
 pub fn warm_microphone(app: &AppHandle) {
     let device = app.state::<SharedState>().blocking_lock().settings.input_device.clone();
     let buffer = app.state::<AudioBuffer>().inner().clone();
-    match audio::start_capture(&device, buffer.clone(), app.clone(), None) {
+    let vad_path = settings::vad_model_path();
+    let (tx, _rx) = crossbeam_channel::unbounded();
+    let vad = if vad_path.exists() { audio::create_vad_state(&vad_path.to_string_lossy(), tx).map(|v| Arc::new(std::sync::Mutex::new(v))) } else { None };
+    match audio::start_capture(&device, buffer.clone(), app.clone(), vad) {
         Ok((stream, error, active, resampler)) => {
             active.store(false, Ordering::SeqCst);
             resampler.quiesce();
@@ -281,8 +289,8 @@ pub async fn start_recording(
     vad_sender: State<'_, VadSender>,
     vad_flush_handle: State<'_, VadFlushHandle>,
 ) -> Result<(), String> {
-    let capture_start = Instant::now();
-    *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = crate::context::foreground();
+    let (capture_start, context) = app_handle.state::<RecordingContext>().1.lock().unwrap_or_else(|e|e.into_inner()).take().unwrap_or_else(|| (Instant::now(), crate::context::foreground()));
+    *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = context;
     app_handle.state::<crate::llm::LlmClient>().prewarm();
     let trace = crate::performance::Trace::start();
     // Self-heal: if we're already in a Recording/Processing state, a prior
@@ -340,6 +348,7 @@ pub async fn start_recording(
 
     let mut s = state.lock().await;
 
+    trace.set_hold(matches!(s.settings.hotkey_mode, crate::state::HotkeyMode::Hold));
     // Check model is loaded
     if s.recognizer.is_none() {
         return Err("model_not_loaded".into());
@@ -397,9 +406,16 @@ pub async fn start_recording(
         let (tx, rx) = crossbeam_channel::unbounded::<Vec<f32>>();
         *vad_sender.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx.clone());
 
-        match audio::create_vad_state(&vad_model.to_string_lossy(), tx) {
-            Some(vs) => {
-                let vad_arc = Arc::new(std::sync::Mutex::new(vs));
+        let cached = {
+            let rs = resampler_flush.0.lock().unwrap_or_else(|e| e.into_inner());
+            rs.as_ref().and_then(|rs| rs.vad_slot.lock().unwrap_or_else(|e| e.into_inner()).clone())
+        };
+        let vad = if let Some(vad) = cached {
+            vad.lock().unwrap_or_else(|e| e.into_inner()).reset_for_recording(tx);
+            Some(vad)
+        } else { audio::create_vad_state(&vad_model.to_string_lossy(), tx).map(|vs| Arc::new(std::sync::Mutex::new(vs))) };
+        match vad {
+            Some(vad_arc) => {
                 *vad_flush_handle.0.lock().unwrap_or_else(|e| e.into_inner()) =
                     Some(vad_arc.clone());
 
@@ -708,14 +724,10 @@ pub async fn stop_recording(
         }
     }
 
-    // Log audio level to diagnose silent buffer issues
-    let rms = (audio_data.iter().map(|s| s * s).sum::<f32>() / audio_data.len() as f32).sqrt();
-    let peak = audio_data.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-    let nonzero = audio_data.iter().filter(|&&s| s.abs() > 0.001).count();
-    log::info!(
-        "Audio level: rms={rms:.6}, peak={peak:.4}, nonzero={nonzero}/{sample_count} ({:.1}%)",
-        nonzero as f64 / sample_count as f64 * 100.0
-    );
+    // Only scan the waveform when diagnosing a reported device error.
+    let rms = if had_stream_error {
+        (audio_data.iter().map(|s| s * s).sum::<f32>() / audio_data.len() as f32).sqrt()
+    } else { 1.0 };
 
     // If the buffer is near-silent and the stream had an error, the mic likely disconnected
     if rms < 0.0001 && had_stream_error {
@@ -812,12 +824,7 @@ pub async fn stop_recording(
 
             let mut transcriptions = Vec::new();
             for (i, chunk) in chunks.iter().enumerate() {
-                let chunk_rms = (chunk.iter().map(|s| s * s).sum::<f32>() / chunk.len() as f32).sqrt();
-                let chunk_peak = chunk.iter().map(|s| s.abs()).fold(0.0f32, f32::max);
-                let chunk_nonzero = chunk.iter().filter(|&&s| s.abs() > 0.001).count();
-                log::info!("Chunk {i}: {} samples ({:.1}s), rms={chunk_rms:.6}, peak={chunk_peak:.4}, nonzero={chunk_nonzero}/{} ({:.1}%)",
-                    chunk.len(), chunk.len() as f32 / 16000.0,
-                    chunk.len(), chunk_nonzero as f64 / chunk.len() as f64 * 100.0);
+                log::debug!("ASR chunk {i}: {} samples", chunk.len());
 
                 let chunk_raw = transcribe::transcribe(&recognizer, chunk)
                     .map_err(|e| {

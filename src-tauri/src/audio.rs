@@ -75,6 +75,15 @@ pub struct VadState {
     max_samples_before_split: usize,
 }
 
+impl VadState {
+    pub fn reset_for_recording(&mut self, segment_tx: Sender<Vec<f32>>) {
+        self.vad.reset();
+        self.vad_buf.clear();
+        self.samples_since_split = 0;
+        self.segment_tx = segment_tx;
+    }
+}
+
 // SAFETY: VoiceActivityDetector wraps a raw pointer to sherpa-onnx's C API which
 // is internally thread-safe. We additionally protect all access behind a Mutex.
 unsafe impl Send for VadState {}
