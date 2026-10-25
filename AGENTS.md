@@ -17,7 +17,7 @@ The two things that matter most, in order:
 
 - **Windows only.** No macOS or Linux code paths. The reference machine is Windows 11 with an RTX 4080 Super.
 - **Speech recognition is local.** sherpa-onnx + Parakeet TDT; moving to the CUDA provider.
-- **Cleanup is cloud and optional.** Anthropic API only (Claude Haiku 5.5), with the user's own key, stored in Windows Credential Manager. There is no local LLM and there are no tone modes; the model infers register from the active app and window title.
+- **Cleanup is cloud and optional.** Anthropic (Claude Haiku 5.5) or OpenAI (GPT-6 Luna), chosen in settings, with the user's own key per provider, stored in Windows Credential Manager. There is no local LLM and there are no tone modes; the model infers register from the active app and window title.
 - **No telemetry.** No analytics, crash reporting, or feedback webhooks.
 
 ## Build commands
@@ -91,12 +91,12 @@ The backend only builds on Windows. Cross-checking from Linux fails in C build s
 | `commands.rs` | Most `#[tauri::command]` handlers, including the `start_recording` / `stop_recording` pipeline, `copy_text`, `probe_microphone`. |
 | `surface.rs` | The one window: bottom-center placement on a monitor's work area (skipped when unchanged), permanently layered with click-through / focus toggled via extended styles, 60 Hz hit-rect poll (click-through outside the pill or panel, hover for the resting tick), focus hand-back on close, blur closes. |
 | `tray.rs` | Tray icon and native menu (Restart to update, Open, Pause/Resume, Quit), pause state checked by the hotkey dispatcher, paused / update icon variants drawn in memory. |
-| `ai.rs` | Anthropic key in Windows Credential Manager (`keyring`), validation, live AI status events. |
+| `ai.rs` | Per-provider keys (Anthropic, OpenAI) in Windows Credential Manager (`keyring`), validation, live AI status events. |
 | `levels.rs` | Per-device input levels for the microphone picker. |
 | `audio.rs` | cpal capture, resampling to 16 kHz mono, Silero VAD segmentation, amplitude events. |
 | `transcribe.rs` | sherpa-onnx Parakeet model download, loading, inference. |
 | `cleanup.rs` | Deterministic text cleanup: filler words, spoken punctuation, numbers, VAD boundary repair. |
-| `router.rs` / `llm.rs` / `speculative.rs` / `context.rs` | When to call the LLM, the Anthropic client (shared, updatable key), speculative cleanup at VAD pauses, active-app context. |
+| `router.rs` / `llm.rs` / `speculative.rs` / `context.rs` | When to call the LLM, the cleanup client (Anthropic or OpenAI; shared, updatable provider and keys), speculative cleanup at VAD pauses, active-app context. |
 | `hotkey.rs` + `hotkey_input.rs` | Global hotkeys: physical bindings and matching; one input thread owns the low-level hooks, binding capture (with live key labels), and Esc-to-cancel while dictating. See `docs/v2/HOTKEYS.md`. |
 | `inject.rs` + `clipboard_win.rs` | Win32 clipboard write + `SendInput` Ctrl+V, then restore the previous clipboard. |
 | `state.rs` | Shared app state and the persisted `Settings` struct. |

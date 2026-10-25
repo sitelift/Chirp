@@ -164,6 +164,7 @@ pub async fn update_settings(
     crate::hotkey::validate_all(&hotkey_bindings(&updated))?;
     s.settings = updated;
     settings::save_settings(&s.settings)?;
+    app_handle.state::<crate::llm::LlmClient>().set_provider(s.settings.provider());
 
     // If history retention changed, prune immediately
     let new_retention = s.settings.history_retention_days;

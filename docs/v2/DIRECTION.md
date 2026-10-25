@@ -22,7 +22,7 @@ Press a hotkey, talk, release. What you meant appears at your cursor as well-wri
 
 - macOS and Linux. Windows only; the maintainer's setup (Windows 11, RTX 4080 Super) is the reference platform and the one that gets dogfooded to perfection.
 - Local LLM cleanup (llama-server, model downloads, GPU/CPU fallback). Removed.
-- LLM providers other than Anthropic. Users bring their own Anthropic API key.
+- LLM providers other than Anthropic and OpenAI. Users bring their own key; the provider is a setting (Off / Anthropic / OpenAI), see `design/SPEC.md`.
 - Live transcript preview while speaking.
 - "Local-only" as a principle. Speech recognition stays local because it's fastest, not on principle.
 - Tone modes. The model infers register and format from the active app; the user never switches anything.
