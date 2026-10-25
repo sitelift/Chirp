@@ -186,6 +186,18 @@ Also drop:
 4. **UX redesign.** First-principles design using Mobbin references: overlay, settings, onboarding, brand system.
 5. **Public polish.** README, contributing guide, Windows-only release pipeline, updater.
 
+## Redesign (2026-10-25, built)
+
+Supersedes the window, Opened, Words, AI cleanup, Recent, keyboard-cancel and Motion points of the next section where they differ. The approved mockup and its numbers are in `docs/v2/design/` (`motion.html` is the visual and motion reference, `SPEC.md` the decisions and contracts); `?preview=1` renders every state and `?play=1` runs the live surface against an in-memory backend.
+
+- **One window, sized once.** The overlay stays at a fixed 680 x 492 envelope and never resizes during an animation (WebView2 re-layout lag was the flicker). `WS_EX_LAYERED` is permanent; click-through follows a hit rect (hover pill, pill or panel) polled at 60 Hz, so clicks outside the panel reach the app underneath and close it.
+- **Home:** last dictation (click to copy), Recent, Words, Snippets, then Pause and Settings. No close button: Esc or click away.
+- **Settings** is a 600 x 400 panel with a sidebar: Chirp (Appearance: System / Light / Dark), Shortcuts (click the keys to rebind; Hold to talk, Hands-free, and a rebindable Cancel, Esc by default), Microphone, Sound (Sounds, Music while dictating), AI cleanup (Provider Off / Anthropic / OpenAI, one key per provider).
+- **Words** are plain spellings handed to the cleanup model; no "you say → Chirp types" pairs. **Snippets** are their own screen.
+- **Pipeline:** Parakeet is recognition only (greedy, no hotword biasing). The only local text change is spoken commands ("new line", "comma", ...), always on; with the provider Off that is what gets pasted.
+- **Motion:** the panel grows out of the hover pill at its real size and shrinks back through the pill into the tick, solid until tick-sized; screens push like paper, edge to edge; no clip-path animation, no grey blends. Nested corners follow the corner rule (outer radius minus inset).
+- **Icons:** a custom 24-grid set replaces Lucide; Chirp is the bird outline, AI cleanup a robot head.
+
 ## Design direction: the pill is the app (2026-10-24, built)
 
 Supersedes the north-star list below. Designs: Paper file "Chirp v2" (artboards "Overlay / v2" and 01 Idle through 13 Keyboard, each in Light and Dark; "Overlay / Current (v1)" is the before). Implemented on `v2`; `http://localhost:5173/?preview=1` (dev only, `&section=03` for one artboard) renders every state in both themes for side-by-side review.
