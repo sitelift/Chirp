@@ -1,0 +1,786 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Chirp motion mockup</title>
+<style>
+  :root { --ease: cubic-bezier(0.32, 0.72, 0, 1); }
+  .demo[data-theme='light'] {
+    --surface: #ffffff; --t1: #1a1a1a; --t2: #6b6b6b; --t3: #8a8a8a; --chev: #9a9a9a;
+    --divider: #eeeeee; --hover: #f3f3f3; --press: #eaeaea; --key-bg: #f5f5f5; --key-border: #dedede;
+    --accent: #c9900a; --accent-text: #8f6400; --accent-soft: #fbf4e2; --level-idle: #d0d0d0;
+    --toggle-border: #8a8a8a; --toggle-thumb: #6b6b6b; --toggle-on-thumb: #ffffff;
+    --selected: #f0f0ef; --t4: #9a9a9a; --key-bg-hover: #ffffff; --key-border-hover: #bdbdbd; --field: #ffffff; --field-ring: #0000001f;
+    --seg: #efefef; --seg-line: #00000014; --seg-on: #ffffff; --seg-on-shadow: 0 1px 2px #0000001f, 0 0 0 1px #00000010;
+    --shadow: #00000024; --ring: #0000001c; --tick-opacity: 0.3;
+    --desk: linear-gradient(165deg, #eef1f6, #dde2ea);
+    --window: #ffffffcc; --window-line: #0000000f; --taskbar: #f3f3f3e6;
+  }
+  .demo[data-theme='dark'] {
+    --surface: #1a1917; --t1: #ffffff; --t2: #a3a29e; --t3: #8f8e8a; --chev: #7d7c78;
+    --divider: #ffffff14; --hover: #ffffff0f; --press: #ffffff1a; --key-bg: #2a2926; --key-border: #ffffff1a;
+    --accent: #f0b723; --accent-text: #f0b723; --accent-soft: #f0b7231f; --level-idle: #4a4946;
+    --toggle-border: #8f8e8a; --toggle-thumb: #a3a29e; --toggle-on-thumb: #0e0d0b;
+    --selected: #ffffff12; --t4: #7d7c78; --key-bg-hover: #33322e; --key-border-hover: #ffffff3d; --field: #232220; --field-ring: #ffffff1f;
+    --seg: #ffffff0f; --seg-line: #ffffff14; --seg-on: #ffffff24; --seg-on-shadow: 0 1px 2px #0000004d;
+    --shadow: #00000080; --ring: #ffffff1a; --tick-opacity: 0.7;
+    --desk: linear-gradient(165deg, #23272e, #121418);
+    --window: #ffffff0a; --window-line: #ffffff0f; --taskbar: #1c1c1ce6;
+  }
+
+  * { box-sizing: border-box; }
+  .wrap { font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; color: var(--foreground); }
+  .controls { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 12px; font-size: 13px; }
+  .seg-c { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+  .seg-c button { border: 0; background: transparent; color: var(--muted-foreground); font: inherit; padding: 5px 10px; cursor: pointer; }
+  .seg-c button[aria-pressed='true'] { background: var(--secondary); color: var(--foreground); }
+  .play { border: 0; border-radius: 8px; padding: 6px 12px; font: inherit; cursor: pointer; background: var(--primary); color: var(--primary-foreground); }
+  .label { color: var(--muted-foreground); }
+  .sheet { display: grid; grid-template-columns: repeat(auto-fill, minmax(84px, 1fr)); gap: 6px; margin-top: 12px; }
+  .glyph { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 6px 10px; border-radius: 10px; background: var(--card); border: 1px solid var(--border); color: var(--foreground); }
+  .sheet { grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); }
+  .plate { position: relative; width: 96px; height: 96px; border-radius: 8px;
+    background-image: linear-gradient(var(--gridline) 1px, transparent 1px), linear-gradient(90deg, var(--gridline) 1px, transparent 1px); background-size: 4px 4px; background-position: -0.5px -0.5px; }
+  .plate .keys { position: absolute; inset: 0; width: 96px; height: 96px; fill: none; stroke: var(--keyline); stroke-width: 0.08; }
+  .plate .huge { position: absolute; inset: 0; width: 96px; height: 96px; }
+  .sizes { display: flex; align-items: center; gap: 10px; height: 26px; }
+  .sizes .s16 { width: 16px; height: 16px; } .sizes .s20 { width: 20px; height: 20px; } .sizes .s24 { width: 24px; height: 24px; }
+  .glyph span { font-size: 11px; color: var(--muted-foreground); }
+  .wrap { --gridline: color-mix(in srgb, var(--foreground) 7%, transparent); --keyline: color-mix(in srgb, #f0b723 70%, transparent); }
+  .pick { margin-top: 14px; font-size: 12px; color: var(--muted-foreground); }
+  .pick + .sheet { margin-top: 6px; }
+  .caption { margin-top: 10px; font-size: 12px; color: var(--muted-foreground); line-height: 18px; }
+
+  .demo { position: relative; height: 640px; border-radius: var(--radius, 12px); overflow: hidden; background: var(--desk);
+    user-select: none; cursor: default; font-family: "Segoe UI Variable Text", "Segoe UI", system-ui, sans-serif; }
+  .fake-window { position: absolute; left: 0; right: 0; top: 0; bottom: 48px; padding: 14px 0 0; background: var(--window); }
+  .fake-window i { display: block; height: 10px; border-radius: 5px; background: var(--window-line); margin: 18px 40px 0; }
+  .taskbar { position: absolute; left: 0; right: 0; bottom: 0; height: 48px; background: var(--taskbar); border-top: 1px solid var(--window-line); }
+  .cursor { position: absolute; width: 18px; height: 18px; pointer-events: none; z-index: 10; left: 0; top: 0; opacity: 0; transition: opacity 150ms; filter: drop-shadow(0 1px 1px #0006); }
+
+  /* Everything grows up from the dock, 12 px above the taskbar. */
+  .dock { position: absolute; left: 50%; bottom: 60px; width: 0; height: 0; }
+
+  /* Tick and hover pill. */
+  .slot { position: absolute; left: -28px; bottom: 0; width: 56px; height: 36px; display: flex; align-items: center; justify-content: center; }
+  .pill { width: 28px; height: 5px; border-radius: 3px; background: #1a1917; opacity: var(--tick-opacity); box-shadow: 0 0 0 1px #ffffff24;
+    display: flex; align-items: center; justify-content: center; overflow: hidden;
+    transition: width var(--d160) var(--ease), height var(--d160) var(--ease), border-radius var(--d160) var(--ease), opacity var(--d120) linear, box-shadow var(--d160) var(--ease); }
+  .pill svg { width: 20px; height: 20px; opacity: 0; transform: scale(0.4) rotate(-12deg); transition: opacity var(--d120) linear, transform var(--d220) var(--ease); }
+  .slot[data-hover] .pill { width: 56px; height: 36px; border-radius: 18px; opacity: 1; box-shadow: 0 6px 20px #00000073, 0 0 0 1px #ffffff1f; }
+  .slot[data-hover] .pill svg { opacity: 1; transform: none; transition-delay: var(--d40); }
+  .slot[hidden] { display: flex; visibility: hidden; }
+
+  /* The panel: centred on the dock; the wrapper draws the shadow, the clip holds the sheets. */
+  .card { position: absolute; left: 0; bottom: 0; width: 320px; transform: translateX(-50%); transform-origin: 50% 100%;
+    filter: drop-shadow(0 12px 16px var(--shadow)); visibility: hidden; }
+  .clip { position: relative; width: 100%; height: 100%; background: var(--surface); border-radius: 18px; overflow: hidden; }
+  .clip::after { content: ''; position: absolute; inset: 0; border-radius: inherit; box-shadow: inset 0 0 0 1px var(--ring); pointer-events: none; z-index: 2; }
+
+  /* Sheets of paper. Corners inside follow the card: 18 - 6 padding = 12. */
+  .screen { position: absolute; left: 0; top: 0; width: 320px; padding: 6px; display: none; background: var(--surface); }
+  .screen.on { display: block; }
+  .screen.wide { width: 600px; height: 400px; display: none; }
+  .screen.wide.on { display: flex; }
+
+  .row { display: flex; align-items: center; justify-content: space-between; height: 40px; padding: 0 8px 0 12px; border-radius: 12px;
+    font-size: 13px; line-height: 18px; color: var(--t1); transition: background-color 100ms; }
+  .row.tall { height: 52px; }
+  .row:hover, .btn:hover { background: var(--hover); }
+  .row:active, .btn:active { background: var(--press); }
+  .val { display: flex; align-items: center; gap: 4px; color: var(--t2); }
+  .ic { width: 16px; height: 16px; flex-shrink: 0; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+  .chev { color: var(--chev); }
+  .lead { display: flex; align-items: center; gap: 10px; }
+  .lead .ic { color: var(--t2); }
+  .div { padding: 6px 12px; } .div i { display: block; height: 1px; background: var(--divider); }
+  .last { padding: 10px 12px 10px 12px; border-radius: 12px; transition: background-color 100ms; }
+  .last:hover { background: var(--hover); }
+  .last b { display: block; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui; font-weight: 400; font-size: 15px; line-height: 22px; color: var(--t1); }
+  .last span { display: flex; justify-content: space-between; font-size: 12px; color: var(--t3); margin-top: 2px; }
+  .bar { display: flex; align-items: center; justify-content: space-between; height: 40px; }
+  .btn { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; border-radius: 12px; font-size: 13px; color: var(--t1); transition: background-color 100ms; }
+  .btn .ic { color: var(--t2); }
+  .head { display: flex; align-items: center; gap: 4px; height: 40px; }
+  .back { margin-left: 4px; width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--t1); transition: background-color 100ms; }
+  .back:hover { background: var(--hover); }
+  .title { flex: 1; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui; font-weight: 600; font-size: 13px; color: var(--t1); }
+  .add { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--t1); }
+  .add:hover { background: var(--hover); }
+  .addrow { display: flex; align-items: center; gap: 6px; height: 40px; margin: 2px 0 4px; padding: 0 4px 0 12px; border-radius: 12px; background: var(--seg);
+    box-shadow: inset 0 0 0 1px transparent; transition: box-shadow 120ms; }
+  .addrow:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
+  .addrow input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 13px; color: var(--t1); padding: 0; }
+  .addrow input::placeholder { color: var(--t4); }
+  .addbtn { width: 32px; height: 32px; display: flex; align-items: center; justify-content: center; border-radius: 8px; color: var(--t2); transition: background-color 100ms, color 100ms; }
+  .addbtn:hover { background: var(--press); color: var(--t1); }
+  .wrow { overflow: hidden; padding-right: 6px; }
+  .del { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border-radius: 6px; color: var(--t3); opacity: 0; transition: opacity 100ms, background-color 100ms; }
+  .wrow:hover .del { opacity: 1; }
+  .del:hover { background: var(--press); color: var(--t1); }
+  .snipform { margin: 2px 0 4px; border-radius: 12px; background: var(--seg); box-shadow: inset 0 0 0 1px transparent; transition: box-shadow 120ms; }
+  .snipform:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
+  .snipform .line { display: flex; align-items: center; gap: 6px; height: 40px; padding: 0 4px 0 12px; }
+  .snipform .line + .line { position: relative; }
+  .snipform .line + .line::before { content: ''; position: absolute; left: 12px; right: 12px; top: 0; height: 1px; background: var(--seg-line); }
+  .snipform input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; font-size: 13px; color: var(--t1); padding: 0; }
+  .snipform input::placeholder { color: var(--t4); }
+  .hint { padding: 8px 12px 6px; font-size: 12px; line-height: 16px; color: var(--t3); }
+  .when { font-size: 12px; color: var(--t3); flex-shrink: 0; margin-left: 12px; min-width: 24px; text-align: right; font-variant-numeric: tabular-nums; }
+  .screen[data-view="recent"] .row { padding-right: 12px; }
+  .clamp { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; min-width: 0; }
+  .word { display: flex; flex-direction: column; justify-content: center; min-width: 0; }
+  .word small { font-size: 12px; color: var(--t3); }
+
+  /* Settings: a quiet sidebar and plain rows; every control lines up on the right. */
+  .side { width: 184px; flex-shrink: 0; padding: 6px 10px 6px 0; margin: -6px 4px -6px 0; display: flex; flex-direction: column; position: relative; border-right: 1px solid var(--divider); }
+  .side .head { margin-bottom: 8px; }
+  .nav { position: relative; z-index: 1; display: flex; align-items: center; gap: 10px; height: 34px; padding: 0 10px; border-radius: 8px; font-size: 13px; color: var(--t2); transition: color 150ms; }
+  .nav:hover, .nav[aria-current] { color: var(--t1); }
+  .nav .ic { color: currentColor; transition: color 150ms; }
+  .nav[aria-current] .ic { color: var(--accent); }
+  .marker { position: absolute; left: 0; right: 10px; height: 34px; top: 0; border-radius: 8px; background: var(--selected); transition: transform 280ms var(--ease); }
+  .content { position: relative; flex: 1; min-width: 0; }
+  .pane { position: absolute; inset: 0; padding: 8px 22px 20px 24px; display: none; flex-direction: column; overflow: auto; }
+  .pane.on { display: flex; }
+  .pane h2 { margin: 0; font-family: "Segoe UI Variable Display", "Segoe UI", system-ui; font-size: 17px; line-height: 24px; font-weight: 600; color: var(--t1); }
+  .pane p.lede { margin: 2px 0 10px; font-size: 13px; line-height: 19px; color: var(--t2); }
+  .item { display: flex; align-items: center; gap: 16px; min-height: 60px; padding: 12px 0; }
+  .item + .item, .reveal .item { border-top: 1px solid var(--divider); }
+  .item .txt { flex: 1; min-width: 0; }
+  .item .txt b { display: block; font-weight: 400; font-size: 13px; line-height: 18px; color: var(--t1); }
+  .item .txt small { display: block; font-size: 12px; line-height: 16px; color: var(--t3); margin-top: 2px; }
+  .item.col { flex-direction: column; align-items: stretch; gap: 10px; }
+  .item[data-pick] .txt b { transition: color 100ms; }
+  .item[data-pick]:not(.sel):hover .txt b { color: var(--t2); }
+  .note { margin-top: 12px; font-size: 12px; line-height: 17px; color: var(--t3); }
+  .quiet { height: 28px; padding: 0 12px; display: inline-flex; align-items: center; justify-content: center; gap: 4px; border-radius: 8px; font-size: 12px; font-weight: 500;
+    color: var(--t1); background: var(--seg); white-space: nowrap; flex-shrink: 0; transition: background-color 100ms; }
+  .quiet:hover { background: var(--press); }
+  .keyrow { display: flex; align-items: center; gap: 8px; }
+  .keyrow .quiet { height: 34px; padding: 0 14px; font-size: 13px; }
+  .keyfield { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; height: 34px; padding: 0 12px; border-radius: 8px; background: var(--field);
+    box-shadow: inset 0 0 0 1px var(--field-ring); font-size: 13px; color: var(--t1); transition: box-shadow 120ms; }
+  .keyfield:focus-within { box-shadow: inset 0 0 0 1px var(--accent), 0 0 0 3px var(--accent-soft); }
+  .keyfield input { flex: 1; min-width: 0; border: 0; outline: 0; background: transparent; font: inherit; color: var(--t1); padding: 0; }
+  .keyfield input::placeholder { color: var(--t4); }
+  .keytext { flex: 1; min-width: 0; letter-spacing: 0.04em; }
+  .status { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--t2); flex-shrink: 0; }
+  .status i { width: 6px; height: 6px; border-radius: 50%; background: #2fa84f; }
+  .spin { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--divider); border-top-color: var(--t2); animation: spin 700ms linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg) } }
+  .caps { display: flex; gap: 4px; }
+  .bind { display: flex; align-items: center; height: 32px; padding: 0 4px; margin-right: -4px; border-radius: 10px; transition: background-color 100ms; }
+  .bind:hover { background: var(--hover); }
+  .bind:hover .cap { background: var(--key-bg-hover); border-color: var(--key-border-hover); }
+  .press { height: 24px; padding: 0 10px; display: flex; align-items: center; border-radius: 6px; border: 1px dashed var(--accent); font-size: 12px; font-weight: 600; color: var(--accent-text); }
+  .bind.listening { background: var(--hover); }
+  .bind.saved .cap { border-color: var(--accent); }
+  .cap { height: 24px; padding: 0 8px; display: flex; align-items: center; border-radius: 6px; border: 1px solid var(--key-border); border-bottom-width: 2px;
+    background: var(--key-bg); color: var(--t1); font-size: 12px; font-weight: 500; }
+  .radio { width: 16px; height: 16px; border-radius: 50%; border: 1.5px solid var(--toggle-border); display: flex; align-items: center; justify-content: center; flex-shrink: 0; }
+  .sel .radio { border-color: var(--accent); } .sel .radio::after { content: ''; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); }
+  .levels { display: flex; gap: 2px; align-items: center; height: 16px; }
+  .levels i { width: 3px; border-radius: 2px; background: var(--level-idle); height: 4px; }
+  .sel .levels i { background: var(--accent); animation: lv 700ms ease-in-out infinite alternate; }
+  .levels i:nth-child(2) { animation-delay: -200ms } .levels i:nth-child(3) { animation-delay: -450ms } .levels i:nth-child(4) { animation-delay: -100ms } .levels i:nth-child(5) { animation-delay: -320ms }
+  @keyframes lv { from { height: 3px } to { height: 14px } }
+  .toggle { width: 40px; height: 20px; border-radius: 10px; border: 1px solid var(--toggle-border); position: relative; transition: background-color 160ms, border-color 160ms; flex-shrink: 0; }
+  .toggle::after { content: ''; position: absolute; top: 4px; left: 4px; width: 10px; height: 10px; border-radius: 50%; background: var(--toggle-thumb); transition: transform 220ms var(--ease), background-color 160ms; }
+  .on-t .toggle { background: var(--accent); border-color: var(--accent); }
+  .on-t .toggle::after { transform: translateX(20px); background: var(--toggle-on-thumb); }
+  .segs { position: relative; display: flex; padding: 2px; border-radius: 8px; background: var(--seg); flex-shrink: 0; }
+  .segs { --w: 64px; } .segs.wide3 { --w: 80px; }
+  #appearance { --w: 72px; }
+  ::view-transition-old(root), ::view-transition-new(root) { animation-duration: 220ms; animation-timing-function: linear; }
+  .segs button { position: relative; z-index: 1; border: 0; background: none; font: inherit; font-size: 12px; color: var(--t2); width: var(--w); height: 26px; border-radius: 6px; cursor: default; transition: color 150ms; }
+  .segs button[aria-pressed='true'] { color: var(--t1); font-weight: 600; }
+  .segs .thumb { position: absolute; top: 2px; left: 2px; width: var(--w); height: 26px; border-radius: 6px; background: var(--seg-on); box-shadow: var(--seg-on-shadow); transition: transform 240ms var(--ease); }
+  .reveal { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 260ms var(--ease), opacity 200ms; opacity: 0; }
+  .reveal.open { grid-template-rows: 1fr; opacity: 1; }
+  .reveal > div { overflow: hidden; }
+  .slider { -webkit-appearance: none; appearance: none; width: 200px; height: 20px; background: transparent; }
+  .sval { min-width: 34px; margin-left: -6px; text-align: right; font-size: 13px; color: var(--t1); font-variant-numeric: tabular-nums; }
+  .slider::-webkit-slider-runnable-track { height: 4px; border-radius: 2px; background: linear-gradient(to right, var(--accent) var(--pct), var(--divider) var(--pct)); }
+  .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 14px; height: 14px; margin-top: -5px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--surface); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="controls">
+    <button class="play" id="play">Play demo</button>
+    <span class="label">Theme</span>
+    <span class="seg-c" id="theme"><button data-v="light" aria-pressed="true">Light</button><button data-v="dark" aria-pressed="false">Dark</button></span>
+    <span class="label">Speed</span>
+    <span class="seg-c" id="speed"><button data-v="1" aria-pressed="true">Real</button><button data-v="4" aria-pressed="false">4× slower</button></span>
+  </div>
+
+  <div class="demo" id="demo" data-theme="light">
+    <div class="fake-window"><i style="width:40%"></i><i style="width:70%"></i><i style="width:55%"></i><i style="width:62%"></i></div>
+    <div class="taskbar"></div>
+    <svg class="cursor" id="cursor" viewBox="0 0 24 24"><path d="M5 3l14 9-6.5 1.2L16 20l-2.6 1.2-3.6-6.8L5 19z" fill="#fff" stroke="#000" stroke-width="1.2" stroke-linejoin="round"/></svg>
+
+    <svg width="0" height="0" style="position:absolute">
+      <symbol id="i-chev" viewBox="0 0 24 24"><path d="M9 5l7 7-7 7"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M15 5l-7 7 7 7"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M10 9v6M14 9v6"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M3 8h9.5M17.5 8H21M3 16h3.5M11.5 16H21"/><circle cx="15" cy="8" r="2.5"/><circle cx="9" cy="16" r="2.5"/></symbol>
+      <symbol id="i-book" viewBox="0 0 24 24"><path d="M3 19 8 5l5 14M4.8 14h6.4"/><circle cx="17.5" cy="15.5" r="3.5"/><path d="M21 12v7"/></symbol>
+      <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="3"/><path d="M6 10h0M10 10h0M14 10h0M18 10h0M8 15h8"/></symbol>
+      <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0M12 17v4M8 21h8"/></symbol>
+      <symbol id="i-volume" viewBox="0 0 24 24"><path d="M3 9v6h4l5 4V5L7 9z"/><path d="M16 9a4 4 0 0 1 0 6M19 6a8 8 0 0 1 0 12"/></symbol>
+      <symbol id="i-robot" viewBox="0 0 24 24"><rect x="5" y="8" width="14" height="12" rx="4"/><path d="M12 8V5M9.5 13v2M14.5 13v2M3 12.5v3M21 12.5v3"/><circle cx="12" cy="3.5" r="1.5"/></symbol>
+      <symbol id="i-bird" viewBox="-418.5 -397.5 4804 4804"><path d="M1531.604,2829.783c668.518,24.139 1171.926,-353.144 1045.89,-883.882c-0.56,-2.358 -17.658,-74.359 -23.385,-19.253c-0.995,9.575 69.958,358.895 -292.787,623.11c-524.721,382.194 -1516.421,61.554 -1543.52,-49.205c-11.643,-47.586 14.39,-42.864 628.22,-583.275c147.113,-129.517 646.449,-555.007 653.201,-572.264c34.69,-88.668 53.661,-462.329 467.34,-678.203c261.617,-136.522 720.888,-99.525 911.155,199.849c29.64,46.637 21.052,59.492 57.912,65.5c39.258,6.398 321.439,44.685 346.981,111.874c6.542,17.208 3.266,26.147 -189.861,130.03c-119.168,64.1 -121.172,70.126 -124.937,81.447c-10.473,31.492 -22.872,225.25 16.526,343.54c4.893,14.69 49.551,107.832 76.735,336.287c61.149,513.904 -236.456,1191.465 -944.642,1420.703c-412.05,133.38 -863.994,33.644 -1136.283,-126.848c-276.402,-162.916 -260.407,-240.238 -310.516,-201.362c-357.873,277.646 -414.605,298.476 -456.184,313.742c-37.345,13.712 -249.743,91.697 -493.694,-59.685c-90.71,-56.289 2.227,-101.049 53.22,-135.73c621.383,-422.616 620.158,-437.327 651.083,-428.394c149.547,43.196 321.948,101.022 607.547,112.018Z" stroke-width="400"/></symbol>
+      <symbol id="i-recent-a" viewBox="0 0 24 24"><path d="M8 17H7a4 4 0 0 1-4-4V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4v6a4 4 0 0 1-4 4h-5l-4 4z"/><path d="M12 6.5V10h3"/></symbol>
+      <symbol id="i-snip-a" viewBox="0 0 24 24"><path d="M4 6h10M4 12h7M4 18h4"/><path d="M19.5 5 16 12h4.5L17 19"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></symbol>
+      <symbol id="i-ext" viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="8" y="8" width="13" height="13" rx="3"/><path d="M16 8V6a3 3 0 0 0-3-3H6a3 3 0 0 0-3 3v7a3 3 0 0 0 3 3h2"/></symbol>
+    </svg>
+
+    <div class="dock">
+      <div class="slot" id="slot">
+        <div class="pill">
+          <svg viewBox="0 0 4167 4167" aria-hidden="true"><path fill="#F0B723" d="M1531.604,2829.783c668.518,24.139 1171.926,-353.144 1045.89,-883.882c-0.56,-2.358 -17.658,-74.359 -23.385,-19.253c-0.995,9.575 69.958,358.895 -292.787,623.11c-524.721,382.194 -1516.421,61.554 -1543.52,-49.205c-11.643,-47.586 14.39,-42.864 628.22,-583.275c147.113,-129.517 646.449,-555.007 653.201,-572.264c34.69,-88.668 53.661,-462.329 467.34,-678.203c261.617,-136.522 720.888,-99.525 911.155,199.849c29.64,46.637 21.052,59.492 57.912,65.5c39.258,6.398 321.439,44.685 346.981,111.874c6.542,17.208 3.266,26.147 -189.861,130.03c-119.168,64.1 -121.172,70.126 -124.937,81.447c-10.473,31.492 -22.872,225.25 16.526,343.54c4.893,14.69 49.551,107.832 76.735,336.287c61.149,513.904 -236.456,1191.465 -944.642,1420.703c-412.05,133.38 -863.994,33.644 -1136.283,-126.848c-276.402,-162.916 -260.407,-240.238 -310.516,-201.362c-357.873,277.646 -414.605,298.476 -456.184,313.742c-37.345,13.712 -249.743,91.697 -493.694,-59.685c-90.71,-56.289 2.227,-101.049 53.22,-135.73c621.383,-422.616 620.158,-437.327 651.083,-428.394c149.547,43.196 321.948,101.022 607.547,112.018Z"/></svg>
+        </div>
+      </div>
+
+      <div class="card" id="card">
+        <div class="clip" id="clip">
+
+          <!-- Home: the last dictation, then what you reach for most. -->
+          <div class="screen" data-view="home">
+            <div class="last"><b>Can we move the review to Thursday afternoon? Tuesday is packed.</b><span>2 minutes ago<svg class="ic" style="width:14px;height:14px"><use href="#i-copy"/></svg></span></div>
+            <div class="row" data-go="recent"><span class="lead"><svg class="ic"><use href="#i-recent-a"/></svg>Recent</span><span class="val"><svg class="ic chev"><use href="#i-chev"/></svg></span></div>
+            <div class="row" data-go="words"><span class="lead"><svg class="ic"><use href="#i-book"/></svg>Words</span><span class="val"><span id="wcount">6</span><svg class="ic chev"><use href="#i-chev"/></svg></span></div>
+            <div class="row" data-go="snippets"><span class="lead"><svg class="ic"><use href="#i-snip-a"/></svg>Snippets</span><span class="val"><span id="scount">4</span><svg class="ic chev"><use href="#i-chev"/></svg></span></div>
+            <div class="div"><i></i></div>
+            <div class="bar">
+              <span class="btn"><svg class="ic"><use href="#i-pause"/></svg>Pause</span>
+              <span class="btn" data-go="settings"><svg class="ic"><use href="#i-settings"/></svg>Settings</span>
+            </div>
+          </div>
+
+          <div class="screen" data-view="recent">
+            <div class="head"><span class="back" data-back><svg class="ic"><use href="#i-back"/></svg></span><span class="title">Recent</span></div>
+            <div class="row"><span class="clamp">Can we move the review to Thursday afternoon? Tuesday is packed.</span><span class="when">2m</span></div>
+            <div class="row"><span class="clamp">Thanks, that works for me. I'll send the deck tonight.</span><span class="when">18m</span></div>
+            <div class="row"><span class="clamp">Parakeet</span><span class="when">1h</span></div>
+            <div class="row"><span class="clamp">Remind me to renew the domain before the end of the month.</span><span class="when">3h</span></div>
+            <div class="row"><span class="clamp">Ship it once the installer check passes on a clean VM.</span><span class="when">5h</span></div>
+            <div class="row"><span class="clamp">Lunch at one?</span><span class="when">1d</span></div>
+          </div>
+
+          <div class="screen" data-view="words">
+            <div class="head"><span class="back" data-back><svg class="ic"><use href="#i-back"/></svg></span><span class="title">Words</span></div>
+            <div class="addrow"><input id="wordin" placeholder="Add a name or word" spellcheck="false" autocomplete="off"><span class="addbtn" id="wordadd" title="Add"><svg class="ic"><use href="#i-plus"/></svg></span></div>
+            <div id="wordlist">
+              <div class="row wrow"><span>Sitelift</span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+              <div class="row wrow"><span>Pieter de Bruijn</span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+              <div class="row wrow"><span>Parakeet</span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+              <div class="row wrow"><span>Keizersgracht</span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+              <div class="row wrow"><span>Tauri</span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+              <div class="row wrow"><span>sherpa-onnx</span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+            </div>
+            <div class="hint">Chirp spells these exactly as written.</div>
+          </div>
+
+          <div class="screen" data-view="snippets">
+            <div class="head"><span class="back" data-back><svg class="ic"><use href="#i-back"/></svg></span><span class="title">Snippets</span></div>
+            <div class="snipform">
+              <div class="line"><input id="snipsay" placeholder="When I say" spellcheck="false" autocomplete="off"></div>
+              <div class="line"><input id="sniptype" placeholder="Type this" spellcheck="false" autocomplete="off"><span class="addbtn" id="snipadd" title="Add"><svg class="ic"><use href="#i-plus"/></svg></span></div>
+            </div>
+            <div id="sniplist">
+              <div class="row tall wrow"><span class="word clamp">my address<small class="clamp">12 Keizersgracht, Amsterdam</small></span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+              <div class="row tall wrow"><span class="word clamp">sig<small class="clamp">Best, Pieter</small></span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+              <div class="row tall wrow"><span class="word clamp">standup<small class="clamp">Yesterday: / Today: / Blockers:</small></span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+              <div class="row tall wrow"><span class="word clamp">zoom link<small class="clamp">https://zoom.us/j/4815162342</small></span><span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span></div>
+            </div>
+            <div class="hint">Say the phrase and Chirp types the rest.</div>
+          </div>
+
+          <!-- Settings: room to breathe. -->
+          <div class="screen wide" data-view="settings">
+            <div class="side" id="side">
+              <div class="marker" id="marker"></div>
+              <div class="head"><span class="back" data-back><svg class="ic"><use href="#i-back"/></svg></span><span class="title">Settings</span></div>
+              <span class="nav" data-sec="chirp" aria-current="true"><svg class="ic"><use href="#i-bird"/></svg>Chirp</span>
+              <span class="nav" data-sec="shortcuts"><svg class="ic"><use href="#i-keyboard"/></svg>Shortcuts</span>
+              <span class="nav" data-sec="mic"><svg class="ic"><use href="#i-mic"/></svg>Microphone</span>
+              <span class="nav" data-sec="sound"><svg class="ic"><use href="#i-volume"/></svg>Sound</span>
+              <span class="nav" data-sec="ai"><svg class="ic"><use href="#i-robot"/></svg>AI cleanup</span>
+            </div>
+            <div class="content">
+              <div class="pane on" data-pane="chirp">
+                <h2>Chirp</h2>
+                <p class="lede">How Chirp looks on your PC.</p>
+                <div>
+                  <div class="item"><div class="txt"><b>Appearance</b><small id="appearanceNote">Follows Windows</small></div>
+                    <span class="segs" id="appearance"><span class="thumb"></span><button aria-pressed="true" data-v="system">System</button><button aria-pressed="false" data-v="light">Light</button><button aria-pressed="false" data-v="dark">Dark</button></span>
+                  </div>
+                </div>
+                <div class="note">Chirp 2.0.0</div>
+              </div>
+
+              <div class="pane" data-pane="shortcuts">
+                <h2>Shortcuts</h2>
+                <p class="lede">Click a shortcut to change it.</p>
+                <div>
+                  <div class="item"><div class="txt"><b>Hold to talk</b><small>Hold, speak, let go.</small></div><span class="bind" data-bind><span class="caps"><span class="cap">Ctrl</span><span class="cap">Win</span></span></span></div>
+                  <div class="item"><div class="txt"><b>Hands-free</b><small>Tap on, tap off.</small></div><span class="bind" data-bind><span class="caps"><span class="cap">Ctrl</span><span class="cap">Win</span><span class="cap">Space</span></span></span></div>
+                  <div class="item"><div class="txt"><b>Cancel</b><small>Stops dictating and throws it away.</small></div><span class="bind" data-bind id="cancelbind"><span class="caps"><span class="cap">Esc</span></span></span></div>
+                </div>
+              </div>
+
+              <div class="pane" data-pane="mic">
+                <h2>Microphone</h2>
+                <p class="lede">Say something. The one that moves is the one that hears you.</p>
+                <div id="mics">
+                  <div class="item sel" data-pick><span class="radio"></span><div class="txt"><b>Microphone (Brio 500)</b></div><span class="levels"><i></i><i></i><i></i><i></i><i></i></span></div>
+                  <div class="item" data-pick><span class="radio"></span><div class="txt"><b>Headset (WH-1000XM5)</b></div><span class="levels"><i></i><i></i><i></i><i></i><i></i></span></div>
+                  <div class="item" data-pick><span class="radio"></span><div class="txt"><b>Realtek Audio</b></div><span class="levels"><i></i><i></i><i></i><i></i><i></i></span></div>
+                </div>
+              </div>
+
+              <div class="pane" data-pane="sound">
+                <h2>Sound</h2>
+                <p class="lede">What you hear while you dictate.</p>
+                <div>
+                  <div class="item" data-toggle><div class="txt"><b>Sounds</b><small>A soft tone when recording starts and stops.</small></div><span class="toggle"></span></div>
+                  <div class="item"><div class="txt"><b>Music while dictating</b><small>Turns other apps down.</small></div>
+                    <span class="segs" id="music"><span class="thumb"></span><button aria-pressed="true" data-v="off">Off</button><button aria-pressed="false" data-v="lower">Lower</button><button aria-pressed="false" data-v="pause">Pause</button></span>
+                  </div>
+                  <div class="reveal" id="lower"><div>
+                    <div class="item"><div class="txt"><b>Quieter by</b></div>
+                      <input type="range" class="slider" id="lowerBy" min="10" max="100" step="5" value="60" style="--pct:55.5%"><span id="lowerVal" class="sval">60%</span>
+                    </div>
+                  </div></div>
+                </div>
+              </div>
+
+              <div class="pane" data-pane="ai">
+                <h2>AI cleanup</h2>
+                <p class="lede">Removes filler words, fixes punctuation and formats text for the app you're in.</p>
+                <div>
+                  <div class="item"><div class="txt"><b>Provider</b><small id="modelName">Claude Haiku 5.5</small></div>
+                    <span class="segs wide3" id="provider"><span class="thumb" style="transform:translateX(80px)"></span><button aria-pressed="false" data-v="off">Off</button><button aria-pressed="true" data-v="anthropic">Anthropic</button><button aria-pressed="false" data-v="openai">OpenAI</button></span>
+                  </div>
+                  <div class="reveal open" id="keyreveal"><div>
+                    <div class="item col"><div class="txt"><b>API key</b></div>
+                      <div class="keyrow"><div class="keyfield" id="keyfield"></div><span class="quiet" id="keyaction"></span></div>
+                    </div>
+                  </div></div>
+                </div>
+                <div class="note" id="privacy">Your dictation is sent to Anthropic to be cleaned up.</div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="pick">Icon set: 24 grid, 2 px stroke on whole pixels. Large view shows the keylines (circle 20, square 18, landscape 20 x 16, portrait 16 x 20); then 100%, 125% and 150% Windows scaling.</div>
+  <div class="sheet" id="sheet">
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-bird"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-bird"/></svg><svg class="ic s20"><use href="#i-bird"/></svg><svg class="ic s24"><use href="#i-bird"/></svg></div><span>Chirp</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-recent-a"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-recent-a"/></svg><svg class="ic s20"><use href="#i-recent-a"/></svg><svg class="ic s24"><use href="#i-recent-a"/></svg></div><span>Recent</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-book"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-book"/></svg><svg class="ic s20"><use href="#i-book"/></svg><svg class="ic s24"><use href="#i-book"/></svg></div><span>Words</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-snip-a"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-snip-a"/></svg><svg class="ic s20"><use href="#i-snip-a"/></svg><svg class="ic s24"><use href="#i-snip-a"/></svg></div><span>Snippets</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-pause"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-pause"/></svg><svg class="ic s20"><use href="#i-pause"/></svg><svg class="ic s24"><use href="#i-pause"/></svg></div><span>Pause</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-settings"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-settings"/></svg><svg class="ic s20"><use href="#i-settings"/></svg><svg class="ic s24"><use href="#i-settings"/></svg></div><span>Settings</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-keyboard"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-keyboard"/></svg><svg class="ic s20"><use href="#i-keyboard"/></svg><svg class="ic s24"><use href="#i-keyboard"/></svg></div><span>Shortcuts</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-mic"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-mic"/></svg><svg class="ic s20"><use href="#i-mic"/></svg><svg class="ic s24"><use href="#i-mic"/></svg></div><span>Microphone</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-volume"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-volume"/></svg><svg class="ic s20"><use href="#i-volume"/></svg><svg class="ic s24"><use href="#i-volume"/></svg></div><span>Sound</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-robot"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-robot"/></svg><svg class="ic s20"><use href="#i-robot"/></svg><svg class="ic s24"><use href="#i-robot"/></svg></div><span>AI cleanup</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-copy"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-copy"/></svg><svg class="ic s20"><use href="#i-copy"/></svg><svg class="ic s24"><use href="#i-copy"/></svg></div><span>Copy</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-plus"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-plus"/></svg><svg class="ic s20"><use href="#i-plus"/></svg><svg class="ic s24"><use href="#i-plus"/></svg></div><span>Add</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-x"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-x"/></svg><svg class="ic s20"><use href="#i-x"/></svg><svg class="ic s24"><use href="#i-x"/></svg></div><span>Remove</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-ext"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-ext"/></svg><svg class="ic s20"><use href="#i-ext"/></svg><svg class="ic s24"><use href="#i-ext"/></svg></div><span>Open</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-back"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-back"/></svg><svg class="ic s20"><use href="#i-back"/></svg><svg class="ic s24"><use href="#i-back"/></svg></div><span>Back</span></div>
+    <div class="glyph"><div class="plate"><svg class="keys" viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="20"/><circle cx="12" cy="12" r="10"/><rect x="3" y="3" width="18" height="18" rx="3"/><rect x="2" y="4" width="20" height="16" rx="3"/><rect x="4" y="2" width="16" height="20" rx="3"/></svg><svg class="ic huge"><use href="#i-chev"/></svg></div><div class="sizes"><svg class="ic s16"><use href="#i-chev"/></svg><svg class="ic s20"><use href="#i-chev"/></svg><svg class="ic s24"><use href="#i-chev"/></svg></div><span>Next</span></div>
+  </div>
+  <div class="caption">Hover the bar above the taskbar, click to open. The toolbar Theme plays the part of the Windows setting; Settings, Chirp can override it. Recent and Words push in beside Home; Settings pushes in wider. In Words, type a word and press Enter. In Settings, click a shortcut and press new keys; switch the provider to OpenAI, paste anything and press Enter. Back arrow or Esc goes back; clicking the desktop closes.</div>
+</div>
+
+<script>
+  const $ = (s, r = document) => r.querySelector(s)
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)]
+  const demo = $('#demo'), slot = $('#slot'), card = $('#card'), clip = $('#clip')
+  const PILL = { w: 56, h: 36 }
+  /* Big moves (open, screen changes) run 10% slower than the first draft; reactions stay quick. */
+  const PACE = 1.1
+  let speed = 1, state = 'tick', view = 'home'
+
+  const ms = (n) => n * speed
+  function applySpeed() { for (const n of [40, 120, 160, 220]) demo.style.setProperty(`--d${n}`, ms(n) + 'ms') }
+  applySpeed()
+
+  const screen = (v) => $(`.screen[data-view="${v}"]`, clip)
+  const anim = (el, frames, opts) => el.animate(frames, { fill: 'both', easing: 'cubic-bezier(0.32, 0.72, 0, 1)', ...opts, duration: ms(opts.duration), delay: ms(opts.delay || 0) })
+  const done = (...as) => Promise.all(as.map((a) => a.finished.catch(() => {})))
+  const size = (el) => ({ w: el.offsetWidth, h: el.offsetHeight })
+
+  slot.addEventListener('mouseenter', () => { if (state === 'tick') slot.toggleAttribute('data-hover', true) })
+  slot.addEventListener('mouseleave', () => slot.toggleAttribute('data-hover', false))
+  slot.addEventListener('click', () => open())
+
+  /* Open: the card grows out of the pill: its real width, height and corners animate, the
+     content tracks the centre so it never slides sideways, and the ink pill dissolves on top. */
+  async function open() {
+    if (state !== 'tick') return
+    state = 'open'; view = 'home'
+    for (const s of $$('.screen', clip)) { s.classList.remove('on'); s.style.minHeight = ''; s.getAnimations().forEach((a) => a.cancel()) }
+    const home = screen('home'); home.classList.add('on')
+    const { w, h } = size(home)
+    card.getAnimations().forEach((a) => a.cancel())
+    card.style.width = w + 'px'; card.style.height = h + 'px'; card.style.visibility = 'visible'; slot.style.zIndex = 3
+    const D = 300 * PACE
+    const grow = anim(card, [{ width: PILL.w + 'px', height: PILL.h + 'px' }, { width: w + 'px', height: h + 'px' }], { duration: D })
+    const fadePill = anim(slot, [{ opacity: 1, transform: 'scale(1)' }, { opacity: 0, transform: 'scale(1.12)' }], { duration: 90, easing: 'linear' })
+    const appear = anim(card, [{ opacity: 0 }, { opacity: 1 }], { duration: 110, easing: 'linear' })
+    const content = anim(home, [{ opacity: 0, transform: 'translateY(8px)' }, { opacity: 1, transform: 'translateY(0px)' }], { duration: 220 * PACE, delay: 60 })
+    // Added on top of the rise above, so the content stays centred while the card widens.
+    const centre = anim(home, [{ transform: `translateX(${(PILL.w - w) / 2}px)` }, { transform: 'translateX(0px)' }], { duration: D, composite: 'add' })
+    await done(fadePill)
+    slot.hidden = true; slot.toggleAttribute('data-hover', false); slot.style.zIndex = ''
+    await done(grow, content)
+    if (state === 'open') { grow.cancel(); centre.cancel(); content.cancel(); appear.cancel() }
+  }
+
+  /* Close: the reverse of open. The card stays solid while its real size and corners shrink,
+     through the pill's shape, into the resting tick; only when it is tick-sized does it hand
+     over to the tick itself. */
+  async function close() {
+    if (state !== 'open') return
+    state = 'closing'
+    stopListening()
+    const { w, h } = size(card)
+    card.getAnimations().forEach((a) => a.cancel())
+    card.style.width = w + 'px'; card.style.height = h + 'px'
+    const D = 300, ease = 'cubic-bezier(0.4, 0, 0.2, 1)'
+    const sheet = screen(view)
+    const fade = anim(sheet, [{ opacity: 1 }, { opacity: 0 }], { duration: 70, easing: 'linear' })
+    // The content follows the card's centre while it narrows, so it never slides off to one side.
+    const centre = anim(sheet, [{ transform: 'translateX(0px)' }, { transform: `translateX(${(PILL.w - w) / 2}px)`, offset: 0.72 }, { transform: `translateX(${(28 - w) / 2}px)` }],
+      { duration: D, easing: ease, composite: 'add' })
+    // Pill (56 x 36, radius 18) at 72%, then the tick (28 x 5, radius 3), lifted to the tick's centre line.
+    const shrink = anim(card, [
+      { width: w + 'px', height: h + 'px', transform: 'translateX(-50%) translateY(0px)' },
+      { width: PILL.w + 'px', height: PILL.h + 'px', transform: 'translateX(-50%) translateY(0px)', offset: 0.72 },
+      { width: '28px', height: '5px', transform: 'translateX(-50%) translateY(-15.5px)' },
+    ], { duration: D, easing: ease })
+    const corners = anim(clip, [{ borderRadius: '18px' }, { borderRadius: '18px', offset: 0.72 }, { borderRadius: '3px' }], { duration: D, easing: ease })
+    const handOver = anim(card, [{ opacity: 1, offset: 0 }, { opacity: 1, offset: 0.7 }, { opacity: 0, offset: 1 }], { duration: D, easing: 'linear' })
+    slot.getAnimations().forEach((a) => a.cancel())
+    slot.toggleAttribute('data-hover', false)
+    slot.style.zIndex = ''
+    slot.hidden = false
+    const tick = anim(slot, [{ opacity: 0 }, { opacity: 1 }], { duration: 90, delay: D - 90, easing: 'linear' })
+    await done(shrink, corners, handOver, tick)
+    card.style.visibility = 'hidden'
+    shrink.cancel(); corners.cancel(); fade.cancel(); centre.cancel(); handOver.cancel(); tick.cancel()
+    state = 'tick'
+  }
+
+  async function go(to) {
+    if (state !== 'open' || to === view) return
+    const forward = to !== 'home'
+    const from = screen(view), next = screen(to)
+    const r0 = size(card)
+    card.style.width = r0.w + 'px'; card.style.height = r0.h + 'px'
+    card.getAnimations().forEach((x) => x.cancel())
+    for (const s of $$('.screen.on', clip)) if (s !== from) { s.classList.remove('on'); s.style.minHeight = ''; s.getAnimations().forEach((x) => x.cancel()) }
+    from.getAnimations().forEach((x) => x.cancel())
+    from.style.minHeight = ''
+    next.classList.add('on'); next.style.minHeight = ''
+    if (to === 'settings') placeMarker($('.nav[aria-current]'), false)
+    const r1 = size(next)
+    const tall = Math.max(r0.h, r1.h) + 'px'
+    from.style.minHeight = tall; next.style.minHeight = tall
+    view = to
+    const dur = 300 * PACE
+    const resize = anim(card, [{ width: r0.w + 'px', height: r0.h + 'px' }, { width: r1.w + 'px', height: r1.h + 'px' }], { duration: dur })
+    // The detail sheet lies on Home, so its left edge casts a soft shadow.
+    const edge = '-12px 0 20px -12px var(--shadow)', flat = '0 0 0 0 transparent'
+    const a = forward
+      ? anim(from, [{ transform: 'translateX(0)', boxShadow: flat }, { transform: `translateX(${-r0.w}px)`, boxShadow: flat }], { duration: dur })
+      : anim(from, [{ transform: 'translateX(0)', boxShadow: edge }, { transform: `translateX(${r1.w}px)`, boxShadow: edge }], { duration: dur })
+    const b = forward
+      ? anim(next, [{ transform: `translateX(${r0.w}px)`, boxShadow: edge }, { transform: 'translateX(0)', boxShadow: edge }], { duration: dur })
+      : anim(next, [{ transform: `translateX(${-r1.w}px)`, boxShadow: flat }, { transform: 'translateX(0)', boxShadow: flat }], { duration: dur })
+    await done(resize, a, b)
+    if (view !== to) return
+    from.classList.remove('on'); from.style.minHeight = ''; next.style.minHeight = ''
+    a.cancel(); b.cancel()
+    card.style.width = r1.w + 'px'; card.style.height = r1.h + 'px'; resize.cancel()
+  }
+
+  /* Settings sections: the marker slides; content crossfades with a small lift. */
+  const marker = $('#marker')
+  function placeMarker(nav, animate) {
+    if (!animate) marker.style.transition = 'none'
+    marker.style.transform = `translateY(${nav.offsetTop}px)`
+    if (!animate) { marker.offsetWidth; marker.style.transition = '' }
+  }
+  placeMarker($('.nav[aria-current]'), false)
+  function section(id) {
+    const nav = $(`.nav[data-sec="${id}"]`)
+    if (nav.hasAttribute('aria-current')) return
+    $$('.nav').forEach((n) => n.toggleAttribute('aria-current', n === nav))
+    marker.style.transitionDuration = ms(280) + 'ms'
+    placeMarker(nav, true)
+    const old = $('.pane.on'), pane = $(`.pane[data-pane="${id}"]`)
+    $$('.pane').forEach((p) => p.getAnimations().forEach((x) => x.cancel()))
+    const fade = anim(old, [{ opacity: 1 }, { opacity: 0 }], { duration: 120, easing: 'linear' })
+    pane.classList.add('on')
+    anim(pane, [{ opacity: 0, transform: 'translateY(6px)' }, { opacity: 1, transform: 'none' }], { duration: 240 })
+    done(fade).then(() => { if (!old.classList.contains('on') || old === pane) return; old.classList.remove('on'); fade.cancel() })
+  }
+
+  /* AI cleanup: provider Off, Anthropic or OpenAI; each provider keeps its own key. */
+  const PROVIDERS = {
+    off: { model: 'No cleanup' },
+    anthropic: { name: 'Anthropic', model: 'Claude Haiku 5.5', mask: 'sk-ant-•••••••4f2a' },
+    openai: { name: 'OpenAI', model: 'GPT-6 Luna', mask: 'sk-•••••••9c1e' },
+  }
+  const keys = { anthropic: 'connected', openai: 'none' }
+  let provider = 'anthropic'
+  let keyState = 'connected'
+  function setKey(state) {
+    keyState = keys[provider] = state
+    const p = PROVIDERS[provider]
+    const field = $('#keyfield'), action = $('#keyaction')
+    if (state === 'none') {
+      field.innerHTML = '<input id="keyinput" placeholder="Paste your ' + p.name + ' key" spellcheck="false" autocomplete="off">'
+      action.innerHTML = 'Get a key <svg class="ic" style="width:12px;height:12px"><use href="#i-ext"/></svg>'
+      const input = $('#keyinput')
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter' && input.value.trim()) check() })
+      input.addEventListener('paste', () => setTimeout(check, 0))
+    } else if (state === 'checking') {
+      field.innerHTML = '<span class="keytext">' + p.mask + '</span><span class="status"><span class="spin"></span>Checking</span>'
+      action.textContent = 'Remove'
+    } else {
+      field.innerHTML = '<span class="keytext">' + p.mask + '</span><span class="status"><i></i>Connected</span>'
+      action.textContent = 'Remove'
+    }
+  }
+  function check() { const p = provider; setKey('checking'); setTimeout(() => { if (provider === p) setKey('connected'); else keys[p] = 'connected' }, ms(700)) }
+  function chooseProvider(v) {
+    if (v === provider) return
+    provider = v
+    segmented($('#provider'), v)
+    $('#modelName').textContent = PROVIDERS[v].model
+    $('#privacy').textContent = v === 'off' ? 'Your dictation stays on this PC.' : 'Your dictation is sent to ' + PROVIDERS[v].name + ' to be cleaned up.'
+    $('#keyreveal').classList.toggle('open', v !== 'off')
+    if (v === 'off') return
+    setKey(keys[v])
+    anim($('#keyfield'), [{ opacity: 0.4 }, { opacity: 1 }], { duration: 160, easing: 'linear' })
+  }
+  setKey('connected')
+
+  /* Shortcuts: click the keys, press the new combination. */
+  const KEY_NAMES = { Control: 'Ctrl', Meta: 'Win', OS: 'Win', Alt: 'Alt', Shift: 'Shift', ' ': 'Space', Escape: 'Esc', ArrowUp: 'Up', ArrowDown: 'Down', ArrowLeft: 'Left', ArrowRight: 'Right' }
+  const MODS = ['Control', 'Meta', 'OS', 'Alt', 'Shift']
+  let listening = null
+  const capsHtml = (keys) => '<span class="caps">' + keys.map((k) => '<span class="cap">' + k + '</span>').join('') + '</span>'
+  function listen(el) {
+    stopListening()
+    listening = el
+    el.dataset.prev = el.innerHTML
+    el.classList.add('listening')
+    el.innerHTML = '<span class="press">Press keys</span>'
+  }
+  function stopListening(keys) {
+    const el = listening
+    if (!el) return
+    listening = null
+    el.classList.remove('listening')
+    el.innerHTML = keys ? capsHtml(keys) : el.dataset.prev
+    if (keys) { el.classList.add('saved'); setTimeout(() => el.classList.remove('saved'), ms(900)) }
+  }
+  function onBindKey(e) {
+    if (!listening) return
+    e.preventDefault(); e.stopImmediatePropagation()
+    const mods = []
+    if (e.ctrlKey) mods.push('Ctrl')
+    if (e.metaKey) mods.push('Win')
+    if (e.altKey) mods.push('Alt')
+    if (e.shiftKey) mods.push('Shift')
+    if (MODS.includes(e.key)) { listening.innerHTML = capsHtml(mods) ; return }
+    const k = KEY_NAMES[e.key] || (e.key.length === 1 ? e.key.toUpperCase() : e.key)
+    stopListening([...mods, k])
+  }
+  document.addEventListener('keydown', onBindKey, true)
+  document.addEventListener('mousedown', (e) => { if (listening && !listening.contains(e.target)) stopListening() }, true)
+
+  /* Words and snippets: add at the top, remove from the row; the card follows the list. */
+  function resizeBy(d, duration) {
+    const h0 = card.offsetHeight, h1 = h0 + d
+    card.getAnimations().forEach((a) => a.cancel())
+    card.style.height = h0 + 'px'
+    const a = anim(card, [{ height: h0 + 'px' }, { height: h1 + 'px' }], { duration })
+    done(a).then(() => { if (a.playState !== 'idle') { card.style.height = h1 + 'px'; a.cancel() } })
+  }
+  function countWords() {
+    $('#wcount').textContent = $$('#wordlist .wrow').length
+    $('#scount').textContent = $$('#sniplist .wrow').length
+  }
+  function prependRow(list, html, height) {
+    const t = document.createElement('template')
+    t.innerHTML = html
+    const row = t.content.firstChild
+    $(list).prepend(row)
+    anim(row, [{ height: '0px', opacity: 0 }, { height: height + 'px', opacity: 1 }], { duration: 260 })
+    countWords(); resizeBy(height, 260)
+    return row
+  }
+  const DEL = '<span class="del" data-del title="Remove"><svg class="ic" style="width:14px;height:14px"><use href="#i-x"/></svg></span>'
+  function addWord() {
+    const input = $('#wordin'), w = input.value.trim()
+    if (!w) return
+    input.value = ''
+    const row = prependRow('#wordlist', '<div class="row wrow"><span></span>' + DEL + '</div>', 40)
+    row.firstChild.textContent = w
+  }
+  function addSnippet() {
+    const say = $('#snipsay'), type = $('#sniptype')
+    if (!say.value.trim() || !type.value.trim()) return
+    const row = prependRow('#sniplist', '<div class="row tall wrow"><span class="word clamp"><span></span><small class="clamp"></small></span>' + DEL + '</div>', 52)
+    row.querySelector('.word > span').textContent = say.value.trim()
+    row.querySelector('small').textContent = type.value.trim()
+    say.value = ''; type.value = ''; say.focus({ preventScroll: true })
+  }
+  function removeWord(row) {
+    const h = row.offsetHeight
+    const a = anim(row, [{ height: h + 'px', opacity: 1 }, { height: '0px', opacity: 0 }], { duration: 220 })
+    done(a).then(() => { row.remove(); countWords() })
+    resizeBy(-h, 220)
+  }
+  $('#snipsay').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('#sniptype').focus() })
+  $('#sniptype').addEventListener('keydown', (e) => { if (e.key === 'Enter') addSnippet() })
+  $('#wordin').addEventListener('keydown', (e) => { if (e.key === 'Enter') addWord() })
+
+  clip.addEventListener('click', (e) => {
+    const t = e.target.closest('[data-go],[data-back],[data-toggle],[data-sec],[data-pick],[data-bind],#music button,#provider button,#appearance button,#keyaction,#wordadd,#snipadd,[data-del]')
+    if (!t) return
+    if (t.dataset.go) go(t.dataset.go)
+    else if (t.hasAttribute('data-back')) go('home')
+    else if (t.dataset.sec) section(t.dataset.sec)
+    else if (t.hasAttribute('data-toggle')) t.classList.toggle('on-t')
+    else if (t.hasAttribute('data-pick')) $$('#mics .item').forEach((i) => i.classList.toggle('sel', i === t))
+    else if (t.id === 'keyaction') { if (keyState === 'connected') setKey('none') }
+    else if (t.id === 'wordadd') addWord()
+    else if (t.id === 'snipadd') addSnippet()
+    else if (t.hasAttribute('data-bind')) { if (!t.classList.contains('listening')) listen(t) }
+    else if (t.hasAttribute('data-del')) removeWord(t.closest('.wrow'))
+    else if (t.closest('#provider')) chooseProvider(t.dataset.v)
+    else if (t.closest('#appearance')) chooseAppearance(t.dataset.v)
+    else music(t.dataset.v)
+  })
+  function segmented(el, v) {
+    const btns = $$('button', el), i = btns.findIndex((b) => b.dataset.v === v)
+    btns.forEach((b, j) => b.setAttribute('aria-pressed', String(j === i)))
+    $('.thumb', el).style.transform = `translateX(${i * btns[0].offsetWidth}px)`
+  }
+  function music(v) {
+    segmented($('#music'), v)
+    $('#lower').classList.toggle('open', v === 'lower')
+  }
+  $('#lowerBy').addEventListener('input', (e) => {
+    const v = Number(e.target.value)
+    e.target.style.setProperty('--pct', ((v - 10) / 90) * 100 + '%')
+    $('#lowerVal').textContent = v + '%'
+  })
+  demo.addEventListener('mousedown', (e) => { if (state === 'open' && !card.contains(e.target)) close() })
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Escape' || state !== 'open') return
+    if (view !== 'home') go('home'); else close()
+  })
+
+  function seg(id, fn) {
+    const el = $('#' + id)
+    el.addEventListener('click', (e) => {
+      const b = e.target.closest('button'); if (!b) return
+      el.querySelectorAll('button').forEach((x) => x.setAttribute('aria-pressed', String(x === b)))
+      fn(b.dataset.v)
+    })
+  }
+  /* The toolbar's Theme stands in for the Windows setting; Appearance can override it. */
+  let windowsTheme = 'light', appearance = 'system'
+  function applyTheme() {
+    const next = appearance === 'system' ? windowsTheme : appearance
+    if (demo.dataset.theme === next) return
+    const swap = () => { demo.dataset.theme = next }
+    // A soft crossfade instead of a snap, where the browser supports it.
+    if (document.startViewTransition && speed > 0) document.startViewTransition(swap)
+    else swap()
+  }
+  function chooseAppearance(v) {
+    appearance = v
+    segmented($('#appearance'), v)
+    $('#appearanceNote').textContent = v === 'system' ? 'Follows Windows' : v === 'light' ? 'Always light' : 'Always dark'
+    applyTheme()
+  }
+  seg('theme', (v) => { windowsTheme = v; applyTheme() })
+  seg('speed', (v) => { speed = Number(v); applySpeed() })
+
+  /* Play demo: a pretend cursor walks through the flow. */
+  const cursor = $('#cursor')
+  const wait = (n) => new Promise((r) => setTimeout(r, ms(n)))
+  function point(el, dx = 0, dy = 0) {
+    const d = demo.getBoundingClientRect(), r = el.getBoundingClientRect()
+    cursor.style.transition = `opacity 150ms, transform ${ms(420)}ms cubic-bezier(0.32, 0.72, 0, 1)`
+    cursor.style.transform = `translate(${r.left - d.left + r.width / 2 + dx}px, ${r.top - d.top + r.height / 2 + dy}px)`
+  }
+  const click = async (el, dx = 0) => { point(el, dx); await wait(480); el.click() }
+  let playing = false
+  $('#play').addEventListener('click', async () => {
+    if (playing) return
+    playing = true
+    if (state === 'open') await close()
+    cursor.style.transition = 'none'
+    cursor.style.transform = `translate(${demo.clientWidth / 2 + 140}px, ${demo.clientHeight - 200}px)`
+    cursor.style.opacity = 1
+    await wait(300)
+    point(slot); await wait(450)
+    slot.toggleAttribute('data-hover', true); await wait(600)
+    await open(); await wait(500)
+    await click($('[data-go="recent"]', clip), 40); await wait(1000)
+    await click($('.screen[data-view="recent"] [data-back]', clip)); await wait(600)
+    await click($('[data-go="words"]', clip), 40); await wait(700)
+    point($('#wordin')); await wait(500)
+    $('#wordin').value = 'Hilversum'; await wait(300)
+    await click($('#wordadd')); await wait(900)
+    await click($('.screen[data-view="words"] [data-back]', clip)); await wait(600)
+    await click($('[data-go="snippets"]', clip), 40); await wait(700)
+    point($('#snipsay')); await wait(450)
+    $('#snipsay').value = 'my phone'; $('#sniptype').value = '+31 6 1234 5678'; await wait(300)
+    await click($('#snipadd')); await wait(900)
+    await click($('.screen[data-view="snippets"] [data-back]', clip)); await wait(600)
+    await click($('[data-go="settings"]', clip)); await wait(800)
+    await click($('#appearance button[data-v="dark"]')); await wait(900)
+    await click($('#appearance button[data-v="system"]')); await wait(800)
+    await click($('.nav[data-sec="shortcuts"]')); await wait(600)
+    await click($('#cancelbind')); await wait(700)
+    onBindKey(new KeyboardEvent('keydown', { key: 'F8' })); await wait(1000)
+    await click($('.nav[data-sec="mic"]')); await wait(900)
+    await click($('.nav[data-sec="sound"]')); await wait(600)
+    await click($('#music button[data-v="lower"]')); await wait(900)
+    await click($('.nav[data-sec="ai"]')); await wait(800)
+    await click($('#provider button[data-v="openai"]')); await wait(700)
+    point($('#keyfield')); await wait(500)
+    $('#keyinput').value = 'sk-demo'; check(); await wait(1300)
+    await click($('#provider button[data-v="off"]')); await wait(900)
+    await click($('#provider button[data-v="anthropic"]')); await wait(800)
+    await click($('.nav[data-sec="chirp"]')); await wait(700)
+    await click($('.screen[data-view="settings"] [data-back]', clip)); await wait(700)
+    point($('.fake-window'), -200, 60); await wait(500)
+    await close(); await wait(400)
+    cursor.style.opacity = 0
+    playing = false
+  })
+</script>
+</body>
+</html>

@@ -42,7 +42,7 @@ function LastDictation() {
   )
 }
 
-const LABEL: Record<BindingTarget, string> = { hold: 'Hold to talk', toggle: 'Hands-free' }
+const LABEL: Record<BindingTarget, string> = { hold: 'Hold to talk', toggle: 'Hands-free', cancel: 'Cancel' }
 
 function HotkeyRow({ target }: { target: BindingTarget }) {
   const ctx = useSurfaceContext()

@@ -8,20 +8,29 @@ export interface Binding {
   label: string
   suppress: boolean
 }
-export type BindingTarget = 'hold' | 'toggle'
+export type BindingTarget = 'hold' | 'toggle' | 'cancel'
 
 export interface Settings {
   holdBinding: Binding | null
   toggleBinding: Binding | null
   inputDevice: string
   onboardingComplete: boolean
+  /** Legacy switch; `provider` wins when set. */
   aiCleanup: boolean
+  /** null in settings written before providers existed: treat as aiCleanup ? 'anthropic' : 'off'. */
+  provider: Provider | null
+  appearance: Appearance
+  cancelBinding: Binding | null
   playSoundOnComplete: boolean
   model: string
   mediaWhileDictating: MediaMode
   /** With 'lower': percent quieter, 10..100. */
   mediaLowerBy: number
 }
+
+/** Which cloud model cleans up dictations; 'off' pastes the recognizer text with spoken commands converted. */
+export type Provider = 'off' | 'anthropic' | 'openai'
+export type Appearance = 'system' | 'light' | 'dark'
 
 /** What other apps' audio does while recording. */
 export type MediaMode = 'off' | 'lower' | 'pause'

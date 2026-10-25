@@ -64,9 +64,20 @@ pub struct Settings {
     pub beam_search: bool,
     #[serde(default)]
     pub dark_mode: bool,
-    /// "Use Claude" in AI cleanup. Only takes effect with a stored key.
+    /// Legacy "Use Claude" switch. Superseded by `provider`; read only to migrate
+    /// settings written before it existed (see `Settings::provider()`).
     #[serde(default = "default_true")]
     pub ai_cleanup: bool,
+    /// Which cloud model cleans up dictations. `None` in files written before
+    /// providers existed; resolve with `Settings::provider()`.
+    #[serde(default)]
+    pub provider: Option<Provider>,
+    /// Surface theme: follow Windows, or always light / dark.
+    #[serde(default)]
+    pub appearance: Appearance,
+    /// Cancels the dictation in progress and discards it. Esc by default.
+    #[serde(default = "crate::hotkey::default_cancel")]
+    pub cancel_binding: Option<crate::hotkey::Binding>,
     /// What happens to other apps' audio while recording (media.rs).
     #[serde(default)]
     pub media_while_dictating: MediaMode,
@@ -85,6 +96,32 @@ pub enum MediaMode {
 }
 
 pub fn default_media_lower_by() -> u8 { 80 }
+
+/// The cloud model used for cleanup. `Off` pastes the recognizer's text with
+/// only spoken commands ("new line", "comma") converted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Provider {
+    Off,
+    Anthropic,
+    Openai,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
+impl Settings {
+    /// The provider in effect, migrating the legacy `ai_cleanup` switch.
+    pub fn provider(&self) -> Provider {
+        self.provider.unwrap_or(if self.ai_cleanup { Provider::Anthropic } else { Provider::Off })
+    }
+}
 
 fn default_overlay_position() -> serde_json::Value {
     serde_json::Value::String("bottom".into())
@@ -119,6 +156,9 @@ impl Default for Settings {
             beam_search: false,
             dark_mode: false,
             ai_cleanup: true,
+            provider: Some(Provider::Anthropic),
+            appearance: Appearance::System,
+            cancel_binding: crate::hotkey::default_cancel(),
             media_while_dictating: MediaMode::Lower,
             media_lower_by: default_media_lower_by(),
         }

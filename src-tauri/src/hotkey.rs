@@ -119,6 +119,9 @@ pub fn default_toggle() -> Option<Binding> {
         false,
     ))
 }
+pub fn default_cancel() -> Option<Binding> {
+    Some(Binding::new(vec![Key::from_vk(VK_ESCAPE)], false))
+}
 
 pub fn conflict(binding: &Binding, other: Option<&Binding>) -> Result<(), String> {
     if binding
