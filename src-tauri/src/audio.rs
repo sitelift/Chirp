@@ -13,6 +13,19 @@ const VAD_THRESHOLD: f32 = 0.6;
 const VAD_MIN_SILENCE_SECS: f32 = 0.7;
 const VAD_MAX_SPEECH_SECS: f32 = 20.0;
 const VAD_FORCE_SPLIT_SECS: usize = 20;
+/// Recorded audio transcribed before each detected segment. Silero marks
+/// speech late on soft first words ("What", "On"), which then never reach ASR.
+pub const VAD_LEAD_IN_SAMPLES: usize = 16_000 / 2;
+/// Lead-in kept with each segment, so an empty result can be retried with more.
+const VAD_MAX_LEAD_IN_SAMPLES: usize = 16_000 * 3 / 4;
+
+/// A detected speech segment and the `lead` samples of audio sent before it.
+/// Empty audio stops the receiver.
+#[derive(Default)]
+pub struct Segment {
+    pub audio: Vec<f32>,
+    pub lead: usize,
+}
 
 /// Holds resampler state so callers can flush remaining samples on stop.
 pub struct ResamplerState {
@@ -66,22 +79,64 @@ impl ResamplerState {
 /// detects speech segments, and sends completed segments over a channel.
 pub struct VadState {
     vad: VoiceActivityDetector,
-    segment_tx: Sender<Vec<f32>>,
+    segment_tx: Sender<Segment>,
     /// Accumulates samples to feed VAD in window_size chunks
     vad_buf: Vec<f32>,
     window_size: usize,
     /// Track samples since last forced split (30s cap)
     samples_since_split: usize,
     max_samples_before_split: usize,
+    /// Every sample fed to the VAD this recording, indexed like segment starts.
+    history: Vec<f32>,
+    /// End of the last sent segment; lead-in never reaches back past it.
+    sent_until: usize,
 }
 
 impl VadState {
-    pub fn reset_for_recording(&mut self, segment_tx: Sender<Vec<f32>>) {
+    pub fn reset_for_recording(&mut self, segment_tx: Sender<Segment>) {
         self.vad.reset();
         self.vad_buf.clear();
         self.samples_since_split = 0;
         self.segment_tx = segment_tx;
+        self.history.clear();
+        self.sent_until = 0;
     }
+
+    fn accept(&mut self, chunk: &[f32]) {
+        self.history.extend_from_slice(chunk);
+        self.vad.accept_waveform(chunk);
+    }
+
+    /// Send completed segments, each with up to `VAD_MAX_LEAD_IN_SAMPLES` of
+    /// the recorded audio before it. Returns whether any segment completed.
+    fn send_segments(&mut self) -> bool {
+        let mut any = false;
+        while let Some(segment) = self.vad.front() {
+            let samples = segment.samples();
+            if !samples.is_empty() {
+                let start = segment.start().max(0) as usize;
+                // Only pad when the start index provably points into history.
+                let sent = if self.history.get(start..start + samples.len()) == Some(samples) {
+                    let from = lead_in_start(start, self.sent_until);
+                    self.sent_until = start + samples.len();
+                    Segment { audio: self.history[from..self.sent_until].to_vec(), lead: start - from }
+                } else {
+                    log::warn!("VAD segment start {start} does not match history; sending without lead-in");
+                    Segment { audio: samples.to_vec(), lead: 0 }
+                };
+                let _ = self.segment_tx.send(sent);
+            }
+            self.vad.pop();
+            any = true;
+        }
+        any
+    }
+}
+
+/// First sample to send for a segment starting at `start`: up to the lead-in
+/// earlier, but never before the end of the previous segment.
+fn lead_in_start(start: usize, sent_until: usize) -> usize {
+    start.saturating_sub(VAD_MAX_LEAD_IN_SAMPLES).max(sent_until).min(start)
 }
 
 // SAFETY: VoiceActivityDetector wraps a raw pointer to sherpa-onnx's C API which
@@ -91,7 +146,7 @@ unsafe impl Sync for VadState {}
 
 /// Create a VadState from a model path and channel sender.
 /// Returns None if the model fails to load (caller falls back to non-VAD).
-pub fn create_vad_state(model_path: &str, segment_tx: Sender<Vec<f32>>) -> Option<VadState> {
+pub fn create_vad_state(model_path: &str, segment_tx: Sender<Segment>) -> Option<VadState> {
     let config = VadModelConfig {
         silero_vad: SileroVadModelConfig {
             model: Some(model_path.to_string()),
@@ -120,6 +175,8 @@ pub fn create_vad_state(model_path: &str, segment_tx: Sender<Vec<f32>>) -> Optio
                 window_size: 512,
                 samples_since_split: 0,
                 max_samples_before_split: VAD_FORCE_SPLIT_SECS * 16000,
+                history: Vec::new(),
+                sent_until: 0,
             })
         }
         None => {
@@ -144,7 +201,7 @@ pub fn feed_vad(samples: &[f32], vad_state: &Arc<std::sync::Mutex<VadState>>) {
     let win = vs.window_size;
     while vs.vad_buf.len() >= win {
         let chunk: Vec<f32> = vs.vad_buf.drain(..win).collect();
-        vs.vad.accept_waveform(&chunk);
+        vs.accept(&chunk);
 
         // Force split during long continuous speech as a backstop for
         // environments where VAD treats small thinking pauses as speech.
@@ -153,13 +210,7 @@ pub fn feed_vad(samples: &[f32], vad_state: &Arc<std::sync::Mutex<VadState>>) {
             vs.samples_since_split = 0;
         }
 
-        // Drain completed segments
-        while let Some(segment) = vs.vad.front() {
-            let audio = segment.samples().to_vec();
-            if !audio.is_empty() {
-                let _ = vs.segment_tx.send(audio);
-            }
-            vs.vad.pop();
+        if vs.send_segments() {
             vs.samples_since_split = 0;
         }
     }
@@ -173,16 +224,10 @@ pub fn flush_vad(vad_state: &Arc<std::sync::Mutex<VadState>>) {
     if !vs.vad_buf.is_empty() {
         let mut tail = std::mem::take(&mut vs.vad_buf);
         tail.resize(vs.window_size, 0.0);
-        vs.vad.accept_waveform(&tail);
+        vs.accept(&tail);
     }
     vs.vad.flush();
-    while let Some(segment) = vs.vad.front() {
-        let audio = segment.samples().to_vec();
-        if !audio.is_empty() {
-            let _ = vs.segment_tx.send(audio);
-        }
-        vs.vad.pop();
-    }
+    vs.send_segments();
 }
 
 const TARGET_SAMPLE_RATE: u32 = 16_000;
@@ -519,4 +564,19 @@ pub fn encode_wav(samples: &[f32], sample_rate: u32) -> Result<Vec<u8>, String> 
     }
     writer.finalize().map_err(|e| format!("WAV finalize failed: {e}"))?;
     Ok(cursor.into_inner())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lead_in_reaches_back_but_not_into_the_previous_segment() {
+        let pad = VAD_MAX_LEAD_IN_SAMPLES;
+        assert_eq!(lead_in_start(14_000, 0), 14_000 - pad);
+        assert_eq!(lead_in_start(4_000, 0), 0);
+        assert_eq!(lead_in_start(50_000, 45_000), 45_000);
+        assert_eq!(lead_in_start(50_000, 50_000), 50_000);
+        assert_eq!(lead_in_start(50_000, 60_000), 50_000);
+    }
 }

@@ -398,7 +398,7 @@ pub async fn start_recording(
             {
                 let mut sender = vad_sender.0.lock().unwrap_or_else(|e| e.into_inner());
                 if let Some(tx) = sender.take() {
-                    let _ = tx.send(Vec::new());
+                    let _ = tx.send(audio::Segment::default());
                 }
             }
             {
@@ -488,7 +488,7 @@ pub async fn start_recording(
     // can overlap the remaining recording time.
     let vad_model = settings::vad_model_path();
     let vad_arc: Option<Arc<std::sync::Mutex<crate::audio::VadState>>> = if vad_model.exists() {
-        let (tx, rx) = crossbeam_channel::unbounded::<Vec<f32>>();
+        let (tx, rx) = crossbeam_channel::unbounded::<audio::Segment>();
         *vad_sender.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx.clone());
 
         let cached = {
@@ -514,15 +514,16 @@ pub async fn start_recording(
                     .name("vad-receiver".into())
                     .spawn(move || {
                         let mut seg_idx = 0u32;
-                        while let Ok(segment_audio) = rx.recv() {
-                            if segment_audio.is_empty() {
+                        while let Ok(segment) = rx.recv() {
+                            if segment.audio.is_empty() {
                                 break;
                             } // poison pill
-                            let dur = segment_audio.len() as f32 / 16000.0;
+                            let dur = segment.audio.len() as f32 / 16000.0;
                             log::info!(
-                                "VAD segment {seg_idx}: {:.1}s ({} samples)",
+                                "VAD segment {seg_idx}: {:.1}s ({} samples, {} lead-in)",
                                 dur,
-                                segment_audio.len()
+                                segment.audio.len(),
+                                segment.lead
                             );
 
                             // Mark VAD as active so stop_recording uses streamed output.
@@ -532,7 +533,7 @@ pub async fn start_recording(
                                 s.vad_was_active = true;
                             });
 
-                            let raw = match transcribe::transcribe(&rec, &segment_audio) {
+                            let raw = match transcribe::transcribe_segment(&rec, &segment) {
                                 Ok(t) => t,
                                 Err(e) => {
                                     log::error!("VAD segment {seg_idx} transcription failed: {e}");
@@ -759,7 +760,7 @@ pub async fn stop_recording(
     {
         let mut sender = vad_sender.0.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(tx) = sender.take() {
-            let _ = tx.send(Vec::new());
+            let _ = tx.send(audio::Segment::default());
         }
     }
     // Join receiver thread (with timeout via try_join)

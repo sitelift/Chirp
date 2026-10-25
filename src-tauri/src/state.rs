@@ -287,7 +287,7 @@ pub struct VadCleanedTranscripts(pub Arc<std::sync::Mutex<Vec<String>>>);
 pub struct VadReceiverHandle(pub std::sync::Mutex<Option<std::thread::JoinHandle<()>>>);
 
 /// Sender for the VAD segment channel (needed to send poison pill on stop)
-pub struct VadSender(pub std::sync::Mutex<Option<crossbeam_channel::Sender<Vec<f32>>>>);
+pub struct VadSender(pub std::sync::Mutex<Option<crossbeam_channel::Sender<crate::audio::Segment>>>);
 
 /// Handle to flush VAD on stop (kept separate from audio callback's copy)
 pub struct VadFlushHandle(pub std::sync::Mutex<Option<Arc<std::sync::Mutex<crate::audio::VadState>>>>);

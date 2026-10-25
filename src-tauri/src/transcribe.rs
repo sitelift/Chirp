@@ -322,6 +322,25 @@ fn decode(
     Ok(result.text.trim().to_string())
 }
 
+/// Transcribe a VAD segment with the preferred lead-in. Parakeet sometimes
+/// returns nothing depending on where audio starts, so an empty result is
+/// retried with no lead-in, then with all of it.
+pub fn transcribe_segment(
+    recognizer: &SherpaRecognizer,
+    segment: &crate::audio::Segment,
+) -> Result<String, String> {
+    let lead = segment.lead;
+    let starts = [lead - lead.min(crate::audio::VAD_LEAD_IN_SAMPLES), lead, 0];
+    let mut text = String::new();
+    for (i, &from) in starts.iter().enumerate() {
+        if starts[..i].contains(&from) { continue; }
+        if i > 0 { log::info!("Empty segment transcript; retrying with {from} of {lead} lead-in samples skipped"); }
+        text = transcribe(recognizer, &segment.audio[from..])?;
+        if !text.is_empty() { break; }
+    }
+    Ok(text)
+}
+
 /// Split audio into overlapping chunks for transcription
 pub fn chunk_audio(samples: &[f32], sample_rate: u32, chunk_secs: f32, overlap_secs: f32) -> Vec<&[f32]> {
     let chunk_samples = (chunk_secs * sample_rate as f32) as usize;
