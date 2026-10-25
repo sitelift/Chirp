@@ -242,10 +242,61 @@ pub async fn download_model(_model: &str, app_handle: AppHandle) -> Result<(), S
     crate::downloads::cpu(Some(&app_handle)).await
 }
 
+/// Segments shorter than this are never re-split (each half must stay >= 2s).
+const DROPOUT_MIN_SAMPLES: usize = 4 * 16000;
+/// Dense VAD speech runs ~2-3 words/s; far below this means words were lost.
+const DROPOUT_WORDS_PER_SEC: f32 = 0.5;
+
 /// Run transcription on audio samples using sherpa-onnx. Hotwords biasing is
 /// configured at recognizer construction time (see `load_model`) — there is
 /// no per-call hotword override.
+///
+/// Parakeet TDT occasionally decodes a long, clearly voiced segment to
+/// nothing (both int8 and fp32; observed on a 17.3s VAD segment whose halves
+/// transcribe cleanly). When the output is implausibly sparse for the audio
+/// length, split at the quietest point near the middle and decode the halves.
 pub fn transcribe(
+    recognizer: &SherpaRecognizer,
+    audio: &[f32],
+) -> Result<String, String> {
+    let text = decode(recognizer, audio)?;
+    if audio.len() < DROPOUT_MIN_SAMPLES {
+        return Ok(text);
+    }
+    let words = text.split_whitespace().count();
+    let secs = audio.len() as f32 / 16000.0;
+    if words as f32 >= secs * DROPOUT_WORDS_PER_SEC {
+        return Ok(text);
+    }
+    let mid = quietest_split(audio);
+    let (Ok(left), Ok(right)) = (transcribe(recognizer, &audio[..mid]), transcribe(recognizer, &audio[mid..])) else {
+        return Ok(text);
+    };
+    let recovered = format!("{left} {right}").trim().to_string();
+    let recovered_words = recovered.split_whitespace().count();
+    if recovered_words >= 3 && recovered_words > words {
+        log::warn!("ASR dropout on {secs:.1}s segment ({words} words); split decode recovered {recovered_words} words");
+        Ok(recovered)
+    } else {
+        Ok(text)
+    }
+}
+
+/// Index of the lowest-energy 20ms window within the middle half of `audio`,
+/// so a re-split lands in a pause rather than mid-word where possible.
+fn quietest_split(audio: &[f32]) -> usize {
+    const WIN: usize = 320;
+    let (lo, hi) = (audio.len() / 4, audio.len() * 3 / 4);
+    (lo..hi.saturating_sub(WIN))
+        .step_by(WIN / 2)
+        .min_by(|&a, &b| {
+            let e = |i: usize| audio[i..i + WIN].iter().map(|s| s * s).sum::<f32>();
+            e(a).total_cmp(&e(b))
+        })
+        .map_or(audio.len() / 2, |i| i + WIN / 2)
+}
+
+fn decode(
     recognizer: &SherpaRecognizer,
     audio: &[f32],
 ) -> Result<String, String> {
@@ -339,4 +390,25 @@ pub fn merge_transcriptions(segments: Vec<String>) -> String {
     }
 
     merged
+}
+
+#[cfg(test)]
+mod tests {
+    use super::quietest_split;
+
+    #[test]
+    fn split_lands_in_the_pause_near_the_middle() {
+        let mut audio = vec![0.3f32; 16000 * 10];
+        audio[16000 * 6..16000 * 6 + 1600].fill(0.0);
+        let at = quietest_split(&audio);
+        assert!((16000 * 6..16000 * 6 + 1600).contains(&at), "{at}");
+    }
+
+    #[test]
+    fn split_stays_in_the_middle_half_when_the_pause_is_at_the_edge() {
+        let mut audio = vec![0.3f32; 16000 * 10];
+        audio[..16000].fill(0.0);
+        let at = quietest_split(&audio);
+        assert!((audio.len() / 4..audio.len() * 3 / 4).contains(&at), "{at}");
+    }
 }
