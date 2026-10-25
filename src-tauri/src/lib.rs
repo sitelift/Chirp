@@ -22,6 +22,8 @@ mod state;
 mod surface;
 mod tray;
 pub mod transcribe;
+pub mod engine;
+mod downloads;
 
 
 use commands::{RecordingStartTime, ResamplerFlushState, StreamActiveState, StreamErrorState, StreamHandle};
@@ -78,6 +80,9 @@ pub fn run() {
         .manage(VadSender(std::sync::Mutex::new(None)))
         .manage(VadFlushHandle(std::sync::Mutex::new(None)))
         .invoke_handler(tauri::generate_handler![
+            engine::get_engine_status,
+            engine::retry_gpu,
+            downloads::get_download_status,
             commands::get_settings,
             commands::update_settings,
             commands::get_vocabulary,
@@ -154,6 +159,7 @@ pub fn run() {
 
             }
 
+            crate::downloads::background(handle.clone());
             crate::tray::build(&handle)?;
             crate::ai::init(&handle);
 

@@ -40,7 +40,7 @@ mod capture_tests {
 
 /// Get the models directory
 pub fn models_dir() -> PathBuf {
-    config_dir().join("models")
+    std::env::var_os("CHIRP_MODELS_DIR").map(PathBuf::from).unwrap_or_else(|| config_dir().join("models"))
 }
 
 fn settings_path() -> PathBuf {
@@ -228,55 +228,6 @@ fn legacy_default_snippets() -> Vec<SnippetEntry> {
 /// Path to the Silero VAD model
 pub fn vad_model_path() -> PathBuf {
     models_dir().join("silero_vad.onnx")
-}
-
-/// Check if the VAD model exists on disk
-pub fn vad_model_exists() -> bool {
-    vad_model_path().exists()
-}
-
-const VAD_MODEL_URL: &str = "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx";
-
-/// Download the Silero VAD model (~2MB)
-pub async fn download_vad_model() -> Result<(), String> {
-    let dest = vad_model_path();
-    if dest.exists() {
-        return Ok(());
-    }
-
-    let dir = models_dir();
-    tokio::fs::create_dir_all(&dir)
-        .await
-        .map_err(|e| format!("Failed to create models dir: {e}"))?;
-
-    let tmp_path = dest.with_extension("onnx.tmp");
-
-    let client = reqwest::Client::new();
-    let response = client
-        .get(VAD_MODEL_URL)
-        .send()
-        .await
-        .map_err(|e| format!("VAD model download failed: {e}"))?;
-
-    if !response.status().is_success() {
-        return Err(format!("VAD download failed with status: {}", response.status()));
-    }
-
-    let bytes = response
-        .bytes()
-        .await
-        .map_err(|e| format!("Failed to read VAD model: {e}"))?;
-
-    tokio::fs::write(&tmp_path, &bytes)
-        .await
-        .map_err(|e| format!("Failed to write VAD model: {e}"))?;
-
-    tokio::fs::rename(&tmp_path, &dest)
-        .await
-        .map_err(|e| format!("Failed to finalize VAD model: {e}"))?;
-
-    log::info!("Silero VAD model downloaded ({} bytes)", bytes.len());
-    Ok(())
 }
 
 /// Save vocabulary to disk in the new VocabEntry shape.

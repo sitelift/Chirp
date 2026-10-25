@@ -1,368 +1,96 @@
-name: Release
-
+﻿name: Release Windows
 on:
   push:
-    tags:
-      - "v*"
-
+    tags: ['v2.*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing v2.x.y tag to build'
+        required: true
 permissions:
   contents: write
-
 jobs:
-  build-macos:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-          cache: npm
-
-      - name: Sync version from git tag
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Setting version to $VERSION"
-          node -e "
-            const fs = require('fs');
-            const v = '$VERSION';
-            for (const f of ['package.json', 'src-tauri/tauri.conf.json']) {
-              const j = JSON.parse(fs.readFileSync(f, 'utf8'));
-              j.version = v;
-              fs.writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
-            }
-            let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
-            cargo = cargo.replace(/^version = \".*\"/m, 'version = \"' + v + '\"');
-            fs.writeFileSync('src-tauri/Cargo.toml', cargo);
-            let lock = fs.readFileSync('src-tauri/Cargo.lock', 'utf8');
-            lock = lock.replace(/name = \"chirp\"\nversion = \".*\"/, 'name = \"chirp\"\nversion = \"' + v + '\"');
-            fs.writeFileSync('src-tauri/Cargo.lock', lock);
-          "
-
-      - name: Install frontend dependencies
-        run: npm ci
-
-      - name: Download sherpa-onnx macOS dylibs
-        run: |
-          SHERPA_VERSION="1.12.36"
-          ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-osx-universal2-shared.tar.bz2"
-          URL="https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${ARCHIVE}"
-
-          echo "Downloading sherpa-onnx v${SHERPA_VERSION} for macOS..."
-          curl -fSL "$URL" -o "$ARCHIVE"
-          tar xjf "$ARCHIVE"
-
-          mkdir -p src-tauri/sherpa-onnx-lib/macos
-          cp sherpa-onnx-v${SHERPA_VERSION}-osx-universal2-shared/lib/*.dylib src-tauri/sherpa-onnx-lib/macos/
-          ls -la src-tauri/sherpa-onnx-lib/macos/
-
-      - name: Import Apple certificate
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          CERTIFICATE_PATH=$RUNNER_TEMP/certificate.p12
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-
-          echo -n "$APPLE_CERTIFICATE" | base64 --decode -o $CERTIFICATE_PATH
-
-          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-
-          security import $CERTIFICATE_PATH -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security set-key-partition-list -S apple-tool:,apple: \
-            -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-
-      - name: Codesign sherpa-onnx dylibs
-        env:
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-        run: |
-          for dylib in src-tauri/sherpa-onnx-lib/macos/*.dylib; do
-            codesign --force --sign "$APPLE_SIGNING_IDENTITY" --timestamp "$dylib"
-            echo "Signed: $dylib"
-          done
-
-      - name: Build Tauri app
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-          # sherpa-onnx-sys 1.12.36's build script defaults to a flat
-          # <manifest>/sherpa-onnx-lib lookup; our dylibs live in the
-          # macos/ subdir so the build script panics with "No shared
-          # runtime libraries found" without this override. Our own
-          # build.rs already handles the subdir layout.
-          SHERPA_ONNX_LIB_DIR: ${{ github.workspace }}/src-tauri/sherpa-onnx-lib/macos
-        with:
-          tagName: ${{ github.ref_name }}
-          releaseName: "Chirp ${{ github.ref_name }}"
-          releaseBody: "See the assets below to download and install Chirp."
-          releaseDraft: true
-          prerelease: false
-          args: --target aarch64-apple-darwin
-
-      - name: List build artifacts for debugging
-        if: always()
-        run: |
-          echo "=== bundle/macos/ ==="
-          ls -la src-tauri/target/aarch64-apple-darwin/release/bundle/macos/ 2>/dev/null || echo "directory not found"
-          echo "=== bundle/dmg/ ==="
-          ls -la src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/ 2>/dev/null || echo "directory not found"
-
-      - name: Create update bundle and sign
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          APP_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
-
-          # If tauri-action already created the tar.gz, use it; otherwise create it
-          if [ ! -f "$APP_DIR/Chirp.app.tar.gz" ]; then
-            echo "Creating update bundle tarball..."
-            cd "$APP_DIR"
-            tar czf Chirp.app.tar.gz Chirp.app
-            cd -
-          fi
-
-          # Sign if .sig doesn't exist
-          if [ ! -f "$APP_DIR/Chirp.app.tar.gz.sig" ]; then
-            echo "Signing update bundle..."
-            npx tauri signer sign "$APP_DIR/Chirp.app.tar.gz"
-          fi
-
-      - name: Upload macOS release assets
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          DMG=$(ls src-tauri/target/aarch64-apple-darwin/release/bundle/dmg/Chirp_*_aarch64.dmg)
-          cp "$DMG" "Chirp.dmg"
-
-          APP_DIR="src-tauri/target/aarch64-apple-darwin/release/bundle/macos"
-          cp "$APP_DIR/Chirp.app.tar.gz" "Chirp-macos-update.tar.gz"
-          cp "$APP_DIR/Chirp.app.tar.gz.sig" "Chirp-macos-update.tar.gz.sig"
-
-          gh release create "v${VERSION}" --draft --title "Chirp v${VERSION}" --generate-notes 2>/dev/null || true
-          gh release upload "v${VERSION}" "Chirp.dmg" "Chirp-macos-update.tar.gz" "Chirp-macos-update.tar.gz.sig" --clobber
-
-      - name: Cleanup keychain
-        if: always()
-        run: security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
-
-  build-windows:
+  windows:
     runs-on: windows-latest
+    env:
+      CARGO_TARGET_DIR: C:/tmp/chirp-target
+      LIBCLANG_PATH: C:/Program Files/LLVM/bin
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
-
-      - name: Sync version from git tag
-        shell: bash
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Prepare version and CPU native libraries
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          echo "Setting version to $VERSION"
-          node -e "
-            const fs = require('fs');
-            const v = '$VERSION';
-            for (const f of ['package.json', 'src-tauri/tauri.conf.json']) {
-              const j = JSON.parse(fs.readFileSync(f, 'utf8'));
-              j.version = v;
-              fs.writeFileSync(f, JSON.stringify(j, null, 2) + '\n');
-            }
-            let cargo = fs.readFileSync('src-tauri/Cargo.toml', 'utf8');
-            cargo = cargo.replace(/^version = \".*\"/m, 'version = \"' + v + '\"');
-            fs.writeFileSync('src-tauri/Cargo.toml', cargo);
-            let lock = fs.readFileSync('src-tauri/Cargo.lock', 'utf8');
-            lock = lock.replace(/name = \"chirp\"\nversion = \".*\"/, 'name = \"chirp\"\nversion = \"' + v + '\"');
-            fs.writeFileSync('src-tauri/Cargo.lock', lock);
-          "
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Rust cache
-        uses: swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-
-      - name: Install trusted-signing-cli
-        run: cargo install trusted-signing-cli
-
-      - name: Install frontend deps
-        run: npm ci
-
-      - name: Download sherpa-onnx Windows DLLs
-        shell: bash
-        # MT (static CRT) build, not MD — MD requires the VC++ Redistributable
-        # on the user's machine, which causes 0xc0000142 on launch for users
-        # who don't have it (issue #6, confirmed by sherpa-onnx maintainer).
-        # MT statically links the C/C++ runtime so the installer is
-        # self-contained.
-        run: |
-          SHERPA_VERSION="1.12.36"
-          ARCHIVE="sherpa-onnx-v${SHERPA_VERSION}-win-x64-shared-MT-Release"
-          curl -fSL "https://github.com/k2-fsa/sherpa-onnx/releases/download/v${SHERPA_VERSION}/${ARCHIVE}.tar.bz2" -o sherpa.tar.bz2
-          tar -xjf sherpa.tar.bz2
-          cp ${ARCHIVE}/lib/*.dll src-tauri/sherpa-onnx-lib/
-          cp ${ARCHIVE}/lib/*.lib src-tauri/sherpa-onnx-lib/
-          cp ${ARCHIVE}/lib/*.dll src-tauri/
-          rm -rf sherpa.tar.bz2 ${ARCHIVE}
-
-      - name: Generate onnxruntime import library
-        uses: ilammy/msvc-dev-cmd@v1
-      - run: lib /DEF:src-tauri\sherpa-onnx-lib\onnxruntime.def /OUT:src-tauri\sherpa-onnx-lib\onnxruntime.lib /MACHINE:X64
-        shell: cmd
-
-      - name: Verify sherpa-onnx libraries
-        shell: bash
-        run: |
-          echo "=== sherpa-onnx-lib/ ==="
-          ls -la src-tauri/sherpa-onnx-lib/
-          echo "=== src-tauri/ DLLs ==="
-          ls -la src-tauri/*.dll
-
-      - name: Build Tauri app (Azure code-signed)
+          if ($env:RELEASE_TAG -notmatch '^v2\.\d+\.\d+$') { throw 'Only stable v2.x.y tags use this feed' }
+          $version = $env:RELEASE_TAG.Substring(1)
+          node scripts/set-version.cjs $version
+          $name = 'sherpa-onnx-v1.12.36-win-x64-shared-MT-Release'
+          curl.exe -fL "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.36/$name.tar.bz2" -o cpu.tar.bz2
+          if ($LASTEXITCODE) { throw 'CPU runtime download failed' }
+          if ((Get-FileHash cpu.tar.bz2 -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0c027b0729f28e229082ff53d4a1cc8f6636e736ef4cefe05069d75a613cfc58') { throw 'CPU runtime checksum mismatch' }
+          tar -xjf cpu.tar.bz2
+          if ($LASTEXITCODE) { throw 'CPU runtime extraction failed' }
+          New-Item -ItemType Directory -Force src-tauri/sherpa-onnx-lib | Out-Null
+          Copy-Item "$name/lib/*.dll" src-tauri/
+          Copy-Item "$env:VCToolsRedistDir/x64/Microsoft.VC143.CRT/*.dll" src-tauri/sherpa-onnx-lib/
+          Copy-Item "$name/lib/*.lib" src-tauri/sherpa-onnx-lib/
+          Copy-Item "$name/lib/*.dll" src-tauri/
+          lib /DEF:src-tauri/sherpa-onnx-lib/onnxruntime.def /OUT:src-tauri/sherpa-onnx-lib/onnxruntime.lib /MACHINE:X64
+          if ($LASTEXITCODE) { throw 'Import library generation failed' }
+          "C:/Program Files/CMake/bin" >> $env:GITHUB_PATH
+          "C:/Program Files/LLVM/bin" >> $env:GITHUB_PATH
+      - run: npm ci
+      - run: cargo test --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --manifest-path src-tauri/Cargo.toml --features bench --bin bench
+      - run: npm run lint
+      - run: cargo install trusted-signing-cli --locked
+      - name: Build and sign
         env:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
           AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
           AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-        run: npx tauri build
-
-      - name: Sign NSIS installer with Azure Artifact Signing
-        shell: bash
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+        shell: pwsh
         run: |
-          NSIS_EXE=$(ls src-tauri/target/release/bundle/nsis/Chirp_*_x64-setup.exe)
-          trusted-signing-cli -e "https://eus.codesigning.azure.net" -a "chirp" -c "chirp-codesigning" -d "Chirp" "$NSIS_EXE"
-
-      - name: Sign NSIS installer with Tauri updater key
-        shell: bash
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          NSIS_EXE=$(ls src-tauri/target/release/bundle/nsis/Chirp_*_x64-setup.exe)
-          npx tauri signer sign "$NSIS_EXE"
-
-      - name: Build splash installer wrapper
-        run: |
-          cd installer-wrapper
-          cargo build --release --features embed
-
-      - name: Sign splash installer wrapper with Azure
-        shell: bash
-        env:
-          AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
-          AZURE_CLIENT_SECRET: ${{ secrets.AZURE_CLIENT_SECRET }}
-          AZURE_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
-        run: |
-          trusted-signing-cli -e "https://eus.codesigning.azure.net" -a "chirp" -c "chirp-codesigning" -d "Chirp" "installer-wrapper/target/release/installer-wrapper.exe"
-
-      - name: Prepare release assets
-        id: prep
-        shell: bash
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          NSIS_EXE="src-tauri/target/release/bundle/nsis/Chirp_${VERSION}_x64-setup.exe"
-
-          cp installer-wrapper/target/release/installer-wrapper.exe "Chirp-Setup.exe"
-          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
-          echo "nsis_exe=${NSIS_EXE}" >> "$GITHUB_OUTPUT"
-
-      - name: Upload Windows release assets
+          if (!$env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing updater signing key' }
+          npx tauri build --bundles nsis --config src-tauri/tauri.release.conf.json
+          if ($LASTEXITCODE) { throw 'Build failed' }
+          $installer = (Get-ChildItem "$env:CARGO_TARGET_DIR/release/bundle/nsis/*-setup.exe").FullName
+          trusted-signing-cli -e https://eus.codesigning.azure.net -a chirp -c chirp-codesigning -d Chirp $installer
+          if ($LASTEXITCODE) { throw 'Installer code signing failed' }
+          # Authenticode changes the bytes: updater-sign the FINAL installer.
+          npx tauri signer sign $installer
+          if ($LASTEXITCODE) { throw 'Updater signature failed' }
+      - name: Create draft with Windows updater manifest
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        shell: bash
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
         run: |
-          VERSION="${{ steps.prep.outputs.version }}"
-          NSIS_EXE="${{ steps.prep.outputs.nsis_exe }}"
-
-          # Create release if it doesn't exist (macOS job may have created it)
-          gh release create "v${VERSION}" --draft --title "Chirp v${VERSION}" --generate-notes 2>/dev/null || true
-
-          # Upload Windows assets (exe + sig for updater manifest)
-          SIG_FILE="${NSIS_EXE}.sig"
-          gh release upload "v${VERSION}" "$NSIS_EXE" "$SIG_FILE" "Chirp-Setup.exe" --clobber
-
-  publish-release:
-    needs: [build-macos, build-windows]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Generate latest.json for Tauri updater
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-
-          # Download Windows installer signature
-          gh release download "v${VERSION}" -p "Chirp_${VERSION}_x64-setup.exe.sig" -D /tmp/win-sig
-          WIN_SIG=$(cat /tmp/win-sig/Chirp_${VERSION}_x64-setup.exe.sig)
-
-          # Download macOS update signature
-          gh release download "v${VERSION}" -p "Chirp-macos-update.tar.gz.sig" -D /tmp/mac-sig
-          MAC_SIG=$(cat /tmp/mac-sig/Chirp-macos-update.tar.gz.sig)
-
-          cat > latest.json << EOJSON
-          {
-            "version": "${VERSION}",
-            "notes": "See https://github.com/sitelift/Chirp/releases/tag/v${VERSION}",
-            "pub_date": "$(date -u +%Y-%m-%dT%H:%M:%SZ)",
-            "platforms": {
-              "windows-x86_64": {
-                "signature": "${WIN_SIG}",
-                "url": "https://github.com/sitelift/Chirp/releases/download/v${VERSION}/Chirp_${VERSION}_x64-setup.exe"
-              },
-              "darwin-aarch64": {
-                "signature": "${MAC_SIG}",
-                "url": "https://github.com/sitelift/Chirp/releases/download/v${VERSION}/Chirp-macos-update.tar.gz"
-              }
-            }
+          $installer = Get-ChildItem "$env:CARGO_TARGET_DIR/release/bundle/nsis/*-setup.exe"
+          $version = $env:RELEASE_TAG.Substring(1)
+          $manifest = @{
+            version = $version
+            notes = "See https://github.com/${{ github.repository }}/releases/tag/$env:RELEASE_TAG"
+            pub_date = [DateTime]::UtcNow.ToString('yyyy-MM-ddTHH:mm:ssZ')
+            platforms = @{ 'windows-x86_64' = @{
+              signature = (Get-Content "$($installer.FullName).sig" -Raw).Trim()
+              url = "https://github.com/${{ github.repository }}/releases/download/$env:RELEASE_TAG/$($installer.Name)"
+            } }
           }
-          EOJSON
-
-          gh release upload "v${VERSION}" "latest.json" --clobber
-
-      - name: Publish release (remove draft)
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          gh release edit "v${VERSION}" --draft=false
-
-      - name: Update website version
-        env:
-          GH_TOKEN: ${{ secrets.WEBSITE_DISPATCH_TOKEN }}
-        run: |
-          VERSION="${GITHUB_REF_NAME#v}"
-          gh api repos/sitelift/chirp-website/dispatches \
-            -f event_type=chirp-release \
-            -f "client_payload[version]=$VERSION"
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -Encoding utf8 latest.json
+          gh release view $env:RELEASE_TAG *> $null
+          if ($LASTEXITCODE) { gh release create $env:RELEASE_TAG --draft --title "Chirp $env:RELEASE_TAG" --generate-notes }
+          gh release upload $env:RELEASE_TAG $installer.FullName "$($installer.FullName).sig" latest.json --clobber
+          if ($LASTEXITCODE) { throw 'Release upload failed' }
+          # Publish manually after the clean-machine and signed-update checks.

@@ -2,7 +2,7 @@
   "name": "chirp",
   "private": true,
   "license": "MIT",
-  "version": "1.3.4",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
     "dev": "vite",

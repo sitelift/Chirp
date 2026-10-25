@@ -34,7 +34,7 @@ if (!$SkipBuild) {
     $lines = & cmd.exe /d /c "`"$vcvars`" >nul && set"
     if ($LASTEXITCODE) { throw 'Could not initialize the Visual C++ environment.' }
     foreach ($line in $lines) { if ($line -match '^([^=]+)=(.*)$') { [Environment]::SetEnvironmentVariable($matches[1], $matches[2], 'Process') } }
-    & cargo build --release --manifest-path src-tauri/Cargo.toml --bin bench
+    & cargo build --release --manifest-path src-tauri/Cargo.toml --features bench --bin bench
     if ($LASTEXITCODE) { throw 'Benchmark build failed' }
 }
 # The Windows loader prefers the executable directory over PATH. Isolate runtimes.
