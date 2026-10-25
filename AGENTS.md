@@ -89,7 +89,7 @@ The backend only builds on Windows. Cross-checking from Linux fails in C build s
 | File | Responsibility |
 |---|---|
 | `commands.rs` | Most `#[tauri::command]` handlers, including the `start_recording` / `stop_recording` pipeline, `copy_text`, `probe_microphone`. |
-| `surface.rs` | The one window: bottom-center placement on a monitor's work area (one `SetWindowPos`), click-through / focus modes via extended styles, hover poll for the resting tick, focus hand-back on close, blur closes. |
+| `surface.rs` | The one window: bottom-center placement on a monitor's work area (skipped when unchanged), permanently layered with click-through / focus toggled via extended styles, 60 Hz hit-rect poll (click-through outside the pill or panel, hover for the resting tick), focus hand-back on close, blur closes. |
 | `tray.rs` | Tray icon and native menu (Restart to update, Open, Pause/Resume, Quit), pause state checked by the hotkey dispatcher, paused / update icon variants drawn in memory. |
 | `ai.rs` | Anthropic key in Windows Credential Manager (`keyring`), validation, live AI status events. |
 | `levels.rs` | Per-device input levels for the microphone picker. |
