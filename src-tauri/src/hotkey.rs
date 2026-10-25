@@ -123,7 +123,9 @@ pub fn default_cancel() -> Option<Binding> {
     Some(Binding::new(vec![Key::from_vk(VK_ESCAPE)], false))
 }
 
-pub fn conflict(binding: &Binding, other: Option<&Binding>) -> Result<(), String> {
+/// Validates one binding against the reserved system shortcuts and against the
+/// other bindings (hold, toggle and cancel must all differ).
+pub fn conflict(binding: &Binding, others: &[Option<Binding>]) -> Result<(), String> {
     if binding
         .keys
         .iter()
@@ -134,8 +136,8 @@ pub fn conflict(binding: &Binding, other: Option<&Binding>) -> Result<(), String
     if binding.keys.is_empty() || binding.keys.len() > 16 {
         return Err("Choose between 1 and 16 keys".into());
     }
-    if other.is_some_and(|b| b.same_keys(binding)) {
-        return Err("Already assigned to the other binding".into());
+    if others.iter().flatten().any(|b| b.same_keys(binding)) {
+        return Err("Already assigned to another shortcut".into());
     }
     let has = |vk| binding.keys.iter().any(|k| k.vk == vk);
     let win = has(VK_LWIN) || has(VK_RWIN);
@@ -154,6 +156,23 @@ pub fn conflict(binding: &Binding, other: Option<&Binding>) -> Result<(), String
         || (ctrl && shift && has(VK_ESCAPE))
     {
         return Err("This combination is a reserved system shortcut".into());
+    }
+    Ok(())
+}
+/// Validates `[hold, toggle, cancel]` together: each must be valid on its own
+/// and none may equal another. Esc alone is allowed; Esc combinations with
+/// Ctrl or Alt stay reserved.
+pub fn validate_all(bindings: &[Option<Binding>; 3]) -> Result<(), String> {
+    for (i, binding) in bindings.iter().enumerate() {
+        if let Some(b) = binding {
+            let others: Vec<Option<Binding>> = bindings
+                .iter()
+                .enumerate()
+                .filter(|(j, _)| *j != i)
+                .map(|(_, o)| o.clone())
+                .collect();
+            conflict(b, &others)?;
+        }
     }
     Ok(())
 }
@@ -271,15 +290,40 @@ mod tests {
     #[test]
     fn conflicts_are_order_independent_and_system_shortcuts_are_rejected() {
         let b = binding(&[VK_LCONTROL, VK_SPACE]);
-        assert!(conflict(&binding(&[VK_SPACE, VK_LCONTROL]), Some(&b)).is_err());
+        assert!(conflict(&binding(&[VK_SPACE, VK_LCONTROL]), &[Some(b)]).is_err());
         for keys in [
             vec![VK_LWIN, 0x4c],
             vec![VK_RWIN, 0x44],
             vec![VK_LCONTROL, VK_RMENU, VK_DELETE],
             vec![VK_RMENU, VK_TAB],
         ] {
-            assert!(conflict(&binding(&keys), None).is_err());
+            assert!(conflict(&binding(&keys), &[]).is_err());
         }
-        assert!(conflict(&binding(&[VK_RCONTROL]), None).is_ok());
+        assert!(conflict(&binding(&[VK_RCONTROL]), &[None]).is_ok());
+    }
+    #[test]
+    fn cancel_must_differ_from_hold_and_toggle_and_may_be_plain_escape() {
+        let hold = default_hold();
+        let toggle = default_toggle();
+        let ok = |c: Option<Binding>| validate_all(&[hold.clone(), toggle.clone(), c]).is_ok();
+        assert!(ok(default_cancel()));
+        assert!(ok(None));
+        assert!(ok(Some(binding(&[VK_F8]))));
+        assert!(ok(Some(binding(&[VK_LCONTROL, 0x51]))));
+        // Equal to hold or toggle, in any key order.
+        assert!(!ok(hold.clone()));
+        assert!(!ok(Some(binding(&[VK_LWIN, VK_LCONTROL]))));
+        let f8 = Some(binding(&[VK_F8]));
+        assert!(validate_all(&[f8.clone(), None, f8.clone()]).is_err());
+        assert!(validate_all(&[None, f8.clone(), f8.clone()]).is_err());
+        assert!(validate_all(&[None, None, f8]).is_ok());
+        // Reserved Esc combinations stay rejected for cancel too.
+        for keys in [
+            vec![VK_LCONTROL, VK_ESCAPE],
+            vec![VK_LMENU, VK_ESCAPE],
+            vec![VK_LCONTROL, VK_LSHIFT, VK_ESCAPE],
+        ] {
+            assert!(!ok(Some(binding(&keys))));
+        }
     }
 }

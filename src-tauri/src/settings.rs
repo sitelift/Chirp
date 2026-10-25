@@ -101,7 +101,7 @@ pub fn load_settings() -> Settings {
     // Reclaim disk from local cleanup models that v2 no longer uses
     cleanup_old_models();
 
-    for binding in [&mut settings.hold_binding, &mut settings.toggle_binding].into_iter().flatten() {
+    for binding in [&mut settings.hold_binding, &mut settings.toggle_binding, &mut settings.cancel_binding].into_iter().flatten() {
         *binding = crate::hotkey::Binding::new(binding.keys.clone(), binding.suppress);
     }
     let _ = save_settings(&settings);

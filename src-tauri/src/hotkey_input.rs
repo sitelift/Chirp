@@ -17,8 +17,11 @@ use windows_sys::Win32::{
 
 type CaptureReply = tokio::sync::oneshot::Sender<Result<Vec<Key>, String>>;
 enum Control {
-    Configure([Option<Binding>; 2]),
-    Capture(CaptureReply),
+    /// `[hold, toggle, cancel]`.
+    Configure([Option<Binding>; 3]),
+    /// `true` when Esc ends the capture; `false` records Esc as a key (the
+    /// cancel target, whose default is Esc).
+    Capture(CaptureReply, bool),
     Cancel,
     Stop,
 }
@@ -28,23 +31,28 @@ enum Output {
     Capture(CaptureReply, Result<Vec<Key>, String>),
     /// Keys held so far during a binding capture, for live display.
     CaptureKeys(Vec<Key>),
-    /// Esc while a dictation is running: cancel it.
-    Escape,
+    /// The cancel binding while a dictation is running: cancel it.
+    Cancel,
 }
 
-/// Set while a dictation records, so Esc cancels it from any app. The Esc
-/// press is swallowed so it does not also reach the focused app.
+/// Set while a dictation records, so the cancel binding (Esc by default)
+/// cancels it from any app. The completing press is swallowed, with its
+/// release, so it does not also reach the focused app. Unarmed, the cancel
+/// binding does nothing and its keys pass through.
 pub static ESCAPE_ARMED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 struct Capture {
     reply: CaptureReply,
     keys: Vec<Key>,
     deadline: Instant,
+    escape_cancels: bool,
 }
 struct Input {
     bindings: [Option<Binding>; 2],
+    cancel: Option<Binding>,
     held: Vec<Key>,
     swallowed: Vec<Key>,
     active: [bool; 2],
+    cancel_active: bool,
     resync_requested: bool,
     inhibit: bool,
     win_mask_pending: bool,
@@ -92,10 +100,42 @@ impl Input {
             }
         }
     }
+    /// Tracks the cancel binding's match state and reports a rising edge while
+    /// a dictation is armed. While hold-to-talk is held, its keys do not count
+    /// as extra modifiers, so Esc cancels with Right Ctrl still down.
+    fn cancel_edge(&mut self, allow_press: bool) -> bool {
+        let Some(cancel) = &self.cancel else {
+            self.cancel_active = false;
+            return false;
+        };
+        let next = matches(cancel, &self.held)
+            || (0..2).any(|i| {
+                self.active[i]
+                    && self.bindings[i].as_ref().is_some_and(|b| {
+                        let rest: Vec<Key> = self
+                            .held
+                            .iter()
+                            .filter(|k| !b.keys.contains(k))
+                            .copied()
+                            .collect();
+                        matches(cancel, &rest)
+                    })
+            });
+        let fired = next
+            && !self.cancel_active
+            && allow_press
+            && ESCAPE_ARMED.load(std::sync::atomic::Ordering::Relaxed);
+        self.cancel_active = next;
+        if fired {
+            let _ = self.output.send(Output::Cancel);
+        }
+        fired
+    }
     fn cancel(&mut self, reason: &str) {
         if let Some(c) = self.capture.take() {
             self.inhibit = !self.held.is_empty();
             self.active = [false; 2];
+            self.cancel_active = false;
             let _ = self
                 .output
                 .send(Output::Capture(c.reply, Err(reason.into())));
@@ -136,6 +176,7 @@ impl Input {
             self.inhibit = false;
         }
         if !self.inhibit && self.capture.is_none() {
+            self.cancel_edge(false);
             self.edges(false);
         }
     }
@@ -169,7 +210,7 @@ impl Input {
             self.swallowed.retain(|k| *k != key);
         }
         if let Some(c) = &mut self.capture {
-            if down && key.vk == VK_ESCAPE {
+            if down && key.vk == VK_ESCAPE && c.escape_cancels {
                 self.cancel("Capture cancelled");
             } else {
                 if down && !c.keys.contains(&key) && c.keys.len() < 17 {
@@ -195,39 +236,41 @@ impl Input {
             if self.held.is_empty() {
                 self.inhibit = false;
                 self.active = [false; 2];
+                self.cancel_active = false;
             }
             return (was_swallowed, false);
         }
-        if key.vk == VK_ESCAPE && ESCAPE_ARMED.load(std::sync::atomic::Ordering::Relaxed) {
-            if down && !repeated {
-                let _ = self.output.send(Output::Escape);
-            }
-            if down && !was_swallowed {
-                self.swallowed.push(key);
-            }
-            return (true, false);
-        }
         let previous = self.active;
-        self.edges(true);
+        // An armed cancel wins this event: it does not also start hold or toggle.
+        let cancelled = self.cancel_edge(true);
+        self.edges(!cancelled);
+        // An armed cancel always swallows the non-modifier down that completes it
+        // (regardless of its suppress flag); repeats and the up pair through `swallowed`.
+        let cancel_suppress = cancelled
+            && down
+            && !key.modifier()
+            && self.cancel.as_ref().is_some_and(|b| b.keys.contains(&key));
         // Only swallow non-modifiers whose down completes an enabled combo. Remember
         // every swallowed down until its up, even after other combo keys are released.
-        let suppress = down
-            && !key.modifier()
-            && self
-                .bindings
-                .iter()
-                .flatten()
-                .any(|b| b.suppresses() && b.keys.contains(&key) && matches(b, &self.held));
+        let suppress = cancel_suppress
+            || (down
+                && !key.modifier()
+                && self.bindings.iter().flatten().any(|b| {
+                    b.suppresses() && b.keys.contains(&key) && matches(b, &self.held)
+                }));
         if suppress && !was_swallowed {
             self.swallowed.push(key);
         }
+        let win_held = self.held.iter().any(|k| matches!(k.vk, VK_LWIN | VK_RWIN));
         (
             suppress || was_swallowed,
-            (0..2).any(|i| {
-                self.active[i]
-                    && !previous[i]
-                    && self.bindings[i].as_ref().is_some_and(|b| b.suppresses())
-            }) && self.held.iter().any(|k| matches!(k.vk, VK_LWIN | VK_RWIN)),
+            win_held
+                && (cancel_suppress
+                    || (0..2).any(|i| {
+                        self.active[i]
+                            && !previous[i]
+                            && self.bindings[i].as_ref().is_some_and(|b| b.suppresses())
+                    })),
         )
     }
 }
@@ -335,6 +378,7 @@ pub fn start(settings: &crate::state::Settings, app: AppHandle) -> Result<(), St
     let bindings = [
         settings.hold_binding.clone(),
         settings.toggle_binding.clone(),
+        settings.cancel_binding.clone(),
     ];
     if let Some(s) = guard.as_ref() {
         return s
@@ -381,7 +425,7 @@ pub fn start(settings: &crate::state::Settings, app: AppHandle) -> Result<(), St
                         let labels: Vec<String> = Binding::new(keys, false).keys.iter().map(|k| k.label()).collect();
                         let _ = app.emit("binding-capture-keys", labels);
                     }
-                    Output::Escape => {
+                    Output::Cancel => {
                         let _ = app.emit("dictation-escape", ());
                     }
                     Output::Release(at) => {
@@ -406,7 +450,7 @@ pub fn start(settings: &crate::state::Settings, app: AppHandle) -> Result<(), St
     Ok(())
 }
 unsafe fn run(
-    bindings: [Option<Binding>; 2],
+    [hold, toggle, cancel]: [Option<Binding>; 3],
     output: Sender<Output>,
     rx: Receiver<Control>,
     ready: std::sync::mpsc::SyncSender<Result<(), String>>,
@@ -444,10 +488,12 @@ unsafe fn run(
     }
     INPUT.with(|s| {
         *s.borrow_mut() = Some(Input {
-            bindings,
+            bindings: [hold, toggle],
+            cancel,
             held: Vec::with_capacity(256),
             swallowed: Vec::with_capacity(256),
             active: [false; 2],
+            cancel_active: false,
             resync_requested: false,
             inhibit: false,
             win_mask_pending: false,
@@ -491,17 +537,19 @@ unsafe fn run(
                         running = false;
                     }
                     Control::Cancel => s.cancel("Capture cancelled"),
-                    Control::Configure(bindings) => {
+                    Control::Configure([hold, toggle, cancel]) => {
                         s.cancel("Bindings changed");
                         if s.active[0] {
                             let _ = s.output.send(Output::Release(Instant::now()));
                         }
                         s.inhibit = !s.held.is_empty();
-                        s.bindings = bindings;
+                        s.bindings = [hold, toggle];
+                        s.cancel = cancel;
                         s.active = [false; 2];
+                        s.cancel_active = false;
                         s.resync(true);
                     }
-                    Control::Capture(reply) => {
+                    Control::Capture(reply, escape_cancels) => {
                         s.resync(true);
                         if s.capture.is_some() {
                             let _ = s.output.send(Output::Capture(
@@ -519,6 +567,7 @@ unsafe fn run(
                                 reply,
                                 keys: Vec::with_capacity(17),
                                 deadline: Instant::now() + Duration::from_secs(15),
+                                escape_cancels,
                             });
                         }
                     }
@@ -564,15 +613,21 @@ pub fn stop() {
 pub fn update(settings: &crate::state::Settings, app: AppHandle) -> Result<(), String> {
     start(settings, app)
 }
-pub async fn record_binding(other: Option<Binding>) -> Result<Binding, String> {
+/// Captures a binding and validates it against `others`. With `escape_cancels`
+/// (hold / toggle), Esc ends the capture; without it (cancel), Esc is recorded
+/// as a key and the capture ends by button, timeout or session change.
+pub async fn record_binding(
+    others: &[Option<Binding>],
+    escape_cancels: bool,
+) -> Result<Binding, String> {
     let (tx, rx) = tokio::sync::oneshot::channel();
-    send(Control::Capture(tx))?;
+    send(Control::Capture(tx, escape_cancels))?;
     let keys = tokio::time::timeout(Duration::from_secs(17), rx)
         .await
         .map_err(|_| "Capture timed out")?
         .map_err(|_| "Input service stopped")??;
     let binding = Binding::new(keys, true);
-    conflict(&binding, other.as_ref())?;
+    conflict(&binding, others)?;
     Ok(binding)
 }
 pub fn cancel_record_binding() -> Result<(), String> {
@@ -597,9 +652,11 @@ mod tests {
         (
             Input {
                 bindings: [binding(hold), binding(toggle)],
+                cancel: None,
                 held: vec![],
                 swallowed: vec![],
                 active: [false; 2],
+                cancel_active: false,
                 resync_requested: false,
                 inhibit: false,
                 win_mask_pending: false,
@@ -662,6 +719,7 @@ mod tests {
             reply: tx,
             keys: vec![],
             deadline: Instant::now() + Duration::from_secs(15),
+            escape_cancels: true,
         });
         let ctrl = Key::from_vk(VK_RCONTROL);
         let key = Key::from_vk(VK_F24);
@@ -691,6 +749,7 @@ mod tests {
             reply: tx,
             keys: vec![],
             deadline: Instant::now() + Duration::from_secs(15),
+            escape_cancels: true,
         });
         let ctrl = Key::from_vk(VK_RCONTROL);
         let esc = Key::from_vk(VK_ESCAPE);
@@ -705,18 +764,137 @@ mod tests {
         assert!(matches!(rx.try_recv(), Ok(Output::Press("hold", _))));
     }
     #[test]
-    fn armed_escape_cancels_dictation_and_is_swallowed_with_its_release() {
+    fn escape_is_a_key_when_capturing_the_cancel_binding() {
         let (mut s, rx) = engine(&[VK_RCONTROL], &[]);
+        let (tx, _) = tokio::sync::oneshot::channel();
+        s.capture = Some(Capture {
+            reply: tx,
+            keys: vec![],
+            deadline: Instant::now() + Duration::from_secs(15),
+            escape_cancels: false,
+        });
         let esc = Key::from_vk(VK_ESCAPE);
-        ESCAPE_ARMED.store(true, std::sync::atomic::Ordering::SeqCst);
+        assert!(s.event(esc, true).0, "Esc is swallowed while capturing");
+        assert!(s.event(esc, false).0);
+        assert!(matches!(rx.try_recv(), Ok(Output::CaptureKeys(_))));
+        match rx.try_recv().unwrap() {
+            Output::Capture(_, Ok(keys)) => assert_eq!(keys, vec![esc]),
+            _ => panic!("expected Esc to be captured"),
+        }
+        assert!(rx.is_empty());
+    }
+
+    /// ESCAPE_ARMED is process-wide; serialise the tests that set it.
+    static ARMED: Mutex<()> = Mutex::new(());
+    fn arm(on: bool) {
+        ESCAPE_ARMED.store(on, std::sync::atomic::Ordering::SeqCst);
+    }
+    fn with_cancel(hold: &[u16], cancel: Option<&[u16]>) -> (Input, Receiver<Output>) {
+        let (mut s, rx) = engine(hold, &[]);
+        s.cancel = cancel.map(|vks| Binding::new(vks.iter().copied().map(Key::from_vk).collect(), true));
+        (s, rx)
+    }
+    #[test]
+    fn armed_escape_cancels_dictation_and_is_swallowed_with_its_release() {
+        let _guard = ARMED.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut s, rx) = engine(&[VK_RCONTROL], &[]);
+        s.cancel = crate::hotkey::default_cancel();
+        let esc = Key::from_vk(VK_ESCAPE);
+        arm(true);
         assert!(s.event(esc, true).0);
         assert!(s.event(esc, true).0);
-        ESCAPE_ARMED.store(false, std::sync::atomic::Ordering::SeqCst);
+        arm(false);
         assert!(s.event(esc, false).0, "the release pairs with the swallowed press");
-        assert!(matches!(rx.try_recv(), Ok(Output::Escape)));
+        assert!(matches!(rx.try_recv(), Ok(Output::Cancel)));
         assert!(rx.is_empty());
         assert!(!s.event(esc, true).0, "unarmed Esc passes through");
         assert!(!s.event(esc, false).0);
+        assert!(rx.is_empty());
+    }
+    #[test]
+    fn escape_cancels_while_hold_to_talk_is_held() {
+        let _guard = ARMED.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut s, rx) = with_cancel(&[VK_RCONTROL], Some(&[VK_ESCAPE]));
+        let ctrl = Key::from_vk(VK_RCONTROL);
+        let esc = Key::from_vk(VK_ESCAPE);
+        s.event(ctrl, true);
+        assert!(matches!(rx.try_recv(), Ok(Output::Press("hold", _))));
+        arm(true);
+        assert!(s.event(esc, true).0);
+        arm(false);
+        assert!(s.event(esc, false).0);
+        assert!(matches!(rx.try_recv(), Ok(Output::Cancel)));
+        assert!(rx.is_empty(), "no extra hold edges");
+        s.event(ctrl, false);
+        assert!(matches!(rx.try_recv(), Ok(Output::Release(_))));
+    }
+    #[test]
+    fn rebound_cancel_key_fires_and_escape_no_longer_does() {
+        let _guard = ARMED.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut s, rx) = with_cancel(&[VK_RCONTROL], Some(&[VK_F8]));
+        let f8 = Key::from_vk(VK_F8);
+        let esc = Key::from_vk(VK_ESCAPE);
+        arm(true);
+        assert!(!s.event(esc, true).0, "Esc is just a key now");
+        assert!(!s.event(esc, false).0);
+        assert!(rx.is_empty());
+        assert!(s.event(f8, true).0);
+        assert!(s.event(f8, true).0, "repeats stay swallowed");
+        assert!(s.event(f8, false).0);
+        arm(false);
+        assert!(matches!(rx.try_recv(), Ok(Output::Cancel)));
+        assert!(rx.is_empty());
+        assert!(s.swallowed.is_empty());
+    }
+    #[test]
+    fn rebound_cancel_combo_requires_its_modifiers_and_no_others() {
+        let _guard = ARMED.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut s, rx) = with_cancel(&[VK_RCONTROL], Some(&[VK_LCONTROL, 0x51]));
+        let ctrl = Key::from_vk(VK_LCONTROL);
+        let shift = Key::from_vk(VK_LSHIFT);
+        let q = Key::from_vk(0x51);
+        arm(true);
+        // Q alone does nothing.
+        assert!(!s.event(q, true).0);
+        assert!(!s.event(q, false).0);
+        // Shift + Ctrl + Q: extra modifier, no match.
+        s.event(shift, true);
+        s.event(ctrl, true);
+        assert!(!s.event(q, true).0);
+        assert!(!s.event(q, false).0);
+        s.event(shift, false);
+        s.event(ctrl, false);
+        assert!(rx.is_empty());
+        // Ctrl + Q: Ctrl passes through, Q is swallowed with its release.
+        arm(true);
+        assert!(!s.event(ctrl, true).0);
+        assert!(s.event(q, true).0);
+        arm(false);
+        assert!(!s.event(ctrl, false).0);
+        assert!(s.event(q, false).0);
+        assert!(matches!(rx.try_recv(), Ok(Output::Cancel)));
+        assert!(rx.is_empty());
+    }
+    #[test]
+    fn unarmed_or_disabled_cancel_passes_through() {
+        let _guard = ARMED.lock().unwrap_or_else(|e| e.into_inner());
+        let (mut s, rx) = with_cancel(&[VK_RCONTROL], Some(&[VK_F8]));
+        let f8 = Key::from_vk(VK_F8);
+        arm(false);
+        assert!(!s.event(f8, true).0);
+        // Arming while the key is already down does not manufacture a press.
+        arm(true);
+        assert!(!s.event(f8, true).0);
+        assert!(!s.event(f8, false).0);
+        arm(false);
+        assert!(rx.is_empty());
+        let (mut s, rx) = with_cancel(&[VK_RCONTROL], None);
+        let esc = Key::from_vk(VK_ESCAPE);
+        arm(true);
+        assert!(!s.event(esc, true).0, "no cancel binding: Esc passes through");
+        assert!(!s.event(esc, false).0);
+        arm(false);
+        assert!(rx.is_empty());
     }
 }
 
@@ -729,9 +907,11 @@ mod resync_tests {
         let key = Key::from_vk(VK_RCONTROL);
         let mut s = Input {
             bindings: [Some(Binding::new(vec![key], false)), None],
+            cancel: None,
             held: vec![],
             swallowed: vec![],
             active: [false; 2],
+            cancel_active: false,
             resync_requested: false,
             inhibit: false,
             win_mask_pending: false,
@@ -756,9 +936,11 @@ mod resync_tests {
         let key = Key::from_vk(VK_F13);
         let mut s = Input {
             bindings: [Some(Binding::new(vec![key], true)), None],
+            cancel: None,
             held: vec![],
             swallowed: vec![],
             active: [false; 2],
+            cancel_active: false,
             resync_requested: false,
             inhibit: false,
             win_mask_pending: false,
@@ -787,9 +969,11 @@ mod win_release_tests {
         let space = Key::from_vk(VK_SPACE);
         let mut s = Input {
             bindings: [Some(Binding::new(vec![win, space], true)), None],
+            cancel: None,
             held: vec![],
             swallowed: vec![],
             active: [false; 2],
+            cancel_active: false,
             resync_requested: false,
             inhibit: false,
             win_mask_pending: false,
