@@ -439,9 +439,14 @@ function useTheme() {
     }
     const first = shown.current === null
     shown.current = theme
-    const doc = document as Document & { startViewTransition?: (cb: () => void) => unknown }
+    const doc = document as Document & { startViewTransition?: (cb: () => void) => { ready: Promise<void>; finished: Promise<void> } }
     if (first || still || !doc.startViewTransition || reducedMotion()) swap()
-    else doc.startViewTransition(swap)
+    else {
+      // A newer switch skips the running crossfade; its promises reject, which is expected.
+      const t = doc.startViewTransition(swap)
+      t.ready.catch(() => {})
+      t.finished.catch(() => {})
+    }
   }, [theme, still])
   return root
 }
