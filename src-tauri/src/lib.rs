@@ -25,6 +25,8 @@ mod tray;
 pub mod transcribe;
 pub mod engine;
 mod downloads;
+#[cfg(windows)]
+mod window_icon;
 
 
 use commands::{RecordingStartTime, ResamplerFlushState, StreamActiveState, StreamErrorState, StreamHandle};
@@ -122,6 +124,13 @@ pub fn run() {
         .setup(|app| {
             crate::context::prewarm();
             let handle = app.handle().clone();
+
+            #[cfg(windows)]
+            for window in app.webview_windows().values() {
+                if let Err(error) = window_icon::set_native_icons(window) {
+                    log::warn!("Failed to set native window icons: {error}");
+                }
+            }
 
             // Sync autostart with the launch_at_login setting
             {
