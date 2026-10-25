@@ -1,12 +1,13 @@
 import { DEFAULT_SETTINGS, IDLE_BARS, type SurfaceState } from '../surface/store'
-import type { Theme, UiState } from '../surface/types'
+import type { AiStatus, Section, Settings, Theme, UiState } from '../surface/types'
+import { AUDIO_DEVICES, HISTORY, SNIPPETS, VOCABULARY } from './data'
 
 export interface Scenario {
   label: string
   height?: number
   state: (theme: Theme) => Partial<Omit<SurfaceState, 'ui'>> & { ui?: Partial<UiState> }
 }
-export interface Section {
+export interface Section_ {
   id: string
   title: string
   note: string
@@ -15,95 +16,43 @@ export interface Section {
   scenarios: Scenario[]
 }
 
-const ago = (minutes: number) => new Date(Date.now() - minutes * 60_000).toISOString()
-
-const HISTORY = [
-  { text: "Dinner at seven works, I'll book the place on the corner.", timestamp: ago(2 * 24 * 60), wordCount: 11 },
-  { text: 'Looks good to me, merge it.', timestamp: ago(26 * 60), wordCount: 6 },
-  { text: 'Remind me to call the landlord about the heating.', timestamp: ago(25 * 60), wordCount: 9 },
-  { text: 'The CUDA build is about 40 percent faster on the 4080.', timestamp: ago(3 * 60), wordCount: 11 },
-  { text: 'Can you add Anouk to the invite?', timestamp: ago(65), wordCount: 7 },
-  { text: "Let's push the review to Thursday morning.", timestamp: ago(62), wordCount: 7 },
-  { text: 'Hi Mark, thanks for sending this over. The total should be €4,250.', timestamp: ago(30), wordCount: 12 },
-  { text: 'Yeah, we can ship it Friday. The resync thing is done, just waiting on the last review.', timestamp: ago(2), wordCount: 17 },
-]
-const RECENT_HOVER = HISTORY[6].timestamp
-
-const VOCABULARY = [
-  { term: 'SiteLift', replaces: ['sitelift'] },
-  { term: 'Kubernetes', replaces: [] },
-  { term: 'Anouk', replaces: [] },
-  { term: 'PR', replaces: ['p r'] },
-  { term: 'Parakeet', replaces: ['parakit'] },
-  { term: 'Tauri', replaces: ['tory'] },
-  { term: 'WebView2', replaces: ['web view two'] },
-  { term: 'Pieter', replaces: ['peter'] },
-]
-const SNIPPETS = [
-  { trigger: 'my sign off', expansion: 'Best, Pieter' },
-  { trigger: 'office address', expansion: 'Keizersgracht 12, 1015 Amsterdam' },
-  { trigger: 'my email', expansion: 'pieter@example.com' },
-  { trigger: 'standup link', expansion: 'https://meet.example.com/standup' },
-]
-// Design order: the first six rows match the Paper frame.
-const WORDS_VOCAB = [VOCABULARY[0], VOCABULARY[1], VOCABULARY[2]]
-const WORDS_SNIPPETS = [SNIPPETS[0], SNIPPETS[1]]
-
-const DEVICES = [
-  { id: 'default', name: 'Default' },
-  { id: 'Microphone (Brio 500)', name: 'Microphone (Brio 500)' },
-  { id: 'Microphone Array (Laptop microphone)', name: 'Microphone Array (Laptop microphone)' },
-]
+const CONNECTED: AiStatus = { state: 'connected', keyHint: 'sk-ant-••••••••••4f2a', fromEnv: false }
+const NONE: AiStatus = { state: 'none', keyHint: null, fromEnv: false }
+const SETTINGS: Settings = { ...DEFAULT_SETTINGS, onboardingComplete: true, inputDevice: AUDIO_DEVICES[1].id, mediaWhileDictating: 'off', mediaLowerBy: 60 }
 
 /** Everything a populated install has. */
-const home = (extra: Partial<SurfaceState> = {}): Partial<SurfaceState> => ({
+const open = (extra: Partial<SurfaceState> = {}, settings: Partial<Settings> = {}): Partial<SurfaceState> => ({
   phase: 'surface',
   view: 'home',
   history: HISTORY,
   vocabulary: VOCABULARY,
   snippets: SNIPPETS,
-  devices: DEVICES,
-  settings: { ...DEFAULT_SETTINGS, onboardingComplete: true, inputDevice: 'Microphone (Brio 500)' },
-  ai: { state: 'connected', keyHint: 'sk-ant-••••••••••3fA9', fromEnv: false },
+  devices: AUDIO_DEVICES,
+  settings: { ...SETTINGS, ...settings },
+  ai: { anthropic: CONNECTED, openai: NONE },
   ...extra,
 })
+const settings = (section: Section, extra: Partial<SurfaceState> = {}, s: Partial<Settings> = {}) => open({ view: 'settings', section, ...extra }, s)
+const ui = (state: Partial<SurfaceState>, patch: Partial<UiState>) => ({ ...state, ui: patch })
 
 const pill = (p: SurfaceState['pill'], extra: Partial<SurfaceState> = {}): Partial<SurfaceState> => ({
   phase: 'pill',
   pill: p,
   bars: IDLE_BARS,
-  settings: { ...DEFAULT_SETTINGS, onboardingComplete: true },
+  settings: SETTINGS,
   ...extra,
 })
 
-const words = (ui?: Partial<UiState>, empty = false) => ({
-  ...home({ view: 'words', vocabulary: empty ? [] : WORDS_VOCAB.concat([{ term: 'PR', replaces: ['p r'] }]), snippets: empty ? [] : WORDS_SNIPPETS }),
-  ui,
-})
+const LEVELS = { [AUDIO_DEVICES[1].id]: 0.8, [AUDIO_DEVICES[2].id]: 0.15 }
+const WIDE = { width: 700, height: 500 }
 
-// Rows the Words view shows in order: sitelift, kubernetes, anouk, p r, my sign off, office address.
-// The design lists "p r" last; ours lists vocabulary before snippets.
-
-export const SECTIONS: Section[] = [
-  {
-    id: 'ov',
-    title: 'Overlay / v2',
-    note: 'The ink pill states.',
-    width: 300,
-    height: 120,
-    scenarios: [
-      { label: 'Listening', state: () => pill({ kind: 'listening' }) },
-      { label: 'Working', state: () => pill({ kind: 'working' }) },
-      { label: 'No mic', state: () => pill({ kind: 'message', text: 'No microphone' }) },
-      { label: 'Nothing heard', state: () => pill({ kind: 'message', text: "Didn't catch that" }) },
-    ],
-  },
+export const SECTIONS: Section_[] = [
   {
     id: '01',
     title: '01 Idle',
-    note: 'After first run a faint tick marks the spot; it becomes the pill under the pointer.',
+    note: 'A faint tick marks the spot; it becomes the pill under the pointer.',
     width: 300,
-    height: 200,
+    height: 160,
     scenarios: [
       { label: 'Resting', state: () => pill(null, { phase: 'tick' }) },
       { label: 'Hover', state: () => pill(null, { phase: 'tick', tickHover: true }) },
@@ -112,9 +61,9 @@ export const SECTIONS: Section[] = [
   {
     id: '02',
     title: '02 Dictation',
-    note: 'Hold to talk. Tap the hands-free combo to latch; tap again or Esc to stop. Success shows nothing.',
+    note: 'Hold to talk. Tap the hands-free combo to latch; tap again or press Cancel to stop. Success shows nothing.',
     width: 300,
-    height: 200,
+    height: 160,
     scenarios: [
       { label: 'Hold', state: () => pill({ kind: 'listening' }) },
       { label: 'Hands-free', state: () => pill({ kind: 'handsfree' }) },
@@ -122,140 +71,141 @@ export const SECTIONS: Section[] = [
       { label: 'Pasted without AI', state: () => pill({ kind: 'message', text: 'Pasted without AI · offline' }) },
       { label: 'Nothing heard', state: () => pill({ kind: 'message', text: "Didn't catch that" }) },
       { label: 'No mic', state: () => pill({ kind: 'message', text: 'No microphone', action: 'microphone' }) },
-      { label: 'Esc', state: () => pill({ kind: 'message', text: 'Cancelled' }) },
+      { label: 'Cancelled', state: () => pill({ kind: 'message', text: 'Cancelled' }) },
       { label: 'Paste blocked', state: () => pill({ kind: 'message', text: 'Copied. Press Ctrl+V' }) },
+      { label: 'Paused', state: () => pill({ kind: 'paused' }) },
     ],
   },
   {
     id: '03',
-    title: '03 Opened',
-    note: 'Click the pill or the tray icon. Esc, × or click away closes. Click the last dictation to copy it.',
+    title: '03 Home',
+    note: 'The last dictation (click copies), Recent, Words, Snippets; Pause and Settings. Esc or click away closes.',
     width: 360,
-    height: 540,
+    height: 380,
     scenarios: [
-      { label: 'Home', state: () => home() },
-      { label: 'Hover', state: () => ({ ...home(), ui: { forceHover: 'microphone' } }) },
-      { label: 'Pressed', state: () => ({ ...home(), ui: { forcePress: 'words' } }) },
-      { label: 'Hover dictation', state: () => ({ ...home(), ui: { forceHover: 'last' } }) },
-      { label: 'Copied', state: () => ({ ...home(), ui: { copied: 'last' } }) },
+      { label: 'Home', state: () => open() },
+      { label: 'Hover row', state: () => ui(open(), { forceHover: 'words' }) },
+      { label: 'Pressed', state: () => ui(open(), { forcePress: 'snippets' }) },
+      { label: 'Hover dictation', state: () => ui(open(), { forceHover: 'last' }) },
+      { label: 'Copied', state: () => ui(open(), { copied: 'last' }) },
+      { label: 'Paused', state: () => open({ pause: { paused: true, until: null } }) },
+      { label: 'Nothing dictated yet', state: () => open({ history: [], vocabulary: [], snippets: [] }) },
+      { label: 'Keyboard focus', state: () => ui(open(), { forceFocus: 'recent' }) },
     ],
   },
   {
     id: '04',
-    title: '04 Rebind hotkey',
-    note: 'Hover a hotkey row and it offers Change. Click to listen; it saves on release and refuses combos Windows owns.',
+    title: '04 Recent',
+    note: 'The last 20 dictations, kept on this PC. Click one to copy it.',
     width: 360,
-    height: 540,
+    height: 380,
     scenarios: [
-      { label: 'Hover', state: () => ({ ...home(), ui: { forceHover: 'key-hold' } }) },
-      { label: 'Listening', state: () => ({ ...home(), ui: { rebind: { target: 'hold', phase: 'listening', keys: [] } } }) },
-      { label: 'Holding', state: () => ({ ...home(), ui: { rebind: { target: 'hold', phase: 'listening', keys: ['Ctrl', 'Shift'] } } }) },
-      { label: 'Saved', state: () => ({ ...home({ settings: { ...DEFAULT_SETTINGS, onboardingComplete: true, inputDevice: 'Microphone (Brio 500)' } }), ui: { rebind: { target: 'hold', phase: 'saved', keys: ['Ctrl', 'Shift', 'Space'] } } }) },
-      { label: 'Conflict', state: () => ({ ...home(), ui: { rebind: { target: 'hold', phase: 'conflict', keys: ['Win', 'H'], message: 'Used by Windows' } } }) },
+      { label: 'List', state: () => open({ view: 'recent' }) },
+      { label: 'Hover', state: () => ui(open({ view: 'recent' }), { forceHover: `recent-${HISTORY[3].timestamp}` }) },
+      { label: 'Copied', state: () => ui(open({ view: 'recent' }), { copied: HISTORY[3].timestamp }) },
+      { label: 'Empty', state: () => open({ view: 'recent', history: [] }) },
     ],
   },
   {
     id: '05',
-    title: '05 Microphone',
-    note: 'Every input shows a live level. The same list opens from the No microphone pill. Sounds switches the start, done and pasted-without-AI earcons.',
+    title: '05 Words',
+    note: 'Names and words Chirp spells exactly as written. Enter or + adds; hover a row to remove it.',
     width: 360,
-    height: 400,
+    height: 440,
     scenarios: [
-      { label: 'Picker', state: () => home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }) },
-      { label: 'Hover', state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceHover: 'mic-Microphone Array (Laptop microphone)' } }) },
-      {
-        label: 'From No mic',
-        state: () => ({ ...home({ view: 'microphone', devices: [DEVICES[0], DEVICES[2]] }), ui: { forceHover: 'mic-Microphone Array (Laptop microphone)' } }),
-      },
-      { label: 'Sounds on', state: () => home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 }, settings: { ...DEFAULT_SETTINGS, onboardingComplete: true, inputDevice: 'Microphone (Brio 500)', playSoundOnComplete: true } }) },
-      { label: 'Sounds hover', state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceHover: 'sounds' } }) },
-      { label: 'Sounds pressed', state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forcePress: 'sounds' } }) },
-      { label: 'Sounds focus', state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceFocus: 'sounds' } }) },
+      { label: 'List', state: () => open({ view: 'words' }) },
+      { label: 'Hover row', state: () => ui(open({ view: 'words' }), { forceHover: 'word-Parakeet' }) },
+      { label: 'Typing', state: () => ui(open({ view: 'words' }), { forceFocus: 'word-input' }) },
+      { label: 'Empty', state: () => open({ view: 'words', vocabulary: [] }) },
     ],
   },
   {
     id: '06',
-    title: '06 Words',
-    note: 'Say this, get that. One list for spellings and expansions. Enter saves, Esc cancels.',
+    title: '06 Snippets',
+    note: 'Say the phrase and Chirp types the rest.',
     width: 360,
     height: 440,
     scenarios: [
-      { label: 'List', state: () => words() },
-      { label: 'Add', state: () => words({ words: { mode: 'add', say: 'chirpy', get: '' } }) },
-      { label: 'Edit', state: () => words({ words: { mode: 'edit', index: 4, say: 'my sign off', get: 'Best, Pieter' } }) },
-      { label: 'Empty', state: () => words(undefined, true) },
+      { label: 'List', state: () => open({ view: 'snippets' }) },
+      { label: 'Hover row', state: () => ui(open({ view: 'snippets' }), { forceHover: 'snippet-sig' }) },
+      { label: 'Typing', state: () => ui(open({ view: 'snippets' }), { forceFocus: 'snippet-form' }) },
+      { label: 'Empty', state: () => open({ view: 'snippets', snippets: [] }) },
     ],
   },
   {
     id: '07',
-    title: '07 AI cleanup',
-    note: 'Optional. Your own Anthropic key. Without one, Chirp pastes what you said, cleaned up locally.',
-    width: 360,
-    height: 340,
+    title: '07 Settings: Chirp',
+    note: 'Appearance follows Windows unless set. Switching crossfades the page.',
+    ...WIDE,
     scenarios: [
-      { label: 'Off', state: () => home({ view: 'ai', settings: { ...DEFAULT_SETTINGS, onboardingComplete: true, aiCleanup: false } }) },
-      { label: 'Add key', state: () => home({ view: 'ai', ai: { state: 'none', keyHint: null, fromEnv: false } }) },
-      { label: 'Checking', state: () => home({ view: 'ai', ai: { state: 'checking', keyHint: 'sk-ant-••••••••••3fA9', fromEnv: false } }) },
-      { label: 'Connected', state: () => home({ view: 'ai' }) },
-      { label: 'Invalid', state: () => home({ view: 'ai', ai: { state: 'invalid', keyHint: 'sk-ant-••••••••••x7Qe', fromEnv: false } }) },
-      { label: 'Home: key invalid', height: 540, state: () => home({ ai: { state: 'invalid', keyHint: 'sk-ant-••••••••••x7Qe', fromEnv: false } }) },
-      { label: 'Home: offline', height: 540, state: () => home({ ai: { state: 'offline', keyHint: 'sk-ant-••••••••••3fA9', fromEnv: false } }) },
+      { label: 'System', state: () => settings('chirp') },
+      { label: 'Always dark', state: () => settings('chirp', {}, { appearance: 'dark' }) },
+      { label: 'Update ready', state: () => settings('chirp', { update: '2.0.1' }) },
     ],
   },
   {
     id: '08',
-    title: '08 Recent',
-    note: 'The last 20 dictations, kept on this PC. Click one to copy it, or send a misheard word to Words.',
-    width: 360,
-    height: 480,
+    title: '08 Settings: Shortcuts',
+    note: 'Click the keys, press the new combination. Clicking elsewhere keeps the old keys.',
+    ...WIDE,
     scenarios: [
-      { label: 'Hover', state: () => ({ ...home({ view: 'recent' }), ui: { forceHover: `recent-${RECENT_HOVER}` } }) },
-      { label: 'Copied', state: () => ({ ...home({ view: 'recent' }), ui: { copied: RECENT_HOVER } }) },
+      { label: 'Shortcuts', state: () => settings('shortcuts') },
+      { label: 'Hover', state: () => ui(settings('shortcuts'), { forceHover: 'bind-toggle' }) },
+      { label: 'Press keys', state: () => ui(settings('shortcuts'), { rebind: { target: 'cancel', phase: 'listening', keys: [] } }) },
+      { label: 'Holding', state: () => ui(settings('shortcuts'), { rebind: { target: 'hold', phase: 'listening', keys: ['Ctrl', 'Shift'] } }) },
+      { label: 'Saved', state: () => ui(settings('shortcuts', {}, { cancelBinding: { keys: [], label: 'F8', suppress: false } }), { rebind: { target: 'cancel', phase: 'saved', keys: ['F8'] } }) },
+      { label: 'Conflict', state: () => ui(settings('shortcuts'), { rebind: { target: 'hold', phase: 'conflict', keys: ['Win', 'H'], message: 'Used by Windows' } }) },
     ],
   },
   {
     id: '09',
-    title: '09 Paused',
-    note: 'Hotkeys stop listening. The tray icon shows it, and pressing a hotkey says so instead of failing silently.',
-    width: 360,
-    height: 580,
+    title: '09 Settings: Microphone',
+    note: 'Say something. The one that moves is the one that hears you.',
+    ...WIDE,
     scenarios: [
-      { label: 'Pause options', state: () => ({ ...home(), ui: { pauseMenu: true, forceHover: 'pause-hour' } }) },
-      { label: 'Opened', state: () => home({ pause: { paused: true, until: null } }) },
-      { label: 'Hotkey pressed', height: 200, state: () => pill({ kind: 'paused' }) },
+      { label: 'Picker', state: () => settings('microphone', { levels: LEVELS }) },
+      { label: 'Hover', state: () => ui(settings('microphone', { levels: LEVELS }), { forceHover: `mic-${AUDIO_DEVICES[3].id}` }) },
+      { label: 'Unplugged', state: () => settings('microphone', { devices: [AUDIO_DEVICES[0], AUDIO_DEVICES[3]] }) },
     ],
   },
   {
     id: '10',
-    title: '10 First run',
-    note: 'No wizard. The pill teaches the hotkey once the model is ready, then teaches that it can be clicked.',
-    width: 360,
-    height: 260,
+    title: '10 Settings: Sound',
+    note: 'Sounds are off by default. Lower reveals how much quieter.',
+    ...WIDE,
     scenarios: [
-      { label: 'Getting ready', state: () => ({ phase: 'firstrun', firstRun: 'downloading', download: { progress: 18, etaSec: 240 } }) },
-      { label: 'Mic blocked', state: () => ({ phase: 'firstrun', firstRun: 'mic-blocked' }) },
-      { label: 'Ready', state: () => ({ phase: 'firstrun', firstRun: 'ready' }) },
-      { label: 'First words', state: () => pill({ kind: 'listening' }) },
-      { label: 'Done', state: () => pill({ kind: 'message', text: "You're set. Click me anytime.", check: true }) },
+      { label: 'Default', state: () => settings('sound') },
+      { label: 'Lower', state: () => settings('sound', {}, { mediaWhileDictating: 'lower', playSoundOnComplete: true }) },
+      { label: 'Pause', state: () => settings('sound', {}, { mediaWhileDictating: 'pause' }) },
     ],
   },
   {
     id: '11',
-    title: '11 Tray menu and updates',
-    note: 'The tray menu is the native Windows menu (see the running app). Updates wait for a restart you choose.',
-    width: 360,
-    height: 540,
-    scenarios: [{ label: 'Update in app', state: () => home({ update: '2.0.1' }) }],
+    title: '11 Settings: AI cleanup',
+    note: 'Off, Anthropic or OpenAI, each with its own key. Paste a key and it is checked and stored in Windows Credential Manager.',
+    ...WIDE,
+    scenarios: [
+      { label: 'Connected', state: () => settings('ai') },
+      { label: 'Off', state: () => settings('ai', {}, { provider: 'off' }) },
+      { label: 'Add key', state: () => settings('ai', {}, { provider: 'openai' }) },
+      { label: 'Checking', state: () => settings('ai', { ai: { anthropic: CONNECTED, openai: { state: 'checking', keyHint: 'sk-••••••••••9c1e', fromEnv: false } } }, { provider: 'openai' }) },
+      { label: 'Not accepted', state: () => settings('ai', { ai: { anthropic: { state: 'invalid', keyHint: 'sk-ant-••••••••••x7Qe', fromEnv: false }, openai: NONE } }) },
+      { label: 'Offline', state: () => settings('ai', { ai: { anthropic: { ...CONNECTED, state: 'offline' }, openai: NONE } }) },
+      { label: 'From environment', state: () => settings('ai', { ai: { anthropic: { ...CONNECTED, fromEnv: true }, openai: NONE } }) },
+      { label: 'Legacy (provider unset)', state: () => settings('ai', {}, { provider: null, aiCleanup: false }) },
+    ],
   },
   {
-    id: '13',
-    title: '13 Keyboard',
-    note: 'Focus starts on the first row; arrows move, Enter acts, Tab reaches ×, Esc goes back.',
+    id: '12',
+    title: '12 First run',
+    note: 'No wizard. The pill teaches the hotkey once the model is ready, then teaches that it can be clicked.',
     width: 360,
-    height: 540,
+    height: 220,
     scenarios: [
-      { label: 'Focus on Home', state: () => ({ ...home(), ui: { forceFocus: 'microphone' } }) },
-      { label: 'Focus in a drill-in', height: 400, state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceFocus: 'mic-Microphone Array (Laptop microphone)' } }) },
+      { label: 'Getting ready', state: () => ({ phase: 'firstrun', firstRun: 'downloading', download: { progress: 18, etaSec: 240 } }) },
+      { label: 'Mic blocked', state: () => ({ phase: 'firstrun', firstRun: 'mic-blocked' }) },
+      { label: 'Ready', state: () => ({ phase: 'firstrun', firstRun: 'ready' }) },
+      { label: 'Done', state: () => pill({ kind: 'message', text: "You're set. Click me anytime.", check: true }) },
     ],
   },
 ]

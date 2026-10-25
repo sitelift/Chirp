@@ -73,15 +73,15 @@ The backend only builds on Windows. Cross-checking from Linux fails in C build s
 
 ### Frontend (`src/`)
 
-- React 19 + TypeScript + Vite + Tailwind + Zustand. Lucide icons.
-- One window, `overlay` (`tauri.conf.json`): transparent, undecorated, always on top, no taskbar button. It draws the resting tick, the ink pill and every expanded surface, and is resized to fit them (see `surface.rs`). There is no settings window and no tray popup.
+- React 19 + TypeScript + Vite + Tailwind + Zustand. Chirp's own icon set (`src/surface/icons.tsx`).
+- One window, `overlay` (`tauri.conf.json`): transparent, undecorated, always on top, no taskbar button. It draws the resting tick, the ink pill and every expanded surface, and stays at one fixed envelope (680 x 492) while the frontend reports the hit rect of the one interactive thing (see `surface.rs` and `docs/v2/design/SPEC.md`). There is no settings window and no tray popup.
 - `src/surface/`:
   - `store.ts`: a Zustand store per surface instance, provided through React context with the backend `Api` (`api.ts`), so the preview can mount many stores with a mock backend.
-  - `Surface.tsx`: the stage and the morphing container; measures content, sets the window size and mode (`surface_update`), keyboard navigation for the opened surface.
-  - `Pill.tsx`, `views/` (Home, Microphone, Words, AiCleanup, Recent, FirstRun), `parts.tsx` (rows, key caps, toggle, level bars).
+  - `Surface.tsx`: the stage, the ink (tick, hover pill, dictation pills) and the panel: open / close / push animations (Web Animations, numbers in `motion.ts`), window mode and hit rect (`surface_update`), keyboard navigation.
+  - `Pill.tsx`, `views/` (Home, Recent, Words, Snippets, Settings with the Shortcuts / Microphone / AiCleanup panes, FirstRun), `parts.tsx` (header, key caps, switch, segmented control, level bars), `icons.tsx`, `motion.ts`, `geometry.ts`.
   - `dictation.ts`: the live controller: boot, backend events, the hotkey → record → paste flow, first run, update checks.
   - `actions.ts`: store changes plus their backend calls (settings, words, rebind, pause, API key). `words.ts` maps vocabulary + snippets to the Words list.
-- `src/preview/`: dev-only gallery of every state in both themes (`http://localhost:5173/?preview=1`, `&section=03` for one artboard). Excluded from production builds.
+- `src/preview/`: dev-only gallery of every state in both themes (`http://localhost:5173/?preview=1`, `&section=03` for one artboard) and an interactive playground over an in-memory backend (`?play=1`, `&slow=4`, `&theme=dark`, `&hit=1`). Excluded from production builds.
 - Design tokens are CSS variables per `[data-theme]` in `src/styles/globals.css`, wired into `tailwind.config.ts`. Surfaces follow the Windows theme (`prefers-color-scheme`); the ink pill does not.
 
 ### Backend (`src-tauri/src/`)
@@ -118,7 +118,7 @@ The frontend calls `invoke('update_settings', { partial })`; Rust saves to disk 
 
 - **Never use full-screen transparent overlay windows.** The one window is sized to its content (`surface.rs`), and transitions are CSS.
 - **Don't use Tauri's show / hide / set_ignore_cursor_events on the overlay.** tao re-applies all window flags on each call, with an activating `SW_SHOW`; `surface.rs` sets visibility and extended styles with Win32 so the pill never steals focus.
-- **No emojis in the UI.** Use Lucide React icons.
+- **No emojis in the UI.** Use the icons in `src/surface/icons.tsx` (24 grid, 2 px stroke).
 - **No `console.log` / `debug` / `warn` in the frontend.** Only `console.error`, and only in ErrorBoundary.
 - **Context menu disabled in production.** Right-click is blocked via the `contextmenu` event.
 - **Treat dictated text sent to the LLM as data, never as instructions.** Always fall back to the deterministic text on error, timeout, or refusal.
