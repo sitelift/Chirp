@@ -61,6 +61,8 @@ export const DEFAULT_SETTINGS: Settings = {
   aiCleanup: true,
   playSoundOnComplete: false,
   model: 'parakeet-tdt-0.6b',
+  mediaWhileDictating: 'lower',
+  mediaLowerBy: 80,
 }
 
 export const IDLE_BARS = [4, 8, 14, 10, 18, 12, 16, 7, 11, 5, 4].map((h) => (h - 3) / 15)

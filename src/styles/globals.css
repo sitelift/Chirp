@@ -155,6 +155,29 @@
     font-weight: 500;
     white-space: nowrap;
   }
+  /* Range input: 4 px track filled to --pct, 14 px accent thumb. */
+  .slider {
+    -webkit-appearance: none;
+    appearance: none;
+    height: 20px;
+    border-radius: 10px;
+    background: transparent;
+  }
+  .slider::-webkit-slider-runnable-track {
+    height: 4px;
+    border-radius: 2px;
+    background: linear-gradient(to right, var(--accent) var(--pct), var(--track) var(--pct));
+  }
+  .slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 14px;
+    height: 14px;
+    margin-top: -5px;
+    border-radius: 50%;
+    background: var(--accent);
+    box-shadow: 0 0 0 2px var(--surface);
+  }
+
   .group:hover .keycap-hover,
   .group[data-force-hover] .keycap-hover {
     background: var(--key-bg-hover);

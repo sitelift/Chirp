@@ -18,7 +18,13 @@ export interface Settings {
   aiCleanup: boolean
   playSoundOnComplete: boolean
   model: string
+  mediaWhileDictating: MediaMode
+  /** With 'lower': percent quieter, 10..100. */
+  mediaLowerBy: number
 }
+
+/** What other apps' audio does while recording. */
+export type MediaMode = 'off' | 'lower' | 'pause'
 
 export interface VocabEntry {
   term: string
@@ -64,7 +70,7 @@ export type Pill =
   /** Text pills. `action` makes them clickable; `check` adds the amber check. */
   | { kind: 'message'; text: string; action?: 'microphone'; check?: boolean }
 
-export type View = 'home' | 'microphone' | 'words' | 'ai' | 'recent'
+export type View = 'home' | 'microphone' | 'words' | 'ai' | 'recent' | 'settings'
 export type FirstRunStep = 'downloading' | 'mic-blocked' | 'ready'
 
 export type RebindPhase = 'listening' | 'saved' | 'conflict'

@@ -479,6 +479,7 @@ pub async fn start_recording(
     let smart_fmt_for_vad = s.settings.smart_formatting;
     let vocab_for_vad = vocabulary_at_press;
     let snippets_for_vad = s.snippets.clone();
+    let media = (s.settings.media_while_dictating, s.settings.media_lower_by);
     s.recording_state = RecordingState::Recording;
     s.vad_was_active = false;
     drop(s);
@@ -642,6 +643,7 @@ pub async fn start_recording(
     }
 
     trace.stage("capture_start", capture_start);
+    crate::media::begin(media.0, media.1);
     // Bump recording generation and spawn a 10-minute safety timeout.
     // If the user forgets to release the hotkey, this prevents unbounded RAM usage.
     let generation = {
@@ -682,6 +684,7 @@ pub async fn stop_recording(
     vad_flush_handle: State<'_, VadFlushHandle>,
 ) -> Result<TranscriptionResult, String> {
     arm_escape(false);
+    crate::media::end();
     let start_time = Instant::now();
     let trace = crate::performance::Trace::current().unwrap_or_else(crate::performance::Trace::start);
     trace.release();
@@ -1221,6 +1224,7 @@ pub async fn cancel_recording(
     stream_active_state: State<'_, StreamActiveState>,
 ) -> Result<(), String> {
     arm_escape(false);
+    crate::media::end();
     if let Some(speculation) = app_handle.state::<crate::speculative::RecordingSpeculation>().0.lock().unwrap_or_else(|e|e.into_inner()).take() { speculation.cancel(); }
     // Deactivate zombie callbacks before dropping the stream
     {

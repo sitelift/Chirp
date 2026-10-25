@@ -67,7 +67,24 @@ pub struct Settings {
     /// "Use Claude" in AI cleanup. Only takes effect with a stored key.
     #[serde(default = "default_true")]
     pub ai_cleanup: bool,
+    /// What happens to other apps' audio while recording (media.rs).
+    #[serde(default)]
+    pub media_while_dictating: MediaMode,
+    /// With `Lower`: how much quieter, in percent of each app's volume.
+    #[serde(default = "default_media_lower_by")]
+    pub media_lower_by: u8,
 }
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum MediaMode {
+    Off,
+    #[default]
+    Lower,
+    Pause,
+}
+
+pub fn default_media_lower_by() -> u8 { 80 }
 
 fn default_overlay_position() -> serde_json::Value {
     serde_json::Value::String("bottom".into())
@@ -102,6 +119,8 @@ impl Default for Settings {
             beam_search: false,
             dark_mode: false,
             ai_cleanup: true,
+            media_while_dictating: MediaMode::Lower,
+            media_lower_by: default_media_lower_by(),
         }
     }
 }

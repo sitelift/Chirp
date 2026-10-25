@@ -70,14 +70,21 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
     "Win32_Storage_FileSystem",
 ] }
-# COM interfaces for UI Automation (browser address bar); same version Tauri already pulls in.
+# COM interfaces for UI Automation (browser address bar), per-app volume and
+# system media controls (media.rs); same version Tauri already pulls in.
 windows = { version = "0.61", features = [
+    "Foundation",
+    "Media_Control",
     "Win32_Foundation",
+    "Win32_Media_Audio",
     "Win32_UI_Accessibility",
     "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
     "Win32_System_Ole",
     "Win32_System_Variant",
 ] }
+# AsyncStatus for the media controls; the version `windows` 0.61 uses.
+windows-future = "0.2"
 
 [profile.release]
 opt-level = 3

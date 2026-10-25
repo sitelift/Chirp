@@ -131,7 +131,7 @@ export const SECTIONS: Section[] = [
     title: '03 Opened',
     note: 'Click the pill or the tray icon. Esc, × or click away closes. Click the last dictation to copy it.',
     width: 360,
-    height: 500,
+    height: 540,
     scenarios: [
       { label: 'Home', state: () => home() },
       { label: 'Hover', state: () => ({ ...home(), ui: { forceHover: 'microphone' } }) },
@@ -145,7 +145,7 @@ export const SECTIONS: Section[] = [
     title: '04 Rebind hotkey',
     note: 'Hover a hotkey row and it offers Change. Click to listen; it saves on release and refuses combos Windows owns.',
     width: 360,
-    height: 500,
+    height: 540,
     scenarios: [
       { label: 'Hover', state: () => ({ ...home(), ui: { forceHover: 'key-hold' } }) },
       { label: 'Listening', state: () => ({ ...home(), ui: { rebind: { target: 'hold', phase: 'listening', keys: [] } } }) },
@@ -198,8 +198,8 @@ export const SECTIONS: Section[] = [
       { label: 'Checking', state: () => home({ view: 'ai', ai: { state: 'checking', keyHint: 'sk-ant-••••••••••3fA9', fromEnv: false } }) },
       { label: 'Connected', state: () => home({ view: 'ai' }) },
       { label: 'Invalid', state: () => home({ view: 'ai', ai: { state: 'invalid', keyHint: 'sk-ant-••••••••••x7Qe', fromEnv: false } }) },
-      { label: 'Home: key invalid', height: 500, state: () => home({ ai: { state: 'invalid', keyHint: 'sk-ant-••••••••••x7Qe', fromEnv: false } }) },
-      { label: 'Home: offline', height: 500, state: () => home({ ai: { state: 'offline', keyHint: 'sk-ant-••••••••••3fA9', fromEnv: false } }) },
+      { label: 'Home: key invalid', height: 540, state: () => home({ ai: { state: 'invalid', keyHint: 'sk-ant-••••••••••x7Qe', fromEnv: false } }) },
+      { label: 'Home: offline', height: 540, state: () => home({ ai: { state: 'offline', keyHint: 'sk-ant-••••••••••3fA9', fromEnv: false } }) },
     ],
   },
   {
@@ -218,7 +218,7 @@ export const SECTIONS: Section[] = [
     title: '09 Paused',
     note: 'Hotkeys stop listening. The tray icon shows it, and pressing a hotkey says so instead of failing silently.',
     width: 360,
-    height: 540,
+    height: 580,
     scenarios: [
       { label: 'Pause options', state: () => ({ ...home(), ui: { pauseMenu: true, forceHover: 'pause-hour' } }) },
       { label: 'Opened', state: () => home({ pause: { paused: true, until: null } }) },
@@ -244,7 +244,7 @@ export const SECTIONS: Section[] = [
     title: '11 Tray menu and updates',
     note: 'The tray menu is the native Windows menu (see the running app). Updates wait for a restart you choose.',
     width: 360,
-    height: 500,
+    height: 540,
     scenarios: [{ label: 'Update in app', state: () => home({ update: '2.0.1' }) }],
   },
   {
@@ -252,7 +252,7 @@ export const SECTIONS: Section[] = [
     title: '13 Keyboard',
     note: 'Focus starts on the first row; arrows move, Enter acts, Tab reaches ×, Esc goes back.',
     width: 360,
-    height: 500,
+    height: 540,
     scenarios: [
       { label: 'Focus on Home', state: () => ({ ...home(), ui: { forceFocus: 'microphone' } }) },
       { label: 'Focus in a drill-in', height: 400, state: () => ({ ...home({ view: 'microphone', levels: { 'Microphone (Brio 500)': 1 } }), ui: { forceFocus: 'mic-Microphone Array (Laptop microphone)' } }) },

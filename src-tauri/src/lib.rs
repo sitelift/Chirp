@@ -12,6 +12,7 @@ mod hotkey_input;
 mod hotkey_migration;
 mod inject;
 mod levels;
+mod media;
 pub mod llm;
 pub mod router;
 pub mod speculative;
@@ -162,6 +163,7 @@ pub fn run() {
             crate::downloads::background(handle.clone());
             crate::tray::build(&handle)?;
             crate::ai::init(&handle);
+            crate::media::init();
 
             // Start the global hotkey listener
             {
@@ -194,6 +196,7 @@ pub fn run() {
         .run(|_app_handle, event| {
             if let tauri::RunEvent::Exit = event {
                 hotkey::stop();
+                crate::media::shutdown();
                 log::info!("App exiting — cleaned up hotkey");
             }
         });

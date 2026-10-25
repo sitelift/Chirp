@@ -7,6 +7,7 @@ import { Words } from './views/Words'
 import { AiCleanup } from './views/AiCleanup'
 import { Recent } from './views/Recent'
 import { FirstRun } from './views/FirstRun'
+import { Settings } from './views/Settings'
 import { dismissPill, escape, openSurface, pauseHotkeys, closeSurface } from './actions'
 import { dictation } from './dictation'
 import type { View } from './types'
@@ -29,6 +30,7 @@ const VIEWS: Record<View, () => ReactNode> = {
   words: () => <Words />,
   ai: () => <AiCleanup />,
   recent: () => <Recent />,
+  settings: () => <Settings />,
 }
 
 function Panel() {
@@ -47,7 +49,9 @@ function Panel() {
   }, [view, ctx.still])
 
   const onKeyDown = (e: KeyboardEvent) => {
-    const inField = (e.target as HTMLElement).tagName === 'INPUT'
+    // Text fields keep the arrows; a slider takes left/right and leaves up/down to the list.
+    const target = e.target as HTMLInputElement
+    const inField = target.tagName === 'INPUT' && target.type !== 'range'
     if (e.key === 'Escape') {
       e.preventDefault()
       escape(ctx)

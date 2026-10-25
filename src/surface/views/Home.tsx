@@ -179,6 +179,7 @@ export function Home() {
       <NavRow id="words" label="Words" value={count} onClick={() => drill(ctx, 'words')} />
       <NavRow id="ai" label="AI cleanup" value={aiValue(ai, aiEnabled)} onClick={() => drill(ctx, 'ai')} />
       <NavRow id="recent" label="Recent" onClick={() => drill(ctx, 'recent')} />
+      <NavRow id="settings" label="Settings" onClick={() => drill(ctx, 'settings')} />
       <Divider />
       <BottomRow />
     </div>
