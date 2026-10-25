@@ -41,6 +41,8 @@ pub struct Settings {
     pub launch_at_login: bool,
     pub play_sound_on_complete: bool,
     pub auto_dismiss_overlay: bool,
+    /// Unused since the deterministic cleanup was removed; kept so settings
+    /// files keep round-tripping.
     pub smart_formatting: bool,
     #[serde(default, alias = "capture_dictations")]
     pub capture_dictations: bool,
@@ -172,13 +174,10 @@ pub struct SnippetEntry {
     pub expansion: String,
 }
 
-/// A vocabulary entry: a canonical term plus optional list of mishearings
-/// to find/replace toward this term.
+/// A Words entry: a spelling the cleanup model receives in its dictionary.
 ///
-/// `term` is what the ASR is biased toward (sherpa-onnx hotwords) and what
-/// every `replaces` entry is corrected TO during the post-ASR find/replace
-/// pass. The `replaces` list is purely for deterministic text substitution
-/// — it never touches the ASR or LLM.
+/// `replaces` (mishearings for the old find/replace pass) stays on disk for
+/// compatibility and is ignored everywhere.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VocabEntry {
     pub term: String,
@@ -279,12 +278,6 @@ pub struct AppState {
     /// Recognizer is in its own Arc so transcription can proceed without holding
     /// the main state lock. The sherpa C API is thread-safe (Send+Sync).
     pub recognizer: Option<Arc<SherpaRecognizer>>,
-    /// Set when the user updates vocabulary. The recognizer is rebuilt lazily
-    /// at the start of the next idle recording, NOT inline in update_vocabulary.
-    /// Inline rebuilds caused heap corruption when the frontend fired multiple
-    /// rapid update_vocabulary calls — sherpa-onnx can't handle rapid
-    /// create/destroy of hotword-enabled recognizers.
-    pub recognizer_dirty: bool,
 }
 
 impl AppState {
@@ -299,7 +292,6 @@ impl AppState {
             vad_was_active: false,
             hotkey_status: HotkeyStatus::Idle,
             recognizer: None,
-            recognizer_dirty: false,
         }
     }
 }
@@ -312,16 +304,6 @@ pub type AudioBuffer = Arc<std::sync::Mutex<Vec<f32>>>;
 
 /// Accumulated transcripts from VAD segments, filled by receiver thread
 pub type VadTranscripts = Arc<std::sync::Mutex<Vec<String>>>;
-
-/// Accumulated per-segment CLEANED transcripts from VAD segments, filled by
-/// the receiver thread after it runs the regex + vocabulary pass on each
-/// segment as it arrives. Joined in stop_recording.
-///
-/// Newtype wrapper (not a type alias) so Tauri's state manager can
-/// distinguish it from `VadTranscripts` — both wrap the same inner type
-/// and Tauri keys state by the outer Rust type.
-#[derive(Default)]
-pub struct VadCleanedTranscripts(pub Arc<std::sync::Mutex<Vec<String>>>);
 
 /// Handle to the VAD receiver thread (joined on stop_recording)
 pub struct VadReceiverHandle(pub std::sync::Mutex<Option<std::thread::JoinHandle<()>>>);

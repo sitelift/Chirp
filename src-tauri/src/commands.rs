@@ -193,9 +193,8 @@ pub async fn update_settings(
     if partial.get("beamSearch").is_some() || partial.get("beam_search").is_some() {
         let model = s.settings.model.clone();
         let beam_search = s.settings.beam_search;
-        let vocab = s.vocabulary.clone();
         if transcribe::model_exists(&model) {
-            match transcribe::load_model(&model, beam_search, &vocab) {
+            match transcribe::load_model(&model, beam_search) {
                 Ok(recognizer) => {
                     s.recognizer = Some(Arc::new(recognizer));
                     log::info!("Recognizer rebuilt (beam_search={beam_search})");
@@ -204,7 +203,7 @@ pub async fn update_settings(
                     log::error!("Failed to rebuild recognizer: {e}");
                     // Fallback to greedy
                     if beam_search {
-                        if let Ok(recognizer) = transcribe::load_model(&model, false, &vocab) {
+                        if let Ok(recognizer) = transcribe::load_model(&model, false) {
                             s.recognizer = Some(Arc::new(recognizer));
                             log::info!("Recognizer rebuilt with greedy search (fallback)");
                         }
@@ -251,40 +250,11 @@ pub async fn update_vocabulary(
     if entries.len() > 500 {
         return Err("Vocabulary cannot exceed 500 entries".to_string());
     }
+    // Words are spellings for the cleanup model, read at the next press; the
+    // recognizer does not depend on them.
     let mut s = state.lock().await;
-
-    // Compare the OLD term list to the NEW term list. The recognizer's
-    // hotwords automaton is built from `term` only — it does not depend on
-    // `replaces`. So if the user edited only `replaces` lists (the common
-    // case while building up the find/replace dictionary), we should NOT
-    // mark the recognizer dirty, because rebuilding the recognizer
-    // unnecessarily across many edits has been observed to cause sherpa-onnx
-    // heap corruption (STATUS_HEAP_CORRUPTION 0xc0000374).
-    //
-    // The post-ASR find/replace pass (cleanup::apply_replacements) reads
-    // s.vocabulary live each call, so replaces edits take effect on the very
-    // next dictation regardless of dirty flag — no rebuild required.
-    let old_terms: Vec<&str> = s.vocabulary.iter().map(|e| e.term.as_str()).collect();
-    let new_terms: Vec<&str> = entries.iter().map(|e| e.term.as_str()).collect();
-    let terms_changed = old_terms != new_terms;
-
     s.vocabulary = entries;
     settings::save_vocabulary(&s.vocabulary)?;
-
-    if terms_changed {
-        // Term list actually changed — recognizer needs rebuild for hotwords
-        // automaton to reflect the new canonical terms. Lazy rebuild happens
-        // at the end of the next stop_recording (NOT inline here, to prevent
-        // rapid create/destroy churn under settings-sync echo).
-        s.recognizer_dirty = true;
-        log::info!(
-            "Vocabulary terms changed ({} entries) — recognizer marked for rebuild",
-            s.vocabulary.len()
-        );
-    }
-    // else: only `replaces` lists changed — find/replace will pick them up
-    // automatically on the next dictation, no rebuild needed.
-
     Ok(())
 }
 
@@ -338,7 +308,6 @@ pub async fn start_recording(
     recording_start: State<'_, RecordingStartTime>,
     stream_active_state: State<'_, StreamActiveState>,
     vad_transcripts: State<'_, VadTranscripts>,
-    vad_cleaned: State<'_, VadCleanedTranscripts>,
     vad_receiver_handle: State<'_, VadReceiverHandle>,
     vad_sender: State<'_, VadSender>,
     vad_flush_handle: State<'_, VadFlushHandle>,
@@ -347,12 +316,12 @@ pub async fn start_recording(
     let context_app = pending.context().app.clone();
     let (vocabulary_at_press, ai_on, speculation_on) = {
         let s = state.lock().await;
-        (s.vocabulary.clone(), s.settings.ai_cleanup, s.settings.speculative_cleanup)
+        (s.vocabulary.clone(), s.settings.provider() != Provider::Off, s.settings.speculative_cleanup)
     };
     let dictionary_terms: Vec<String> = vocabulary_at_press.iter().map(|v|v.term.clone()).collect();
     let context = Arc::new(DictationContext { terms:dictionary_terms.clone(), pending: std::sync::Mutex::new(Some(pending)), resolved: std::sync::OnceLock::new() });
     *app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()) = Some(context.clone());
-    // AI cleanup switched off: same pool, no key, so prewarm and speculation stay silent.
+    // Provider Off: same pool, no key, so prewarm and speculation stay silent.
     let llm = {
         let client = app_handle.state::<crate::llm::LlmClient>().inner().clone();
         if ai_on { client } else { client.without_key() }
@@ -436,7 +405,7 @@ pub async fn start_recording(
     if settings::capture_dictations_enabled(&s.settings) {
         let capture = crate::capture::Session::new(serde_json::json!({
             "model":s.settings.model,"beam_search":s.settings.beam_search,
-            "smart_formatting":s.settings.smart_formatting,
+            "provider":s.settings.provider(),
             "speculative_cleanup":s.settings.speculative_cleanup,
             "vocabulary":vocabulary_at_press,"snippets":s.snippets,
             "provider_requested":std::env::var("CHIRP_ASR_PROVIDER").unwrap_or_else(|_|"auto".into())
@@ -445,15 +414,6 @@ pub async fn start_recording(
         capture.set("dictionary_terms", &dictionary_terms);
         trace.set_capture(capture);
     }
-
-    // NOTE: vocab-dirty rebuild does NOT happen here. Rebuilding the
-    // recognizer takes ~3 seconds (loads onnx files), and doing that inside
-    // start_recording blocks audio capture until it completes — the user
-    // presses the hotkey, sees nothing for 3 seconds, releases, and the
-    // recording is empty. The rebuild instead happens at the END of
-    // stop_recording so the first dictation after a vocab edit uses stale
-    // hotwords (one cycle of staleness — acceptable) but recording-start is
-    // never blocked.
 
     // Deactivate any zombie callbacks from a previous stream before clearing the buffer.
     // On macOS, cpal/CoreAudio callbacks can outlive the Stream drop.
@@ -474,19 +434,12 @@ pub async fn start_recording(
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .clear();
-    vad_cleaned
-        .0
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .clear();
 
     // Record wall-clock start time for sample rate sanity check
     *recording_start.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(Instant::now());
 
     let device_id = s.settings.input_device.clone();
     let recognizer_for_vad = s.recognizer.clone();
-    let smart_fmt_for_vad = s.settings.smart_formatting;
-    let vocab_for_vad = vocabulary_at_press;
     let snippets_for_vad = s.snippets.clone();
     let media = (s.settings.media_while_dictating, s.settings.media_lower_by);
     s.recording_state = RecordingState::Recording;
@@ -514,7 +467,6 @@ pub async fn start_recording(
                     Some(vad_arc.clone());
 
                 let transcripts = vad_transcripts.inner().clone();
-                let cleaned = vad_cleaned.0.clone();
                 let state_for_thread = state.inner().clone();
                 let rec = recognizer_for_vad.clone().unwrap();
                 let speculation_for_vad = speculation.clone();
@@ -555,32 +507,16 @@ pub async fn start_recording(
                                 continue;
                             }
                             log::info!("VAD segment {seg_idx} transcript: '{raw}'");
-                            transcripts
-                                .lock()
-                                .unwrap_or_else(|e| e.into_inner())
-                                .push(raw.clone());
-
-                            // Regex/vocab pre-pass. Snippets are expanded on
-                            // the joined prefix below, in the release order.
-                            let stage = Instant::now();
-                            let after_regex = cleanup::cleanup_text(&raw, smart_fmt_for_vad);
-                            if let Some(t) = crate::performance::Trace::current() { t.stage("cleanup", stage); }
-                            let stage = Instant::now();
-                            let after_vocab =
-                                cleanup::apply_replacements(&after_regex, &vocab_for_vad);
-                            if let Some(t) = crate::performance::Trace::current() { t.stage("vocabulary", stage); }
-
-                            // Speculate on the entire deterministic prefix;
-                            // newer prefixes supersede older requests.
+                            // Speculate on the entire deterministic prefix,
+                            // built exactly as stop_recording builds the
+                            // final text; newer prefixes supersede older ones.
                             let text_so_far = {
-                                let mut segments = cleaned.lock().unwrap_or_else(|e| e.into_inner());
-                                segments.push(after_vocab);
-                                speculation_for_vad.as_ref().map(|_| cleanup::join_cleaned_segments_with_formatting(&segments, smart_fmt_for_vad))
+                                let mut segments = transcripts.lock().unwrap_or_else(|e| e.into_inner());
+                                segments.push(raw);
+                                speculation_for_vad.as_ref().map(|_| cleanup::spoken_text(&segments))
                             };
                             if let (Some(speculation), Some(text_so_far)) = (&speculation_for_vad, text_so_far) {
-                                let text_so_far = cleanup::repair_vad_boundary_artifacts(&text_so_far);
-                                let text_so_far = snippets::apply_snippets(&text_so_far, &snippets_for_vad);
-                                speculation.offer(text_so_far);
+                                speculation.offer(snippets::apply_snippets(&text_so_far, &snippets_for_vad));
                             }
                             seg_idx += 1;
                         }
@@ -688,7 +624,6 @@ pub async fn stop_recording(
     recording_start: State<'_, RecordingStartTime>,
     stream_active_state: State<'_, StreamActiveState>,
     vad_transcripts: State<'_, VadTranscripts>,
-    vad_cleaned: State<'_, VadCleanedTranscripts>,
     vad_receiver_handle: State<'_, VadReceiverHandle>,
     vad_sender: State<'_, VadSender>,
     vad_flush_handle: State<'_, VadFlushHandle>,
@@ -858,19 +793,13 @@ pub async fn stop_recording(
     // Grab what we need from state before entering blocking thread.
     // Clone the Arc<SherpaRecognizer> so we can release the state lock
     // before the expensive transcription step.
-    let (recognizer, smart_fmt, vocab, snips, vad_was_active) = {
+    let (recognizer, snips, vad_was_active) = {
         let mut s = state.lock().await;
         let rec = s.recognizer.clone().ok_or("model_not_loaded".to_string())?;
         let vad_was_active = s.vad_was_active;
         // Reset for the next recording session, regardless of which path we take.
         s.vad_was_active = false;
-        (
-            rec,
-            s.settings.smart_formatting,
-            s.vocabulary.clone(),
-            s.snippets.clone(),
-            vad_was_active,
-        )
+        (rec, s.snippets.clone(), vad_was_active)
     };
 
     // Drain VAD transcripts accumulated by the receiver thread. Whether we
@@ -880,59 +809,23 @@ pub async fn stop_recording(
         let mut vt = vad_transcripts.lock().unwrap_or_else(|e| e.into_inner());
         std::mem::take(&mut *vt)
     };
-    // Drain the streaming-cleaned segments produced by the VAD receiver thread.
-    let vad_cleaned_texts: Vec<String> = {
-        let mut vc = vad_cleaned.0.lock().unwrap_or_else(|e| e.into_inner());
-        std::mem::take(&mut *vc)
-    };
     let use_vad = vad_was_active;
     if use_vad {
         if let Some(capture) = capture_guard.session() { capture.set("raw_asr_text", vad_texts.join(" ")); }
     }
     log::info!(
-        "transcription path: vad_was_active={}, vad_texts_count={}, vad_cleaned_count={}, fallback_used={}",
+        "transcription path: vad_was_active={}, vad_texts_count={}, fallback_used={}",
         vad_was_active,
         vad_texts.len(),
-        vad_cleaned_texts.len(),
         !vad_was_active
     );
 
     // The streaming path bypasses the blocking ASR fallback.
     let post_start = Instant::now();
-    let formatted_opt = if use_vad {
-        if vad_cleaned_texts.is_empty() {
-            log::warn!("VAD cleaned transcripts empty — returning empty result (no fallback)");
-            let mut s = state.lock().await;
-            s.recording_state = RecordingState::Idle;
-            return Err("transcription_failed".into());
-        }
-        // Smart join: strip mid-sentence orphan periods, merge stub-end
-        // segments with their continuation, drop internal paragraph breaks,
-        // and re-run the regex pre-pass on the joined output to catch
-        // cross-boundary fillers. See cleanup::join_cleaned_segments_with_formatting.
-        let joined = cleanup::join_cleaned_segments_with_formatting(&vad_cleaned_texts, smart_fmt);
-        if joined.trim().is_empty() {
-            log::warn!(
-                "VAD cleaned transcripts all whitespace after join — returning empty result"
-            );
-            let mut s = state.lock().await;
-            s.recording_state = RecordingState::Idle;
-            return Err("transcription_failed".into());
-        }
-        log::info!(
-            "Streaming cleanup: {} segments smart-joined, total {} chars",
-            vad_cleaned_texts.len(),
-            joined.len()
-        );
-        Some(joined)
+    let segments: Result<Vec<String>, String> = if use_vad {
+        Ok(vad_texts)
     } else {
-        None
-    };
-
-    let fallback_capture = capture_guard.session();
-    let result = if let Some(text) = formatted_opt {
-        Ok(text)
-    } else {
+        let fallback_capture = capture_guard.session();
         tokio::task::spawn_blocking(move || {
             // Fallback: chunk the full audio buffer and transcribe (original behavior)
             let chunks = crate::transcribe::chunk_audio(&audio_data, 16000, 30.0, 1.0);
@@ -953,62 +846,40 @@ pub async fn stop_recording(
 
             let merged = crate::transcribe::merge_transcriptions(transcriptions);
             if let Some(capture) = &fallback_capture { capture.set("raw_asr_text", &merged); }
-            if merged.is_empty() {
-                log::warn!("Transcription returned empty text");
-                return Err("transcription_failed".to_string());
-            }
-
-            // Regex pre-pass: remove fillers, spoken punctuation, format numbers
-            let stage = Instant::now();
-            let formatted = cleanup::cleanup_text(&merged, smart_fmt);
-            if let Some(t) = crate::performance::Trace::current() { t.stage("cleanup", stage); }
-
-            // Vocabulary find/replace: deterministic post-ASR fixup for things
-            // hotword biasing can't fix (homophones, brand spellings, stable
-            // mishearings). Each VocabEntry's `replaces` list maps mishearings
-            // to its canonical `term`, case-insensitive at word boundaries.
-            let stage = Instant::now();
-            let after_replace = cleanup::apply_replacements(&formatted, &vocab);
-            if let Some(t) = crate::performance::Trace::current() { t.stage("vocabulary", stage); }
-
-            log::info!("After regex+replace: '{after_replace}'");
-            Ok(after_replace)
+            Ok(vec![merged])
         })
         .await
         .map_err(|e| format!("Task failed: {e}"))?
     };
+    trace.stage("asr_tail", post_start);
 
-    // If transcription failed, reset state before returning error
-    let formatted = match result {
-        Ok(text) => text,
-        Err(e) => {
+    // Join the segments (repairing VAD split artifacts) and convert spoken
+    // commands. Snippets expand after, so expansions (URLs, emails,
+    // addresses) survive as literal text through the cleanup model.
+    let stage = Instant::now();
+    let result = segments.map(|segments| cleanup::spoken_text(&segments));
+    trace.stage("spoken_commands", stage);
+    let result = match result {
+        Ok(text) if !text.trim().is_empty() => text,
+        other => {
+            log::warn!("No transcript ({})", other.err().unwrap_or_else(|| "empty text".into()));
             let mut s = state.lock().await;
             s.recording_state = RecordingState::Idle;
-            return Err(e);
+            return Err("transcription_failed".into());
         }
     };
+    log::info!("Deterministic text: {} chars", result.len());
 
-    // Cloud LLM cleanup slots in here (see docs/v2/DIRECTION.md). Until then
-    // the deterministic regex + vocabulary result is final.
-    trace.stage("asr_and_cleanup_tail", post_start);
     let mut was_cleaned_up = false;
     let snippets_start = Instant::now();
-
-    // One last deterministic boundary pass catches artifacts from VAD
-    // splits, e.g. "that Much" or "and then Than".
-    let result = cleanup::repair_vad_boundary_artifacts(&formatted);
-
-    // Snippet expansion runs last so expansions (URLs, emails, addresses)
-    // survive as literal text through any cleanup pass.
     let result = snippets::apply_snippets(&result, &snips);
-
-    trace.stage("boundary_and_snippets", snippets_start);
+    trace.stage("snippets", snippets_start);
     let llm_start = Instant::now();
     let client = app_handle.state::<crate::llm::LlmClient>().inner().clone();
     let context = app_handle.state::<RecordingContext>().0.lock().unwrap_or_else(|e| e.into_inner()).clone();
     let dictionary_terms = context.as_ref().map(|context|context.terms.clone()).unwrap_or_default();
     let ctx = context.map(|context|context.resolve()).unwrap_or_else(crate::context::foreground);
-    let ai_on = state.lock().await.settings.ai_cleanup;
+    let ai_on = state.lock().await.settings.provider() != Provider::Off;
     let needs_llm = ai_on && client.has_key() && crate::router::needs_llm(&result, &ctx.app);
     let mut fallback_reason: Option<String> = None;
     if let Some(capture) = capture_guard.session() {
@@ -1121,68 +992,6 @@ pub async fn stop_recording(
     }
     s.recording_state = RecordingState::Idle;
 
-    // If vocabulary terms changed since the last recording, rebuild the
-    // recognizer NOW that the user has their text and we're back in Idle.
-    // Doing this here instead of in start_recording avoids blocking the next
-    // hotkey press for the ~3 second model load time.
-    //
-    // The rebuild is wrapped in catch_unwind so a sherpa-onnx C-side panic
-    // produces an error log instead of killing the process. The recognizer
-    // would then stay stale (old vocab) but the app keeps running.
-    if s.recognizer_dirty {
-        // Drop the old Arc BEFORE building the new recognizer. Any concurrent
-        // user of the old recognizer (VAD receiver thread, in-flight transcribe)
-        // already finished above. Forcing the Drop now means sherpa-onnx's
-        // SherpaOnnxDestroyOfflineRecognizer runs synchronously, before we
-        // allocate the next hotword automaton — minimizing the window where
-        // both old and new recognizers exist simultaneously, which is the
-        // configuration that empirically triggered heap corruption.
-        s.recognizer = None;
-
-        let model = s.settings.model.clone();
-        let beam_search = s.settings.beam_search;
-        let vocab = s.vocabulary.clone();
-        if transcribe::model_exists(&model) {
-            let load_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                transcribe::load_model(&model, beam_search, &vocab)
-            }));
-            match load_result {
-                Ok(Ok(rec)) => {
-                    s.recognizer = Some(Arc::new(rec));
-                    s.recognizer_dirty = false;
-                    log::info!(
-                        "Recognizer rebuilt post-recording with {} vocabulary terms",
-                        vocab.len()
-                    );
-                }
-                Ok(Err(e)) => {
-                    log::error!("Failed to rebuild recognizer post-recording: {e}");
-                    // Try to fall back to a no-vocab recognizer so dictation
-                    // still works, just without hotword biasing.
-                    if let Ok(rec) = transcribe::load_model(&model, beam_search, &[]) {
-                        s.recognizer = Some(Arc::new(rec));
-                        log::warn!("Fell back to recognizer without hotwords");
-                    }
-                    s.recognizer_dirty = false;
-                }
-                Err(panic) => {
-                    let msg = panic
-                        .downcast_ref::<&str>()
-                        .map(|s| s.to_string())
-                        .or_else(|| panic.downcast_ref::<String>().cloned())
-                        .unwrap_or_else(|| "<unknown>".to_string());
-                    log::error!(
-                        "sherpa-onnx PANICKED during recognizer rebuild: {msg} — falling back to no-vocab recognizer"
-                    );
-                    if let Ok(rec) = transcribe::load_model(&model, beam_search, &[]) {
-                        s.recognizer = Some(Arc::new(rec));
-                    }
-                    s.recognizer_dirty = false;
-                }
-            }
-        }
-    }
-
     // Notify all windows (including settings) that history changed
     if let Some(entry) = new_entry {
         let _ = app_handle.emit("history-updated", entry);
@@ -1284,8 +1093,7 @@ pub async fn download_model(
     // Load the recognizer into app state immediately so recording works
     // without requiring a restart.
     let mut s = state.lock().await;
-    let vocab = s.vocabulary.clone();
-    let recognizer = transcribe::load_model(&model, s.settings.beam_search, &vocab)
+    let recognizer = transcribe::load_model(&model, s.settings.beam_search)
         .map_err(|e| format!("Model downloaded but failed to load: {e}"))?;
     s.recognizer = Some(Arc::new(recognizer));
     log::info!("Recognizer loaded after model download");

@@ -1,436 +1,344 @@
+//! The deterministic text pass: what Chirp does to the recognizer's output
+//! without a model.
+//!
+//! Parakeet already punctuates and capitalizes, so this is deliberately small:
+//!
+//! 1. [`join_segments`]: join the VAD segments' transcripts, repairing the
+//!    artifacts a mid-sentence VAD split leaves (an orphan period, a
+//!    capitalized continuation, a duplicated boundary word).
+//! 2. [`convert_spoken_commands`]: turn spoken punctuation and layout
+//!    commands ("comma", "new line", ...) into the characters they ask for.
+//!
+//! Everything else (fillers, numbers, self-corrections, register) is left to
+//! the cleanup model; with the provider Off the recognizer's words are kept.
 use regex::Regex;
 use std::sync::OnceLock;
 
-use crate::state::VocabEntry;
-
-/// Pre-compiled regex patterns for text cleanup
-struct CleanupRegexes {
-    fillers: Vec<Regex>,
-    dangling_comma: Regex,
-    leading_comma: Regex,
-    whitespace: Regex,
-    sentence_end: Regex,
-    standalone_i: Regex,
-    /// Collapses adjacent punctuation separated by optional whitespace. Used
-    /// to fix artifacts like "hey comma period" → "Hey,." where two spoken
-    /// punctuation commands leave their marks glued together after
-    /// `space_before_punct` strips the whitespace between them. Terminal
-    /// punct (`.!?`) wins over clause punct (`,;:`); ties keep the first.
-    adjacent_punct: Regex,
-    punctuation: Vec<(Regex, &'static str)>,
-    /// Dedicated handler for "dash" → em dash conversion. Handled separately
-    /// from `punctuation` because we need a closure to skip cases like
-    /// "em dash" / "en dash" where the user is talking ABOUT the punctuation
-    /// rather than asking to insert it. Captures: (1) optional "em "/"en "
-    /// prefix, (2) the literal "dash" word.
-    dash: Regex,
-    space_before_punct: Regex,
-    no_space_after: Regex,
-    email: Regex,
-    numeric_contexts: Vec<Regex>,
-    number_words: Vec<&'static str>,
-    percentage: Regex,
-    hundred_pct: Regex,
-    period_and: Regex,
+struct BoundaryRegexes {
     boundary_then_than: Regex,
     boundary_safe_cap: Regex,
 }
 
-fn regexes() -> &'static CleanupRegexes {
-    static REGEXES: OnceLock<CleanupRegexes> = OnceLock::new();
-    REGEXES.get_or_init(|| {
-        let filler_patterns = [
-            r"(?i)\bum+\b",
-            r"(?i)\buh+\b",
-            r"(?i)\buh huh\b",
-            r"(?i)\bmm+ ?hmm+\b",
-            r"(?i)\bhmm+\b",
-            r"(?i)\byou know\b(?=\s*,?\s)",
-            r"(?i)\blike\b(?=\s+(the|a|an|i|we|they|he|she|it|my|our|this|that)\b)",
-            r"(?i)\bbasically\b(?=\s*,)",
-            r"(?i)\bactually\b(?=\s*,)",
-            r"(?i)\bso\b(?=\s*,\s)",
-            r"(?i)\bi mean\b(?=\s*,)",
-            r"(?i)\bkind of\b(?=\s+(like|a|the)\b)",
-            r"(?i)\bsort of\b(?=\s+(like|a|the)\b)",
-            r"(?i)\bright\s*\?\s*(?=\b)",
-        ];
-
-        let number_word_patterns = [
-            (r"\b(?i)zero\b", "0"),
-            (r"\b(?i)one\b", "1"),
-            (r"\b(?i)two\b", "2"),
-            (r"\b(?i)three\b", "3"),
-            (r"\b(?i)four\b", "4"),
-            (r"\b(?i)five\b", "5"),
-            (r"\b(?i)six\b", "6"),
-            (r"\b(?i)seven\b", "7"),
-            (r"\b(?i)eight\b", "8"),
-            (r"\b(?i)nine\b", "9"),
-            (r"\b(?i)ten\b", "10"),
-        ];
-
-        let numeric_context_patterns = [
-            r"(?i)\b(number|step|item|option|version|v|chapter|page|line|row|column|level|grade|score|count|total)\s+",
-            r"(?i)\b(is|are|was|were|equals?|=)\s+",
-            r"(?i)\b(about|around|approximately|roughly|nearly|over|under)\s+",
-        ];
-
-        // Pre-compile combined numeric context + number word patterns
-        let mut compiled_contexts = Vec::new();
-        let mut compiled_numbers = Vec::new();
-        for ctx_pattern in &numeric_context_patterns {
-            for (word_pattern, digit) in &number_word_patterns {
-                let combined = format!("({ctx_pattern})({word_pattern})");
-                if let Ok(re) = Regex::new(&combined) {
-                    compiled_contexts.push(re);
-                    compiled_numbers.push(*digit);
-                }
-            }
-        }
-
-        let punctuation_map: Vec<(Regex, &'static str)> = [
-            (r"(?i)\bperiod\b", "."),
-            (r"(?i)\bcomma\b", ","),
-            (r"(?i)\bquestion mark\b", "?"),
-            (r"(?i)\bexclamation (?:mark|point)\b", "!"),
-            (r"(?i)\bcolon\b", ":"),
-            (r"(?i)\bsemicolon\b", ";"),
-            // "dash" handled separately via the `dash` field — see CleanupRegexes
-            (r"(?i)\bhyphen\b", "-"),
-            (r"(?i)\bopen (?:paren|parenthesis)\b", "("),
-            (r"(?i)\bclose (?:paren|parenthesis)\b", ")"),
-            // "new line" and "new paragraph" handled by LLM, not regex
-        ]
-        .iter()
-        .filter_map(|(p, r)| Regex::new(p).ok().map(|re| (re, *r)))
-        .collect();
-
-        // Store pre-compiled context+number pairs as parallel vecs in the struct
-        // We'll use numeric_contexts for the compiled combined regexes
-        // and number_words for the corresponding digit strings
-        CleanupRegexes {
-            fillers: filler_patterns
-                .iter()
-                .filter_map(|p| Regex::new(p).ok())
-                .collect(),
-            dangling_comma: Regex::new(r",\s*,").unwrap(),
-            leading_comma: Regex::new(r"^\s*,\s*").unwrap(),
-            whitespace: Regex::new(r"\s{2,}").unwrap(),
-            sentence_end: Regex::new(r#"([.!?:])(["')\]]*)(\s+)(["'(\[]*)([a-z])"#).unwrap(),
-            standalone_i: Regex::new(r"\bi\b").unwrap(),
-            adjacent_punct: Regex::new(r"([.!?,;:])\s*([.!?,;:])").unwrap(),
-            punctuation: punctuation_map,
-            // Match the literal word "dash", optionally preceded by "em" or
-            // "en". Group 1 captures the prefix (or is empty); group 2 is
-            // always "dash". Replacement skips when group 1 is non-empty so
-            // "em dash" / "en dash" stay as content phrases.
-            dash: Regex::new(r"(?i)\b(em |en )?(dash)\b").unwrap(),
-            space_before_punct: Regex::new(r"\s+([.,!?;:)])").unwrap(),
-            no_space_after: Regex::new(r"([.,!?;:])([A-Za-z])").unwrap(),
-            email: Regex::new(r"(?i)\b(\w+)\s+at\s+(\w+)\s+dot\s+(com|org|net|io|dev|co)\b").unwrap(),
-            numeric_contexts: compiled_contexts,
-            number_words: compiled_numbers,
-            percentage: Regex::new(r"(?i)\b(twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)\s+percent\b").unwrap(),
-            hundred_pct: Regex::new(r"(?i)\b(one )?hundred percent\b").unwrap(),
-            period_and: Regex::new(r"\.\s+And\b").unwrap(),
-            boundary_then_than: Regex::new(r"(?i)\b(?P<then>and\s+then)\s+than\s+(?P<gerund>[a-z]+ing)\b").unwrap(),
-            boundary_safe_cap: Regex::new(r"\b(?P<prefix>[A-Za-z']+)(?P<gap>\s+)(?P<word>[A-Z][a-z]+(?:'[a-z]+)?)\b").unwrap(),
-        }
+fn regexes() -> &'static BoundaryRegexes {
+    static REGEXES: OnceLock<BoundaryRegexes> = OnceLock::new();
+    REGEXES.get_or_init(|| BoundaryRegexes {
+        boundary_then_than: Regex::new(r"(?i)\b(?P<then>and\s+then)\s+than\s+(?P<gerund>[a-z]+ing)\b").unwrap(),
+        boundary_safe_cap: Regex::new(r"\b(?P<prefix>[A-Za-z']+)(?P<gap>\s+)(?P<word>[A-Z][a-z]+(?:'[a-z]+)?)\b").unwrap(),
     })
 }
 
-/// Full cleanup pipeline: filler removal → capitalization → regex formatting.
-///
-/// Self-correction handling is now performed by the LLM cleanup pass
-/// (chirp-cleanup-v2), which is fine-tuned for it and applies semantic
-/// context. The previous regex-based `strip_corrections` step was removed
-/// because its `.*` greedy match across sentence boundaries silently deleted
-/// large portions of dictations whenever a discourse filler like "I mean" /
-/// "actually" / "sorry" appeared mid-monologue.
-pub fn cleanup_text(text: &str, smart_formatting: bool) -> String {
-    if text.is_empty() {
-        return String::new();
-    }
-
-    if !smart_formatting {
-        return text.to_string();
-    }
-
-    // Remove fillers (um, uh, filler "like", etc.)
-    let result = remove_fillers(text);
-    if result.is_empty() {
-        return String::new();
-    }
-
-    // Capitalize first letter (filler removal may have stripped a leading "Um,")
-    let result = capitalize_first(&result);
-
-    // Re-capitalize the first letter of intra-text sentences. Filler removal
-    // at sentence start (e.g. "...up. Um there's..." -> "...up. there's...")
-    // would otherwise leave the next word lowercase. Uses the pre-compiled
-    // sentence_end regex which was defined for this exact case but never
-    // wired in.
-    let result = fix_sentence_capitalization(&result);
-
-    // Regex-based formatting (spoken punctuation, numbers, etc.)
-    let result = smart_format(&result);
-
-    // Re-apply sentence capitalization. `smart_format` may have exposed a new
-    // sentence boundary by collapsing adjacent punctuation (e.g. ",." → "."
-    // reveals a lowercase word that was previously hidden mid-phrase).
-    fix_sentence_capitalization(&result)
+/// Compile the boundary regexes ahead of the first dictation.
+pub fn warm_up() {
+    let _ = spoken_text(&["warm up comma the deterministic pass".to_string()]);
 }
 
-/// After filler removal, re-capitalize the first letter of any sentence that
-/// now starts with a lowercase word. Preserves the original whitespace
-/// between the punctuation and the next word.
-fn fix_sentence_capitalization(text: &str) -> String {
-    let re = regexes();
-    re.sentence_end
-        .replace_all(text, |caps: &regex::Captures| {
-            let punct = &caps[1];
-            let closers = &caps[2];
-            let ws = &caps[3];
-            let prefix = &caps[4];
-            let letter = caps[5].to_uppercase();
-            format!("{punct}{closers}{ws}{prefix}{letter}")
-        })
-        .to_string()
+/// The deterministic text for a dictation: segments joined, spoken commands
+/// converted. This is what the router judges, what the cleanup model gets,
+/// the fallback on any model error, and the result when the provider is Off.
+pub fn spoken_text(segments: &[String]) -> String {
+    convert_spoken_commands(&join_segments(segments))
 }
 
-/// Remove common filler words from transcript
-fn remove_fillers(text: &str) -> String {
-    let re = regexes();
-    let mut result = text.to_string();
+// ── Spoken commands ─────────────────────────────────────────────────────
 
-    for filler in &re.fillers {
-        result = filler.replace_all(&result, "").to_string();
-    }
-
-    // Clean up extra whitespace and dangling commas from removal
-    result = re.dangling_comma.replace_all(&result, ",").to_string();
-    result = re.leading_comma.replace(&result, "").to_string();
-    re.whitespace.replace_all(result.trim(), " ").to_string()
+#[derive(Clone, Copy, PartialEq, Debug)]
+enum Command {
+    /// Punctuation that attaches to the previous word and replaces whatever
+    /// punctuation the recognizer guessed there.
+    Mark(&'static str),
+    /// A line or paragraph break; keeps the recognizer's punctuation before it.
+    Break(&'static str),
+    /// "(": attaches to the next word.
+    Open,
+    /// ")": attaches to the previous word, keeps punctuation on both sides.
+    Close,
+    /// "-": joins the previous and next word.
+    Hyphen,
 }
 
-/// Capitalize the first character of a string
-fn capitalize_first(text: &str) -> String {
-    let trimmed = text.trim();
-    if trimmed.is_empty() {
-        return String::new();
-    }
+/// Spoken commands, longest first. "dash" is deliberately absent: it is a
+/// hyphen in domains and flags ("getting dash started", "dash dash release")
+/// and an em dash in prose, and the cleanup prompt relies on seeing the word.
+const COMMANDS: &[(&[&str], Command)] = &[
+    (&["new", "paragraph"], Command::Break("\n\n")),
+    (&["new", "line"], Command::Break("\n")),
+    (&["newline"], Command::Break("\n")),
+    (&["question", "mark"], Command::Mark("?")),
+    (&["exclamation", "mark"], Command::Mark("!")),
+    (&["exclamation", "point"], Command::Mark("!")),
+    (&["full", "stop"], Command::Mark(".")),
+    (&["open", "parenthesis"], Command::Open),
+    (&["open", "paren"], Command::Open),
+    (&["close", "parenthesis"], Command::Close),
+    (&["close", "paren"], Command::Close),
+    (&["semi", "colon"], Command::Mark(";")),
+    (&["semicolon"], Command::Mark(";")),
+    (&["comma"], Command::Mark(",")),
+    (&["period"], Command::Mark(".")),
+    (&["colon"], Command::Mark(":")),
+    (&["hyphen"], Command::Hyphen),
+];
 
-    for (idx, ch) in trimmed.char_indices() {
-        if ch.is_alphabetic() {
-            let mut result = String::with_capacity(trimmed.len());
-            result.push_str(&trimmed[..idx]);
-            result.push_str(&ch.to_uppercase().to_string());
-            result.push_str(&trimmed[idx + ch.len_utf8()..]);
-            return result;
+/// A previous word that makes the command a noun being talked about ("a new
+/// line of products", "the Oxford comma", "cues like new paragraph").
+fn blocks_command(prev: &str) -> bool {
+    matches!(
+        prev,
+        "a" | "an" | "the" | "this" | "that" | "these" | "those" | "each" | "every" | "any"
+            | "some" | "no" | "my" | "your" | "our" | "their" | "his" | "her" | "its"
+            | "which" | "what" | "whose" | "another" | "one" | "of" | "about" | "like"
+            | "word" | "called" | "named" | "say" | "says" | "said" | "saying" | "oxford"
+            | "serial"
+    )
+}
+
+/// A next word that makes the command a noun ("period of time",
+/// "comma separated").
+fn blocks_command_after(next: &str) -> bool {
+    matches!(next, "of" | "separated" | "delimited")
+}
+
+/// "Period" is also an ordinary noun; these words in front of it mean it is
+/// one ("trial period", "a two week period").
+fn period_is_noun(prev: &str) -> bool {
+    matches!(
+        prev,
+        "trial" | "grace" | "waiting" | "notice" | "probation" | "probationary" | "billing"
+            | "reporting" | "transition" | "transitional" | "holding" | "warranty" | "cooling"
+            | "rest" | "free" | "time" | "test" | "testing" | "review" | "vesting" | "payment"
+            | "lock" | "lockup" | "evaluation" | "study" | "summer" | "winter" | "spring"
+            | "autumn" | "holiday" | "christmas" | "busy" | "quiet" | "peak" | "launch"
+            | "same" | "whole" | "entire" | "short" | "long" | "initial" | "final" | "given"
+            | "certain" | "specific" | "extended" | "limited" | "day" | "week" | "month"
+            | "year" | "hour" | "minute" | "school" | "class" | "sample" | "sampling"
+            | "retention" | "measurement" | "recovery" | "development" | "menstrual"
+    )
+}
+
+/// Words it is safe to lowercase after a spoken comma, colon or semicolon
+/// when the recognizer capitalized them as a sentence start.
+fn lowercase_after_clause_mark(word: &str) -> bool {
+    is_safe_to_lowercase(word)
+        || matches!(word, "how" | "why" | "who" | "please" | "thanks" | "there" | "here" | "not")
+}
+
+/// Leading punctuation, the word, trailing punctuation.
+fn split_token(token: &str) -> (&str, &str, &str) {
+    let Some(start) = token.find(|c: char| c.is_alphanumeric()) else {
+        return (token, "", "");
+    };
+    let end = token
+        .char_indices()
+        .rev()
+        .find(|(_, c)| c.is_alphanumeric())
+        .map(|(i, c)| i + c.len_utf8())
+        .unwrap_or(token.len());
+    (&token[..start], &token[start..end], &token[end..])
+}
+
+fn is_sentence_punct(c: char) -> bool {
+    matches!(c, ',' | '.' | ';' | ':' | '!' | '?')
+}
+
+fn is_terminal(mark: &str) -> bool {
+    matches!(mark, "." | "?" | "!")
+}
+
+/// Match a command starting at token `i`. Returns the command and how many
+/// tokens it spans.
+fn match_command(tokens: &[&str], i: usize) -> Option<(Command, usize)> {
+    'commands: for (words, command) in COMMANDS {
+        if i + words.len() > tokens.len() {
+            continue;
         }
-    }
-
-    trimmed.to_string()
-}
-
-/// Smart formatting: punctuation, capitalization, numbers, common patterns
-fn smart_format(text: &str) -> String {
-    let mut result = text.to_string();
-
-    // Expand spoken numbers to digits for common cases
-    result = format_spoken_numbers(&result);
-
-    // Format common spoken patterns
-    result = format_spoken_patterns(&result);
-
-    // Capitalize any standalone lowercase "i" — the English pronoun is
-    // always "I". This also normalizes contractions like "i'm" → "I'm"
-    // because `\b` matches between the letter and the apostrophe.
-    let re = regexes();
-    result = re.standalone_i.replace_all(&result, "I").to_string();
-
-    result
-}
-
-/// Convert spoken number words to digits for common short numbers
-fn format_spoken_numbers(text: &str) -> String {
-    let re = regexes();
-    let mut result = text.to_string();
-
-    // Apply pre-compiled combined context+number patterns
-    for (i, ctx_re) in re.numeric_contexts.iter().enumerate() {
-        let digit = re.number_words[i];
-        result = ctx_re
-            .replace_all(&result, |caps: &regex::Captures| {
-                format!("{}{}", &caps[1], digit)
-            })
-            .to_string();
-    }
-
-    // Percentages
-    result = re
-        .percentage
-        .replace_all(&result, |caps: &regex::Captures| {
-            let num = match caps[1].to_lowercase().as_str() {
-                "twenty" => "20",
-                "thirty" => "30",
-                "forty" => "40",
-                "fifty" => "50",
-                "sixty" => "60",
-                "seventy" => "70",
-                "eighty" => "80",
-                "ninety" => "90",
-                _ => &caps[1],
-            };
-            format!("{num}%")
-        })
-        .to_string();
-
-    // "hundred percent" → "100%"
-    result = re.hundred_pct.replace_all(&result, "100%").to_string();
-
-    result
-}
-
-/// Format common spoken patterns (email, URLs, punctuation commands)
-fn format_spoken_patterns(text: &str) -> String {
-    let re = regexes();
-    let mut result = text.to_string();
-
-    // Spoken punctuation → actual punctuation
-    for (pattern, replacement) in &re.punctuation {
-        result = pattern.replace_all(&result, *replacement).to_string();
-    }
-
-    // "dash" → em-dash, but ONLY when it's a bare word — skip when the
-    // user said "em dash" or "en dash" (talking about the punctuation
-    // rather than asking to insert it). Identified empirically from a
-    // dictation log where "no em dash and uh the little drop" got
-    // mangled to "no em  — and the little drop".
-    result = re
-        .dash
-        .replace_all(&result, |caps: &regex::Captures| {
-            if caps.get(1).is_some() {
-                // "em dash" / "en dash" — return the original match unchanged
-                caps.get(0).unwrap().as_str().to_string()
-            } else {
-                " —".to_string()
+        for (k, word) in words.iter().enumerate() {
+            let (lead, core, trail) = split_token(tokens[i + k]);
+            let last = k + 1 == words.len();
+            if !lead.is_empty() || (!last && !trail.is_empty()) || !core.eq_ignore_ascii_case(word) {
+                continue 'commands;
             }
-        })
-        .to_string();
-
-    // Clean up spaces before punctuation
-    result = re.space_before_punct.replace_all(&result, "$1").to_string();
-
-    // Collapse adjacent punctuation. Dictating two punctuation commands in a
-    // row ("hey comma period") or segment stitching can leave artifacts like
-    // ",." or ". ,". Rule: terminal (.!?) beats clause (,;:); within the same
-    // class, keep the first. Loop until stable so cascades like ",.," fully
-    // collapse.
-    loop {
-        let next = re
-            .adjacent_punct
-            .replace_all(&result, |caps: &regex::Captures| {
-                let a = &caps[1];
-                let b = &caps[2];
-                let is_terminal = |s: &str| matches!(s, "." | "?" | "!");
-                match (is_terminal(a), is_terminal(b)) {
-                    (true, false) => a.to_string(),
-                    (false, true) => b.to_string(),
-                    _ => a.to_string(),
-                }
-            })
-            .to_string();
-        if next == result {
-            break;
         }
-        result = next;
+        // Only a previous word with nothing after it modifies this one;
+        // "the. Comma" is a sentence end followed by a command.
+        if i > 0 {
+            let (_, prev, prev_trail) = split_token(tokens[i - 1]);
+            let prev = prev.to_lowercase();
+            if prev_trail.is_empty()
+                && (blocks_command(&prev) || (*command == Command::Mark(".") && words[0] == "period" && period_is_noun(&prev)))
+            {
+                return None;
+            }
+        }
+        let (_, _, trail) = split_token(tokens[i + words.len() - 1]);
+        if trail.is_empty() {
+            if let Some(next) = tokens.get(i + words.len()) {
+                let (lead, next, _) = split_token(next);
+                if lead.is_empty() && blocks_command_after(&next.to_lowercase()) {
+                    return None;
+                }
+            }
+        }
+        return Some((*command, words.len()));
+    }
+    None
+}
+
+/// Builds the converted text, gluing punctuation to the right words.
+#[derive(Default)]
+struct Writer {
+    out: String,
+    /// The next word follows "(", "-" or a break: no space before it.
+    glue: bool,
+    capitalize: bool,
+    lowercase: bool,
+    /// The text ends in a mark a command inserted (not the recognizer's).
+    command_mark: Option<&'static str>,
+}
+
+impl Writer {
+    fn word(&mut self, token: &str) {
+        if !self.out.is_empty() && !self.glue {
+            self.out.push(' ');
+        }
+        let (lead, core, trail) = split_token(token);
+        self.out.push_str(lead);
+        let mut chars = core.chars();
+        match chars.next() {
+            Some(first) if self.capitalize && first.is_lowercase() => {
+                self.out.extend(first.to_uppercase());
+                self.out.push_str(chars.as_str());
+            }
+            Some(first)
+                if self.lowercase
+                    && is_title_case_word(core)
+                    && lowercase_after_clause_mark(&core.to_lowercase()) =>
+            {
+                self.out.extend(first.to_lowercase());
+                self.out.push_str(chars.as_str());
+            }
+            _ => self.out.push_str(core),
+        }
+        self.out.push_str(trail);
+        self.glue = false;
+        self.capitalize = false;
+        self.lowercase = false;
+        self.command_mark = None;
     }
 
-    // Ensure space after punctuation
-    result = re.no_space_after.replace_all(&result, "$1 $2").to_string();
+    /// Drop the recognizer's punctuation at the end of the text.
+    fn strip_guessed_punct(&mut self) {
+        while self.out.ends_with(is_sentence_punct) {
+            self.out.pop();
+        }
+    }
 
-    // Email pattern
-    result = re.email.replace_all(&result, "$1@$2.$3").to_string();
+    /// Text that followed the command word ("comma," or "mark.\"") minus the
+    /// recognizer's own punctuation guesses.
+    fn rest(&mut self, trail: &str) {
+        self.out.extend(trail.chars().filter(|c| !is_sentence_punct(*c)));
+    }
 
-    // ". And" → ", and" — Parakeet often terminates a sentence before a
-    // conjunction that was actually a mid-sentence continuation.
-    result = re.period_and.replace_all(&result, ", and").to_string();
-
-    result
+    fn command(&mut self, command: Command, trail: &str) {
+        match command {
+            Command::Mark(mark) => {
+                // Two marks in a row ("comma period"): terminal wins over a
+                // clause mark; otherwise the first stays.
+                if let Some(prev) = self.command_mark {
+                    if is_terminal(prev) || !is_terminal(mark) {
+                        self.rest(trail);
+                        return;
+                    }
+                }
+                self.strip_guessed_punct();
+                self.out.push_str(mark);
+                self.rest(trail);
+                self.glue = false;
+                self.capitalize = is_terminal(mark);
+                self.lowercase = !is_terminal(mark);
+                self.command_mark = Some(mark);
+            }
+            Command::Break(brk) => {
+                while self.out.ends_with(' ') {
+                    self.out.pop();
+                }
+                self.out.push_str(brk);
+                self.rest(trail);
+                self.glue = true;
+                self.capitalize = true;
+                self.lowercase = false;
+                self.command_mark = None;
+            }
+            Command::Open => {
+                if !self.out.is_empty() && !self.glue {
+                    self.out.push(' ');
+                }
+                self.out.push('(');
+                self.glue = true;
+                self.command_mark = None;
+            }
+            Command::Close => {
+                self.out.push(')');
+                self.out.push_str(trail);
+                self.glue = false;
+                self.command_mark = None;
+            }
+            Command::Hyphen => {
+                self.strip_guessed_punct();
+                self.out.push('-');
+                self.glue = true;
+                self.capitalize = false;
+                self.lowercase = false;
+                self.command_mark = None;
+            }
+        }
+    }
 }
 
-/// Smart-join per-segment LLM cleanup outputs into one coherent string.
+/// Convert spoken punctuation and layout commands: "new line", "new
+/// paragraph", "comma", "period" / "full stop", "question mark", "exclamation
+/// mark" / "point", "colon", "semicolon", "hyphen", "open paren" / "close
+/// paren".
 ///
-/// Per-segment streaming cleanup gives the model perfect blast-radius isolation
-/// (it can't paraphrase across segments because it never sees more than one),
-/// but it has three failure modes at join time:
-///
-///   1. **Mid-sentence VAD breaks.** VAD splits at silence, but a speaker
-///      may pause inside a sentence ("...just <pause> see if it's viable").
-///      The model sees segment N as a complete utterance and adds a terminal
-///      period. Naive `join(" ")` produces "...Just. See if..." with an
-///      orphan period in the middle of what was one sentence.
-///
-///   2. **Internal paragraph breaks.** The fine-tuned model occasionally
-///      injects `\n\n` inside a single segment's output (a leftover habit
-///      from training data that contained restructuring examples).
-///
-///   3. **Cross-boundary fillers.** A filler like "um" at the start of a
-///      segment looks to the model like a discourse marker and gets
-///      preserved. The regex pre-pass already runs per-segment but can't
-///      see what's on the other side of the boundary.
-///
-/// Strategy:
-///   - Strip `\n\n` and `\n` inside each segment (Rule 1)
-///   - Smart-join with two heuristics (Rules 2 & 3):
-///       Rule 2: if segment N's last word is a "stub word" (article,
-///         preposition, conjunction, modal, hesitation-end like "just"),
-///         it was mid-sentence — strip the period and merge.
-///       Rule 3: if segment N+1 starts with a "continuation word" (and,
-///         but, so, because, however, ...), strip segment N's period and
-///         lowercase the conjunction.
-///   - Re-run `cleanup_text` on the joined output to catch cross-boundary
-///     fillers and normalize whitespace.
-///
-/// All deterministic, no LLM calls. Idempotent.
-#[cfg(test)]
-pub fn join_cleaned_segments(segments: &[String]) -> String {
-    join_cleaned_segments_with_formatting(segments, true)
+/// Conservative by design: a command preceded by an article, possessive or
+/// quoting word ("a new line", "the Oxford comma", "like new paragraph"), or
+/// followed by "of" ("period of time"), is kept as words, as is "period" after
+/// a word that makes it a noun ("trial period"). The punctuation the recognizer
+/// guessed around a command ("Hello, comma, how") gives way to the command.
+pub fn convert_spoken_commands(text: &str) -> String {
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    let mut writer = Writer::default();
+    let mut i = 0;
+    while i < tokens.len() {
+        if let Some((command, len)) = match_command(&tokens, i) {
+            let (_, _, trail) = split_token(tokens[i + len - 1]);
+            writer.command(command, trail);
+            i += len;
+        } else {
+            writer.word(tokens[i]);
+            i += 1;
+        }
+    }
+    writer.out
 }
 
-pub fn join_cleaned_segments_with_formatting(
-    segments: &[String],
-    smart_formatting: bool,
-) -> String {
-    // Step 1: strip internal paragraph breaks the model may have inserted
-    // within a single segment, and trim whitespace.
-    let cleaned: Vec<String> = segments
-        .iter()
-        .map(|s| s.replace("\n\n", " ").replace('\n', " ").trim().to_string())
-        .filter(|s| !s.is_empty())
-        .collect();
+// ── Segment joining ─────────────────────────────────────────────────────
 
-    if cleaned.is_empty() {
+/// Join the recognizer's per-segment transcripts into one text.
+///
+/// VAD splits at silence, and a speaker may pause inside a sentence, so the
+/// recognizer sees a fragment as a whole utterance: "...just. See if it's
+/// viable." Sentences are split aggressively and merged back when the first
+/// ends in a word no sentence ends with (article, preposition, modal, "just")
+/// or the next starts with a continuation ("and", "but", "because", ...) or a
+/// lowercase letter. Deterministic and idempotent.
+pub fn join_segments(segments: &[String]) -> String {
+    let parts: Vec<&str> = segments.iter().map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    if parts.is_empty() {
         return String::new();
     }
-
-    // Step 2: naive join with single space. This gives us one big string
-    // that contains both inter-segment and intra-segment sentence boundaries.
-    let raw_joined = cleaned.join(" ");
-
-    // Step 3: split into sentences and apply smart merge between adjacent
-    // sentences. This handles both inter-segment and intra-segment cases
-    // uniformly — the model can produce ". And" inside a single segment too.
-    let sentences = split_into_sentences(&raw_joined);
+    let sentences = split_into_sentences(&parts.join(" "));
     let merged = repair_vad_boundary_artifacts(&smart_merge_sentences(&sentences));
-
-    // Step 4: re-run regex pre-pass on the merged output. cleanup_text is
-    // idempotent for already-cleaned text but catches cross-boundary
-    // patterns (a filler "um" that survived because it was at a segment
-    // boundary) and normalizes whitespace.
-    cleanup_text(&merged, smart_formatting)
+    merged.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 fn lowercase_first_ascii(word: &str) -> String {
@@ -621,7 +529,7 @@ fn smart_merge_sentences(sentences: &[String]) -> String {
 
 /// Words that, when they appear at the END of a segment, strongly suggest
 /// the segment is mid-sentence (VAD broke at a hesitation pause). Used by
-/// `join_cleaned_segments` to decide whether to strip a terminal period.
+/// `join_segments` to decide whether to strip a terminal period.
 fn is_stub_end_word(word: &str) -> bool {
     // CONSERVATIVE list: only words that essentially never end a real
     // English sentence. Common sentence-final adverbs (now, then, well,
@@ -653,16 +561,13 @@ fn is_stub_end_word(word: &str) -> bool {
         "just" |
         // fillers — if these are the LAST WORD of a segment, the segment
         // is mid-sentence by definition (no real sentence ends with "um").
-        // The regex pre-pass strips them, but smart-merge runs FIRST so
-        // including them here lets us strip the orphan period the model
-        // added BEFORE the filler is removed (otherwise we leave " .")
         "um" | "umm" | "uh" | "uhh" | "hmm" | "mhm" | "mmhmm"
     )
 }
 
 /// Words that, when they appear at the START of a segment, strongly suggest
 /// the segment is a CONTINUATION of the previous sentence rather than a new
-/// one. Used by `join_cleaned_segments` to decide whether to strip the
+/// one. Used by `join_segments` to decide whether to strip the
 /// previous segment's terminal period.
 fn is_continuation_start_word(word: &str) -> bool {
     // Conservative list: words that are USUALLY mid-sentence continuations.
@@ -689,7 +594,7 @@ fn is_continuation_start_word(word: &str) -> bool {
 }
 
 /// Words it is ALWAYS safe to lowercase mid-sentence — they're never proper
-/// nouns. Used by `join_cleaned_segments` when merging at a segment boundary.
+/// nouns. Used by `join_segments` when merging at a segment boundary.
 fn is_safe_to_lowercase(word: &str) -> bool {
     // Anything ≤ 3 chars that's clearly a stop word, plus a hand-picked list
     // of common English short verbs/auxiliaries that frequently start
@@ -724,513 +629,255 @@ fn is_safe_to_lowercase(word: &str) -> bool {
     )
 }
 
-/// Apply user-configured find/replace from the vocabulary's `replaces` lists.
-///
-/// For each VocabEntry, every string in `replaces` is matched
-/// case-insensitively at word boundaries and substituted with the canonical
-/// `term`. This is the deterministic post-ASR fixup layer for things sherpa
-/// hotword biasing can't fix — homophones (Pieter/Peter), brand spellings,
-/// stable mishearings.
-///
-/// Runs BEFORE the LLM cleanup pass so the LLM sees the corrected names in
-/// context. chirp-cleanup-v2 at temp 0.0 won't reintroduce alternative
-/// spellings the input doesn't contain.
-///
-/// Edge cases:
-///   - Self-replacements (case-insensitive `from == to`) are skipped
-///   - Empty / whitespace-only `from` strings are skipped
-///   - `from` strings are `regex::escape`'d, so literal special chars are safe
-///   - Match is case-insensitive; replacement always uses the canonical case
-pub fn apply_replacements(text: &str, vocabulary: &[VocabEntry]) -> String {
-    let mut result = text.to_string();
-    for entry in vocabulary {
-        let canonical = entry.term.trim();
-        if canonical.is_empty() {
-            continue;
-        }
-        for from in &entry.replaces {
-            let from_trim = from.trim();
-            if from_trim.is_empty() {
-                continue;
-            }
-            if from_trim.eq_ignore_ascii_case(canonical) {
-                continue;
-            }
-            // Build a case-insensitive regex for the literal `from`. `\b` only
-            // matches at the transition between a word and non-word char, so
-            // we only anchor with `\b` on sides where the pattern's edge IS a
-            // word character. Otherwise the boundary assertion would fail
-            // (e.g. `\bco (corp)\b` — the trailing `)` is non-word, the
-            // following space is also non-word, so no boundary exists there).
-            let starts_with_word = from_trim
-                .chars()
-                .next()
-                .map(|c| c.is_alphanumeric() || c == '_')
-                .unwrap_or(false);
-            let ends_with_word = from_trim
-                .chars()
-                .last()
-                .map(|c| c.is_alphanumeric() || c == '_')
-                .unwrap_or(false);
-            let pattern = format!(
-                "(?i){}{}{}",
-                if starts_with_word { r"\b" } else { "" },
-                regex::escape(from_trim),
-                if ends_with_word { r"\b" } else { "" },
-            );
-            match Regex::new(&pattern) {
-                Ok(re) => {
-                    result = re.replace_all(&result, canonical).to_string();
-                }
-                Err(e) => {
-                    log::warn!("Failed to compile replacement pattern '{from_trim}': {e}");
-                }
-            }
-        }
-    }
-    result
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    fn cmd(text: &str) -> String {
+        convert_spoken_commands(text)
+    }
+
+    // ── spoken commands ────────────────────────────────────────────────
+
     #[test]
-    fn test_spoken_punctuation() {
-        let result = smart_format("hello comma how are you question mark");
-        assert!(result.contains("hello, how are you?"));
+    fn plain_text_is_unchanged() {
+        for text in [
+            "Hello, how are you?",
+            "Um, I think we should, uh, ship it.",
+            "It costs 3.14 dollars, about fifty percent of the budget.",
+            "Mail me at pieter at sitelift dot net.",
+            "Run cargo build dash dash release.",
+            "",
+        ] {
+            assert_eq!(cmd(text), text);
+        }
     }
 
     #[test]
-    fn test_percentage() {
-        let result = smart_format("it was about fifty percent done");
-        assert!(result.contains("50%"));
+    fn punctuation_commands() {
+        assert_eq!(cmd("hello comma how are you question mark"), "hello, how are you?");
+        assert_eq!(cmd("I'm done period"), "I'm done.");
+        assert_eq!(cmd("I'm done full stop"), "I'm done.");
+        assert_eq!(cmd("that is amazing exclamation mark"), "that is amazing!");
+        assert_eq!(cmd("that is amazing exclamation point"), "that is amazing!");
+        assert_eq!(cmd("to do colon keep the mic warm"), "to do: keep the mic warm");
+        assert_eq!(cmd("first semicolon second"), "first; second");
+        assert_eq!(cmd("first semi colon second"), "first; second");
     }
 
     #[test]
-    fn test_email() {
-        let result = smart_format("send it to john at example dot com");
-        assert!(result.contains("john@example.com"));
+    fn commands_are_case_insensitive() {
+        assert_eq!(cmd("Hello Comma how are you Question Mark"), "Hello, how are you?");
+        assert_eq!(cmd("Done. Period."), "Done.");
     }
 
     #[test]
-    fn test_new_paragraph_passthrough() {
-        // "new paragraph" should pass through to LLM as words, not be converted by regex
-        let result = smart_format("hello new paragraph world");
-        assert!(result.contains("new paragraph"));
+    fn command_replaces_the_recognizers_punctuation() {
+        // Parakeet punctuates around the command words.
+        assert_eq!(cmd("Hello, comma, how are you?"), "Hello, how are you?");
+        assert_eq!(cmd("Hello comma. How are you?"), "Hello, how are you?");
+        assert_eq!(cmd("Can someone test it before I merge? Question mark."), "Can someone test it before I merge?");
+        assert_eq!(cmd("This morning, period. We're almost ready."), "This morning. We're almost ready.");
+        assert_eq!(cmd("Is it ready, question mark?"), "Is it ready?");
     }
 
     #[test]
-    fn test_period_and_to_comma_and() {
-        let result = smart_format("I went to the store. And then I came home.");
-        assert_eq!(result, "I went to the store, and then I came home.");
+    fn terminal_command_capitalizes_the_next_word() {
+        assert_eq!(cmd("Thanks for the call period we're almost ready."), "Thanks for the call. We're almost ready.");
+        assert_eq!(cmd("Is it ready question mark let me know."), "Is it ready? Let me know.");
     }
 
     #[test]
-    fn test_full_cleanup() {
-        let result = cleanup_text("send an email to bob at test dot com", true);
-        assert!(result.contains("bob@test.com"));
-    }
-
-    // ── standalone "i" capitalization ──────────────────────────────────
-
-    #[test]
-    fn test_standalone_i_capitalized() {
-        // A stray lowercase "i" gets uppercased to the pronoun "I".
-        let result = cleanup_text("i think i should ask", true);
-        assert_eq!(result, "I think I should ask");
+    fn clause_command_keeps_names_capitalized() {
+        assert_eq!(cmd("Kind regards comma Pieter"), "Kind regards, Pieter");
+        assert_eq!(cmd("Thanks comma Anna will join."), "Thanks, Anna will join.");
+        // Common words the recognizer capitalized after its own period.
+        assert_eq!(cmd("Hello comma. The plan is ready."), "Hello, the plan is ready.");
     }
 
     #[test]
-    fn test_standalone_i_contraction_capitalized() {
-        // `\bi\b` matches the `i` before the apostrophe (apostrophe is a
-        // non-word char), so "i'm" becomes "I'm".
-        let result = cleanup_text("i'm going", true);
-        assert_eq!(result, "I'm going");
+    fn adjacent_commands_collapse() {
+        assert_eq!(cmd("hey comma period world"), "hey. World");
+        assert_eq!(cmd("hey period comma world"), "hey. World");
+        assert_eq!(cmd("foo comma comma bar"), "foo, bar");
     }
 
     #[test]
-    fn test_standalone_i_common_contractions_capitalized() {
-        let result = cleanup_text("i'll go because i've got it and i'd like to", true);
-        assert_eq!(result, "I'll go because I've got it and I'd like to");
-    }
-
-    #[test]
-    fn test_capitalizes_after_quotes_and_parens() {
-        let result = cleanup_text("he said. \"this works.\" (this also works).", true);
-        assert_eq!(result, "He said. \"This works.\" (This also works).");
-    }
-
-    #[test]
-    fn test_capitalizes_after_colon_and_newline() {
-        let result = cleanup_text("note: this should start capitalized.\nnext line too.", true);
+    fn line_and_paragraph_breaks() {
+        assert_eq!(cmd("Buy milk new line buy eggs"), "Buy milk\nBuy eggs");
+        assert_eq!(cmd("Buy milk newline buy eggs"), "Buy milk\nBuy eggs");
+        assert_eq!(cmd("Rough plan. New paragraph. We'd start with booking."), "Rough plan.\n\nWe'd start with booking.");
         assert_eq!(
-            result,
-            "Note: This should start capitalized.\nNext line too."
+            cmd("hi Marieke comma new paragraph thanks for the call period new paragraph kind regards comma Pieter"),
+            "hi Marieke,\n\nThanks for the call.\n\nKind regards, Pieter"
         );
+        // A break keeps the recognizer's punctuation before it.
+        assert_eq!(cmd("Hello, new line, how are you?"), "Hello,\nHow are you?");
     }
 
     #[test]
-    fn test_capitalizes_initial_quoted_text() {
-        let result = cleanup_text("\"hello there,\" he said.", true);
-        assert_eq!(result, "\"Hello there,\" he said.");
+    fn hyphen_and_parentheses() {
+        assert_eq!(cmd("a well hyphen known fact"), "a well-known fact");
+        assert_eq!(cmd("see the docs open paren page two close paren for details"), "see the docs (page two) for details");
+        assert_eq!(cmd("see the docs open parenthesis page two close parenthesis."), "see the docs (page two).");
     }
 
     #[test]
-    fn test_standalone_i_preserves_embedded_i() {
-        // Words containing "i" (not standalone) must NOT be affected.
-        let result = cleanup_text("the iphone is in my bag", true);
-        // "i" inside "iphone"/"is"/"in"/"bag"/"my" stays. Only word-standalone
-        // "i" would be uppercased; there are none in this input.
-        assert!(result.contains("iphone"));
-        assert!(result.contains("is"));
-        assert!(result.contains("in"));
-    }
-
-    // ── adjacent punctuation collapse ──────────────────────────────────
-
-    #[test]
-    fn test_spoken_period_then_comma_collapses() {
-        // Dictating "period comma" back-to-back used to produce "Hey,."; now
-        // the terminal period wins and the following word is capitalized.
-        let result = cleanup_text("hey period comma world", true);
-        assert_eq!(result, "Hey. World");
+    fn command_at_the_edges() {
+        assert_eq!(cmd("period"), ".");
+        assert_eq!(cmd("New paragraph. Thanks for waiting."), "\n\nThanks for waiting.");
+        assert_eq!(cmd("Thanks new line"), "Thanks\n");
     }
 
     #[test]
-    fn test_spoken_comma_then_period_collapses() {
-        // Reverse order — the terminal period still wins.
-        let result = cleanup_text("hey comma period world", true);
-        assert_eq!(result, "Hey. World");
+    fn talking_about_punctuation_is_kept() {
+        for text in [
+            "Add a comma after the name.",
+            "I always use the Oxford comma.",
+            "Put a question mark there.",
+            "The colon is part of the large intestine.",
+            "We launched a new line of products.",
+            "Start on a new line.",
+            "It has formatting cues like new paragraph or bullet point.",
+            "Use the word period sparingly.",
+            "A list of comma separated values.",
+            "The car came to a full stop.",
+            "Insert a hyphen here.",
+        ] {
+            assert_eq!(cmd(text), text);
+        }
     }
 
     #[test]
-    fn test_adjacent_punct_period_comma_literal() {
-        // Direct ".," in the text (e.g. from upstream) collapses to "." and
-        // the next word is re-capitalized.
-        let result = cleanup_text("hello.,world", true);
-        assert_eq!(result, "Hello. World");
+    fn period_as_a_noun_is_kept() {
+        for text in [
+            "The trial period ends tomorrow.",
+            "There's a two week waiting period.",
+            "That was a busy period for us.",
+            "Over a period of time.",
+            "During the summer period.",
+            "The grace period",
+        ] {
+            assert_eq!(cmd(text), text);
+        }
+        // A determiner two words back does not block: "sign the contract period".
+        assert_eq!(cmd("Please sign the contract period"), "Please sign the contract.");
     }
 
     #[test]
-    fn test_adjacent_punct_preserves_decimal() {
-        // "3.14" is a digit-period-digit sequence. The adjacent-punct regex
-        // must not touch it because the neighbors aren't punctuation.
-        let result = cleanup_text("it costs 3.14 dollars", true);
-        assert_eq!(result, "It costs 3.14 dollars");
+    fn partial_words_do_not_match() {
+        assert_eq!(cmd("The periods and commas are fine."), "The periods and commas are fine.");
+        assert_eq!(cmd("Colonel Mustard did it."), "Colonel Mustard did it.");
+        assert_eq!(cmd("The newlines are escaped."), "The newlines are escaped.");
     }
 
     #[test]
-    fn test_adjacent_punct_with_space_between() {
-        // A period followed by whitespace then a comma still collapses.
-        let result = smart_format("hello . , world");
-        // `space_before_punct` collapses leading whitespace, then
-        // `adjacent_punct` keeps the terminal period.
-        assert_eq!(result, "hello. world");
+    fn whitespace_is_normalized() {
+        assert_eq!(cmd("  hello   comma  world  "), "hello, world");
     }
 
     #[test]
-    fn test_adjacent_punct_double_comma() {
-        // Two commas in a row collapse to one (first wins).
-        let result = smart_format("foo ,, bar");
-        assert_eq!(result, "foo, bar");
-    }
-
-    // ── merge must not lowercase "I" ───────────────────────────────────
-
-    #[test]
-    fn test_merge_preserves_capital_i() {
-        // Previously, `is_safe_to_lowercase` included "i", so merging a
-        // stub-end prev segment with a next segment starting with "I" would
-        // produce "...to i think...". Must stay capitalized now.
-        let s = segs(&["I went to.", "I think we should."]);
-        let result = join_cleaned_segments(&s);
-        assert!(
-            !result.contains(" i think"),
-            "expected capital I after merge, got: {result}"
-        );
-        assert!(
-            result.contains("I think"),
-            "expected 'I think' preserved, got: {result}"
-        );
-    }
-
-    fn vocab(entries: &[(&str, &[&str])]) -> Vec<VocabEntry> {
-        entries
-            .iter()
-            .map(|(term, replaces)| VocabEntry {
-                term: (*term).to_string(),
-                replaces: replaces.iter().map(|s| (*s).to_string()).collect(),
-            })
-            .collect()
+    fn spoken_text_joins_then_converts() {
+        let s = segs(&["Thanks for the call period.", "And we're almost ready new paragraph", "kind regards comma Pieter"]);
+        assert_eq!(spoken_text(&s), "Thanks for the call. And we're almost ready\n\nKind regards, Pieter");
     }
 
     #[test]
-    fn test_apply_replacements_basic() {
-        let v = vocab(&[("Pieter", &["Peter"])]);
-        assert_eq!(
-            apply_replacements("My name is Peter.", &v),
-            "My name is Pieter."
-        );
+    fn spoken_text_keeps_fillers_for_the_model() {
+        let s = segs(&["Um, so I think", "we should ship it."]);
+        assert_eq!(spoken_text(&s), "Um, so I think we should ship it.");
     }
 
-    #[test]
-    fn test_apply_replacements_case_insensitive() {
-        let v = vocab(&[("Pieter", &["Peter"])]);
-        assert_eq!(
-            apply_replacements("PETER and peter", &v),
-            "Pieter and Pieter"
-        );
-    }
-
-    #[test]
-    fn test_apply_replacements_word_boundary() {
-        // "petersburg" should NOT become "pietersburg"
-        let v = vocab(&[("Pieter", &["Peter"])]);
-        assert_eq!(
-            apply_replacements("I went to Petersburg.", &v),
-            "I went to Petersburg."
-        );
-    }
-
-    #[test]
-    fn test_apply_replacements_apostrophe() {
-        // "Peter's" should become "Pieter's" — \b matches between r and '
-        let v = vocab(&[("Pieter", &["Peter"])]);
-        assert_eq!(apply_replacements("Peter's car.", &v), "Pieter's car.");
-    }
-
-    #[test]
-    fn test_apply_replacements_multiple_froms() {
-        let v = vocab(&[("Lakshamanan", &["Lakshmanan", "lock shamanan"])]);
-        assert_eq!(
-            apply_replacements("Hi Lakshmanan and lock shamanan", &v),
-            "Hi Lakshamanan and Lakshamanan"
-        );
-    }
-
-    #[test]
-    fn test_apply_replacements_self_replacement_skipped() {
-        // Replacing "Peter" with "Peter" should be a no-op (no infinite loop)
-        let v = vocab(&[("Peter", &["peter", "Peter", "PETER"])]);
-        // All three case-insensitively equal to canonical → all skipped
-        assert_eq!(apply_replacements("hello peter", &v), "hello peter");
-    }
-
-    #[test]
-    fn test_apply_replacements_empty_replaces() {
-        // Term with no replaces does nothing — purely for ASR biasing
-        let v = vocab(&[("Akilan", &[])]);
-        assert_eq!(apply_replacements("hello world", &v), "hello world");
-    }
-
-    #[test]
-    fn test_apply_replacements_special_chars_in_from() {
-        // regex::escape handles parens, dots, etc. in the `from` string
-        let v = vocab(&[("Co.", &["co (corp)"])]);
-        assert_eq!(
-            apply_replacements("the co (corp) released a product", &v),
-            "the Co. released a product"
-        );
-    }
-
-    // ── join_cleaned_segments tests ─────────────────────────────────────
+    // ── join_segments ──────────────────────────────────────────────────
 
     fn segs(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
     }
 
     #[test]
-    fn test_join_empty() {
-        assert_eq!(join_cleaned_segments(&[]), "");
-        assert_eq!(join_cleaned_segments(&segs(&["", "  ", "\n"])), "");
+    fn join_empty() {
+        assert_eq!(join_segments(&[]), "");
+        assert_eq!(join_segments(&segs(&["", "  ", "\n"])), "");
     }
 
     #[test]
-    fn test_join_single_segment_passthrough() {
-        let s = segs(&["Hello world."]);
-        assert_eq!(join_cleaned_segments(&s), "Hello world.");
+    fn join_single_segment_passthrough() {
+        assert_eq!(join_segments(&segs(&["Hello world."])), "Hello world.");
     }
 
     #[test]
-    fn test_join_respects_smart_formatting_disabled() {
-        let s = segs(&["hello period."]);
-        assert_eq!(
-            join_cleaned_segments_with_formatting(&s, false),
-            "hello period."
-        );
-    }
-
-    #[test]
-    fn test_join_strips_internal_paragraph_breaks() {
-        // Model sometimes injects \n\n inside a single segment's output.
-        let s = segs(&["First line.\n\nSecond line."]);
-        assert_eq!(join_cleaned_segments(&s), "First line. Second line.");
-    }
-
-    #[test]
-    fn test_join_real_sentence_boundary_kept() {
-        // Two complete sentences across segments — punctuation must be kept.
+    fn join_real_sentence_boundary_kept() {
         let s = segs(&["I went to the store.", "I bought milk."]);
-        assert_eq!(
-            join_cleaned_segments(&s),
-            "I went to the store. I bought milk."
-        );
+        assert_eq!(join_segments(&s), "I went to the store. I bought milk.");
     }
 
     #[test]
-    fn test_join_stub_end_just_merges() {
-        // The session-3 case: segment ends in "Just." → mid-sentence break.
-        let s = segs(&[
-            "Don't do any coding right now. Just.",
-            "See if it's viable.",
-        ]);
-        assert_eq!(
-            join_cleaned_segments(&s),
-            "Don't do any coding right now. Just see if it's viable."
-        );
+    fn join_stub_end_just_merges() {
+        let s = segs(&["Don't do any coding right now. Just.", "See if it's viable."]);
+        assert_eq!(join_segments(&s), "Don't do any coding right now. Just see if it's viable.");
     }
 
     #[test]
-    fn test_join_stub_end_preposition_merges() {
-        // "I went to." should merge with whatever comes next.
-        let s = segs(&["I went to.", "the store."]);
-        assert_eq!(join_cleaned_segments(&s), "I went to the store.");
+    fn join_stub_end_preposition_merges() {
+        assert_eq!(join_segments(&segs(&["I went to.", "the store."])), "I went to the store.");
     }
 
     #[test]
-    fn test_join_stub_end_modal_merges() {
-        let s = segs(&["I will.", "make it work."]);
-        assert_eq!(join_cleaned_segments(&s), "I will make it work.");
+    fn join_stub_end_modal_merges() {
+        assert_eq!(join_segments(&segs(&["I will.", "make it work."])), "I will make it work.");
     }
 
     #[test]
-    fn test_join_continuation_word_merges() {
-        // Segment 2 starts with "And" → continuation, strip & lowercase.
+    fn join_continuation_word_merges() {
         let s = segs(&["I went to the store.", "And bought milk."]);
-        assert_eq!(
-            join_cleaned_segments(&s),
-            "I went to the store and bought milk."
-        );
-    }
-
-    #[test]
-    fn test_join_continuation_but_merges() {
+        assert_eq!(join_segments(&s), "I went to the store and bought milk.");
         let s = segs(&["I tried to fix it.", "But it didn't work."]);
-        assert_eq!(
-            join_cleaned_segments(&s),
-            "I tried to fix it but it didn't work."
-        );
+        assert_eq!(join_segments(&s), "I tried to fix it but it didn't work.");
     }
 
     #[test]
-    fn test_join_lowercase_starts_merge() {
-        // If segment 2 already starts lowercase, treat as continuation.
+    fn join_lowercase_start_merges() {
         let s = segs(&["I went to the store.", "and bought milk."]);
-        assert_eq!(
-            join_cleaned_segments(&s),
-            "I went to the store and bought milk."
-        );
+        assert_eq!(join_segments(&s), "I went to the store and bought milk.");
     }
 
     #[test]
-    fn test_join_preserves_proper_noun_capitalization() {
-        // "I went to." → stub. "Paris" should NOT be lowercased.
-        // (Paris is 5 chars and not in the safe-to-lowercase list.)
-        let s = segs(&["I went to.", "Paris last summer."]);
-        assert_eq!(join_cleaned_segments(&s), "I went to Paris last summer.");
+    fn join_preserves_proper_nouns_and_i() {
+        assert_eq!(join_segments(&segs(&["I went to.", "Paris last summer."])), "I went to Paris last summer.");
+        let result = join_segments(&segs(&["I went to.", "I think we should."]));
+        assert!(result.contains("I think"), "{result}");
     }
 
     #[test]
-    fn test_join_three_segments_with_two_merges() {
-        // Session 3 in full: stub-end "Just." + intra-segment "viable. And"
-        // continuation + stub-end "can." + final "Make it work."
-        // The sentence-level merge handles ALL of these uniformly.
+    fn join_three_segments_with_two_merges() {
         let s = segs(&[
             "Don't do any coding at this point in time. Just.",
             "See if it's viable. And if we can.",
             "Make it work.",
         ]);
-        let result = join_cleaned_segments(&s);
-        // All three should be merged: "Just see", "viable and", "can make"
-        assert!(
-            result.contains("Just see if it's viable"),
-            "expected 'Just see if it's viable' merge, got: {result}"
-        );
-        assert!(
-            result.contains("viable and if we can"),
-            "expected 'viable and if we can' merge, got: {result}"
-        );
-        assert!(
-            result.contains("can make it work"),
-            "expected 'can make it work' merge, got: {result}"
-        );
-        // No orphan periods
-        assert!(
-            !result.contains(". And"),
-            "expected no '. And' artifact, got: {result}"
-        );
+        let result = join_segments(&s);
+        assert!(result.contains("Just see if it's viable and if we can make it work."), "{result}");
     }
 
     #[test]
-    fn test_join_filler_as_stub_end_merges_then_strips() {
-        // The session-3 case: a segment ends with "Just um." (the model
-        // added a period after the filler). The smart-merge should
-        // recognize "um" as a stub-end word, strip the period, merge with
-        // the next segment, and the post-merge regex pre-pass should then
-        // strip "um" entirely. No orphan period, no leftover filler.
+    fn join_filler_as_stub_end_merges() {
+        let s = segs(&["Don't do any coding right now. Just um.", "See if it's viable."]);
+        assert_eq!(join_segments(&s), "Don't do any coding right now. Just um see if it's viable.");
+    }
+
+    #[test]
+    fn join_drops_empty_segments() {
+        assert_eq!(join_segments(&segs(&["First.", "", "  ", "Second."])), "First. Second.");
+    }
+
+    #[test]
+    fn join_stub_end_merge_across_segments() {
         let s = segs(&[
-            "Don't do any coding right now. Just um.",
-            "See if it's viable.",
+            "This is a test of the Chirp app after we just did a huge pipeline overhaul for the.",
+            "Text injection and other pipelines.",
         ]);
-        let result = join_cleaned_segments(&s);
-        // "um" should be gone
-        assert!(
-            !result.to_lowercase().contains(" um "),
-            "expected 'um' stripped, got: {result}"
-        );
-        assert!(
-            !result.to_lowercase().contains(" um."),
-            "expected 'um.' stripped, got: {result}"
-        );
-        // No orphan period after "Just"
-        assert!(
-            !result.contains("Just."),
-            "expected no 'Just.' orphan, got: {result}"
-        );
-        assert!(
-            !result.contains("Just ."),
-            "expected no 'Just .' with space, got: {result}"
-        );
-        // The merge should have happened: "Just" → "see" continuation
-        assert!(
-            result.contains("Just see if it's viable")
-                || result.contains("just see if it's viable"),
-            "expected 'Just see if it's viable' merge, got: {result}"
-        );
-    }
-
-    #[test]
-    fn test_join_filler_at_segment_boundary_removed() {
-        // The session-2 case: a filler "Um" survived the per-segment LLM
-        // because it looked like a discourse marker. The post-join regex
-        // pre-pass should strip it.
-        let s = segs(&[
-            "Please analyse if this plan is feasible.",
-            "Um I know we'll have to make it.",
-        ]);
-        let result = join_cleaned_segments(&s);
-        assert!(
-            !result.to_lowercase().contains(" um "),
-            "expected 'um' to be stripped, got: {result}"
-        );
-        assert!(result.contains("I know we'll have to make it"));
-    }
-
-    #[test]
-    fn test_join_drops_empty_segments() {
-        let s = segs(&["First.", "", "  ", "Second."]);
-        assert_eq!(join_cleaned_segments(&s), "First. Second.");
+        let result = join_segments(&s);
+        assert!(result.to_lowercase().contains("overhaul for the text injection"), "{result}");
     }
 
     #[test]
@@ -1287,30 +934,6 @@ mod tests {
         assert_eq!(
             result,
             "I talked to Claude about SiteLift before sending it to Google."
-        );
-    }
-
-    #[test]
-    fn test_join_session_5_blast_radius() {
-        // The "Chirp app" test session — even if per-segment cleanup
-        // paraphrases within a segment, it should NOT add cross-segment
-        // "Chirp app:" prefixes.
-        let s = segs(&[
-            "This is a test of the Chirp app after we just did a huge pipeline overhaul for the.",
-            "Text injection and other pipelines. Just working on making sure we're not duplicating any text.",
-        ]);
-        let result = join_cleaned_segments(&s);
-        // "for the." → stub end, should merge
-        assert!(
-            result.contains("overhaul for the text injection")
-                || result.contains("overhaul for the Text injection"),
-            "expected stub-end merge of 'for the.' + 'Text injection', got: {result}"
-        );
-        // Should not have invented "Chirp app:" prefix because the input
-        // doesn't have one and per-segment can't introduce it cross-boundary.
-        assert!(
-            !result.starts_with("Chirp app:"),
-            "expected no invented 'Chirp app:' prefix, got: {result}"
         );
     }
 }

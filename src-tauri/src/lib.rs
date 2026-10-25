@@ -30,7 +30,7 @@ mod window_icon;
 
 
 use commands::{RecordingStartTime, ResamplerFlushState, StreamActiveState, StreamErrorState, StreamHandle};
-use state::{AppState, AudioBuffer, SharedState, VadCleanedTranscripts, VadFlushHandle, VadReceiverHandle, VadSender, VadTranscripts};
+use state::{AppState, AudioBuffer, SharedState, VadFlushHandle, VadReceiverHandle, VadSender, VadTranscripts};
 use std::sync::Arc;
 use tauri::{Manager, WindowEvent};
 use tauri_plugin_autostart::{MacosLauncher, ManagerExt};
@@ -78,7 +78,6 @@ pub fn run() {
         .manage(RecordingStartTime(std::sync::Mutex::new(None)))
         .manage(StreamActiveState(std::sync::Mutex::new(None)))
         .manage::<VadTranscripts>(Arc::new(std::sync::Mutex::new(Vec::new())))
-        .manage(VadCleanedTranscripts(Arc::new(std::sync::Mutex::new(Vec::new()))))
         .manage(VadReceiverHandle(std::sync::Mutex::new(None)))
         .manage(VadSender(std::sync::Mutex::new(None)))
         .manage(VadFlushHandle(std::sync::Mutex::new(None)))
@@ -157,8 +156,7 @@ pub fn run() {
                 let mut s = state.blocking_lock();
                 let model = s.settings.model.clone();
                 if transcribe::model_exists(&model) {
-                    let vocab = s.vocabulary.clone();
-                    match transcribe::load_model(&model, s.settings.beam_search, &vocab) {
+                    match transcribe::load_model(&model, s.settings.beam_search) {
                         Ok(recognizer) => {
                             s.recognizer = Some(Arc::new(recognizer));
                             log::info!("Speech model '{model}' loaded");

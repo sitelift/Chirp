@@ -95,7 +95,7 @@ The backend only builds on Windows. Cross-checking from Linux fails in C build s
 | `levels.rs` | Per-device input levels for the microphone picker. |
 | `audio.rs` | cpal capture, resampling to 16 kHz mono, Silero VAD segmentation, amplitude events. |
 | `transcribe.rs` | sherpa-onnx Parakeet model download, loading, inference. |
-| `cleanup.rs` | Deterministic text cleanup: filler words, spoken punctuation, numbers, VAD boundary repair. |
+| `cleanup.rs` | The deterministic pass: VAD segment join and boundary repair, spoken commands ("comma", "new line", ...). Fillers, numbers and spellings are the cleanup model's job. |
 | `router.rs` / `llm.rs` / `speculative.rs` / `context.rs` | When to call the LLM, the cleanup client (Anthropic or OpenAI; shared, updatable provider and keys), speculative cleanup at VAD pauses, active-app context. |
 | `hotkey.rs` + `hotkey_input.rs` | Global hotkeys: physical bindings and matching; one input thread owns the low-level hooks, binding capture (with live key labels), and Esc-to-cancel while dictating. See `docs/v2/HOTKEYS.md`. |
 | `inject.rs` + `clipboard_win.rs` | Win32 clipboard write + `SendInput` Ctrl+V, then restore the previous clipboard. |
@@ -106,8 +106,8 @@ The backend only builds on Windows. Cross-checking from Linux fails in C build s
 ### Data flow
 
 ```
-Hotkey → cpal capture (16 kHz mono) → VAD segments → Parakeet → regex cleanup
-→ vocabulary replacements → snippets → router → [Claude cleanup if on and keyed] → clipboard + Ctrl+V
+Hotkey → cpal capture (16 kHz mono) → VAD segments → Parakeet (greedy, no biasing) → segment join
+→ spoken commands → snippets → router → [cloud cleanup if a provider is on and keyed] → clipboard + Ctrl+V
 ```
 
 ### Settings

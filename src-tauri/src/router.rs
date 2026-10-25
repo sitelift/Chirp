@@ -1,10 +1,11 @@
 //! Router: decide whether a dictation needs the cloud LLM cleanup pass.
 //!
-//! Input is the text after the deterministic pass (`cleanup::cleanup_text` +
-//! vocabulary replacements) and the active app name. The LLM is skipped only
-//! when the dictation is short, plain, and headed somewhere casual, because
-//! then the deterministic text is already what the user meant and skipping
-//! saves the whole network round trip (~500-700 ms p50).
+//! Input is the deterministic text (`cleanup::spoken_text`: the recognizer's
+//! words with spoken commands converted, then snippets) and the active app
+//! name. The LLM is skipped only when the dictation is short, plain, and
+//! headed somewhere casual, because then the deterministic text is already
+//! what the user meant and skipping saves the whole network round trip
+//! (~500-700 ms p50).
 //!
 //! Everything here is plain string scanning: no regex, no allocation beyond
 //! one lowercase copy, well under a millisecond. Thresholds were tuned against
@@ -25,7 +26,8 @@ pub fn needs_llm(text: &str, app: &str) -> bool {
     if word_count(text) > MAX_SKIP_WORDS {
         return true;
     }
-    if structured_app(app) {
+    // A spoken "new line" / "new paragraph" asks for layout.
+    if structured_app(app) || text.contains('\n') {
         return true;
     }
     let lower = format!(" {} ", normalize(text));
@@ -35,10 +37,9 @@ pub fn needs_llm(text: &str, app: &str) -> bool {
     has_any(&lower, SELF_CORRECTION)
         || has_any(after_first, MIDSENTENCE_CORRECTION)
         || has_any(&lower, FORMATTING_CUES)
-        || has_any(&lower, LEFTOVER_FILLERS)
+        || has_any(&lower, FILLERS)
         || has_any(&lower, SPOKEN_NUMBERS)
         || has_repeated_word(&lower)
-        || text.contains('\u{2014}') // em dash: the deterministic pass turned a spoken "dash" into one
 }
 
 fn word_count(text: &str) -> usize {
@@ -74,7 +75,7 @@ fn has_any(lower: &str, phrases: &[&str]) -> bool {
     })
 }
 
-/// "a a Rust function", "the the": a stutter the deterministic pass left in.
+/// "a a Rust function", "the the": a stutter the recognizer kept.
 fn has_repeated_word(lower: &str) -> bool {
     let mut prev = "";
     for w in lower.split_whitespace() {
@@ -122,12 +123,16 @@ const FORMATTING_CUES: &[&str] = &[
     "hashtag", "ellipsis", "equals", "all caps", "camel case",
 ];
 
-/// Fillers `cleanup::remove_fillers` intentionally leaves alone because they
-/// are ambiguous; the LLM can tell filler from meaning.
-const LEFTOVER_FILLERS: &[&str] = &["you know", "like", "kind of", "sort of", "okay so", "so yeah"];
+/// Fillers stay in the deterministic text; only the LLM removes them (and can
+/// tell filler "like" from meaning).
+const FILLERS: &[&str] = &[
+    "um", "umm", "uh", "uhh", "uhm", "erm", "hmm", "you know", "like", "kind of",
+    "sort of", "okay so", "so yeah",
+];
 
-/// Number words the deterministic pass does not convert: times ("three
-/// thirty"), money, units, and anything bigger than counting numbers.
+/// Number words worth formatting: times ("three thirty"), money, units, and
+/// anything bigger than counting numbers. Counting numbers stay words in
+/// short casual text.
 const SPOKEN_NUMBERS: &[&str] = &[
     "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen",
     "eighteen", "nineteen", "twenty", "thirty", "forty", "fifty", "sixty",
@@ -140,7 +145,7 @@ const SPOKEN_NUMBERS: &[&str] = &[
 mod tests {
     use super::*;
 
-    // Deterministic-pass output for the corpus `short-*` entries
+    // Deterministic text for the corpus `short-*` entries
     // (bench/corpus/manifest.json): all skip.
     #[test]
     fn corpus_short_replies_skip() {
@@ -195,8 +200,22 @@ mod tests {
     }
 
     #[test]
-    fn em_dash_artifact_goes_to_llm() {
-        assert!(needs_llm("Cargo build,  —  — release", "Slack"));
+    fn converted_commands() {
+        // Spoken commands arrive converted (cleanup::spoken_text).
+        assert!(needs_llm("Buy milk\nBuy eggs", "Slack"));
+        assert!(needs_llm("Thanks,\n\nSee you", "WhatsApp"));
+        assert!(!needs_llm("Is it ready?", "Slack"));
+        assert!(!needs_llm("Hello, how are you?", "WhatsApp"));
+        // A command the conversion kept as words still asks for the model.
+        assert!(needs_llm("Add a comma there", "Slack"));
+    }
+
+    #[test]
+    fn fillers_go_to_llm() {
+        // The recognizer keeps fillers; only the model removes them.
+        assert!(needs_llm("Um, sounds good", "Slack"));
+        assert!(needs_llm("Yeah uh let me check", "Slack"));
+        assert!(!needs_llm("Umbrella is in the car", "Slack"));
     }
 
     #[test]

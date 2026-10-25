@@ -318,14 +318,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let gpu_before = gpu();
     let load = Instant::now();
     let offline = if !online {
-        let loaded = transcribe::load_model_config(&dir, false, &[], &provider, threads, false);
+        let loaded = transcribe::load_model_config(&dir, false, &provider, threads, false);
         Some(match loaded {
             Ok(rec) => rec,
             Err(e) if requested == "auto" && provider == "cuda" => {
                 eprintln!("CUDA load failed: {e}; falling back to CPU int8");
                 provider = "cpu".into();
                 dir = transcribe::model_dir("parakeet-tdt-0.6b");
-                transcribe::load_model_config(&dir, false, &[], "cpu", threads, false)?
+                transcribe::load_model_config(&dir, false, "cpu", threads, false)?
             }
             Err(e) => return Err(e.into()),
         })
@@ -353,7 +353,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let warmup = Instant::now();
     if let Some(rec) = &offline {
         transcribe::transcribe(rec, &vec![0.0; 16000])?;
-        let _ = cleanup::cleanup_text("warm up the deterministic cleanup", true);
+        cleanup::warm_up();
     }
     let warmup_ms = ms(warmup);
     let gpu_loaded = gpu();
@@ -361,7 +361,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Model load: {model_load_ms:.1}ms; {provider}, {threads} threads; online={online}");
     println!(
         "{:24} {:>5} {:>10} {:>10} {:>10} {:>8}",
-        "file", "run", "ASR ms", "tail ms", "cleanup", "WER"
+        "file", "run", "ASR ms", "tail ms", "commands", "WER"
     );
     // One true first decode, then N warm corpus passes. The first pass is retained separately.
     for iteration in usize::from(warm_only)..=iterations {
@@ -420,42 +420,38 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 let rec = offline.as_ref().unwrap();
                 let mut texts = Vec::new();
-                let mut cleaned_segments = Vec::new();
+                let mut segment_texts = Vec::new();
                 let mut asr_ms = 0.0;
                 let mut asr_capture_ms = 0.0;
-                let mut cleanup_capture_ms = 0.0;
                 let mut vad_ms = 0.0;
-                let mut decode = |segment: &[f32],
+                let mut decode = |segment: &audio::Segment,
                                   release_at: Option<Instant>|
                  -> Result<(), String> {
                     let t = Instant::now();
-                    let mut chunks = Vec::new();
-                    for chunk in transcribe::chunk_audio(segment, 16000, 30.0, 1.0) {
-                        chunks.push(transcribe::transcribe(rec, chunk)?);
-                    }
+                    // VAD segments decode as the app's receiver thread does;
+                    // whole files are chunked like the app's fallback path.
+                    let raw = if vad_path.is_some() {
+                        transcribe::transcribe_segment(rec, segment)?
+                    } else {
+                        let mut chunks = Vec::new();
+                        for chunk in transcribe::chunk_audio(&segment.audio, 16000, 30.0, 1.0) {
+                            chunks.push(transcribe::transcribe(rec, chunk)?);
+                        }
+                        transcribe::merge_transcriptions(chunks)
+                    };
                     let elapsed = ms(t);
                     asr_ms += elapsed;
                     if let Some(release_at) = release_at {
                         asr_capture_ms += elapsed
                             .min(release_at.saturating_duration_since(t).as_secs_f64() * 1000.0);
                     }
-                    let raw = transcribe::merge_transcriptions(chunks);
-                    if vad_path.is_some() && !raw.is_empty() {
-                        let t = Instant::now();
-                        cleaned_segments.push(cleanup::apply_replacements(
-                            &cleanup::cleanup_text(&raw, true),
-                            &[],
-                        ));
-                        cleanup_capture_ms += ms(t);
+                    if !raw.is_empty() {
+                        segment_texts.push(raw.clone());
                         if let Some(spec) = &speculation {
                             if release_at.is_none_or(|at| Instant::now() >= at) {
                                 spec.seal();
                             }
-                            let joined = cleanup::join_cleaned_segments_with_formatting(
-                                &cleaned_segments,
-                                true,
-                            );
-                            spec.offer(cleanup::repair_vad_boundary_artifacts(&joined));
+                            spec.offer(cleanup::spoken_text(&segment_texts));
                         }
                     }
                     texts.push(raw);
@@ -505,36 +501,24 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     }
                     tail_ms = backlog + ms(tail);
                 } else {
-                    decode(&samples, None)?;
+                    decode(&audio::Segment { audio: samples.clone(), lead: 0 }, None)?;
                     tail_ms = asr_ms;
                 }
                 stages.insert("vad".into(), vad_ms);
                 stages.insert("asr_during_capture".into(), asr_capture_ms);
                 stages.insert("asr_at_release".into(), asr_ms - asr_capture_ms);
-                stages.insert("segment_cleanup".into(), cleanup_capture_ms);
-                let precleaned = if vad_path.is_some() {
-                    Some(cleaned_segments)
-                } else {
-                    None
-                };
-                (texts.join(" "), asr_ms, tail_ms, precleaned)
+                (texts.join(" "), asr_ms, tail_ms, Some(segment_texts))
             };
             stages.insert("asr".into(), asr);
             stages.insert("end_of_audio_to_text".into(), tail);
             let post_asr = Instant::now();
             let t = Instant::now();
-            let cleaned = if let Some(segments) = precleaned {
-                cleanup::join_cleaned_segments_with_formatting(&segments, true)
-            } else {
-                cleanup::cleanup_text(&raw, true)
+            // Same deterministic text as the app; snippets are empty here.
+            let cleaned = match precleaned {
+                Some(segments) => cleanup::spoken_text(&segments),
+                None => cleanup::spoken_text(std::slice::from_ref(&raw)),
             };
-            stages.insert("cleanup".into(), ms(t));
-            let t = Instant::now();
-            let cleaned = cleanup::apply_replacements(&cleaned, &[]);
-            stages.insert("vocabulary".into(), ms(t));
-            let t = Instant::now();
-            let cleaned = cleanup::repair_vad_boundary_artifacts(&cleaned);
-            stages.insert("boundary_and_snippets".into(), ms(t)); // Empty snippet configuration.
+            stages.insert("spoken_commands".into(), ms(t));
             let route = if app_lib::router::needs_llm(&cleaned, &ctx.app) {
                 "haiku"
             } else {
@@ -600,7 +584,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 iteration,
                 asr,
                 tail,
-                stages["cleanup"],
+                stages["spoken_commands"],
                 wer * 100.0
             );
             let _ = (&item.ideal, &item.context); // retained in the input manifest; no cloud cleanup in this bench.

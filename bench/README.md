@@ -1,7 +1,7 @@
 # Chirp performance bench
 
 Run from the repository root on Windows. The Rust binary calls the application's
-actual ASR, chunk merging, deterministic cleanup and (with `-Vad`) Silero segmenter.
+actual ASR, chunk merging, deterministic pass (segment join + spoken commands) and (with `-Vad`) Silero segmenter.
 The WAV benchmark never opens a microphone or pastes text. `corpus/` is owned by the corpus track;
 the benchmark reads it without modifying it.
 
@@ -167,6 +167,13 @@ There is no capture UI or automatic retention.
   final/pasted text, selected LLM output/error, resolved context, dictionary terms,
   settings used, speculation use and timings. Pasted means input was dispatched,
   not that a target app acknowledged it. Failed/cancelled captures are marked.
+
+To replay every capture's `audio.wav` through the real VAD and
+`transcribe_segment` (no cloud call, no paste), build `--bin replay` with
+`--features bench`, put it beside the runtime DLLs like `bench.exe`, and run
+`replay.exe --provider cuda [--beam] [--limit N] [--passes 2] --label NAME`.
+It writes per-segment text and ASR ms plus `spoken_text` to
+`bench/results/replay-NAME.json` (gitignored; it contains dictated text).
 
 Writes happen in the background; an interrupted write can leave an incomplete
 folder. Capture adds no upload or telemetry and does not alter normal cloud

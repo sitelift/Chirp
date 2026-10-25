@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use tauri::AppHandle;
 
 use crate::settings::models_dir;
-use crate::state::{SherpaRecognizer, VocabEntry};
+use crate::state::SherpaRecognizer;
 
 /// Model metadata: (archive name, download url, extracted dir name, size in bytes)
 fn model_info(model: &str) -> (&'static str, &'static str, &'static str, u64) {
@@ -39,27 +39,17 @@ pub fn model_exists(model: &str) -> bool {
 
 /// Load a sherpa-onnx offline recognizer from disk.
 ///
-/// `vocabulary` is the user's hotword list — proper nouns, technical terms,
-/// or any rare words the ASR should bias toward. It's baked into the
-/// recognizer at construction time as an Aho-Corasick contextual biasing
-/// automaton. Vocabulary changes require this function to be called again
-/// (i.e., the recognizer must be reloaded).
-///
-/// Hotwords ONLY take effect with `modified_beam_search` decoding. With
-/// greedy decoding, sherpa-onnx silently ignores them — we log a warning
-/// when this combination is requested.
-pub fn load_model(
-    model: &str,
-    beam_search: bool,
-    vocabulary: &[VocabEntry],
-) -> Result<SherpaRecognizer, String> {
+/// Parakeet is speech recognition only: there is no contextual biasing, so
+/// editing Words never rebuilds the recognizer. Spellings reach the cleanup
+/// model as its dictionary instead.
+pub fn load_model(model: &str, beam_search: bool) -> Result<SherpaRecognizer, String> {
     let requested = std::env::var("CHIRP_ASR_PROVIDER").unwrap_or_else(|_| "auto".into());
     if !matches!(requested.as_str(), "auto" | "cpu" | "cuda") { return Err("CHIRP_ASR_PROVIDER must be auto, cpu or cuda".into()); }
     let cpu_threads = std::thread::available_parallelism().map(|n| n.get().clamp(1,6) as i32).unwrap_or(4);
     let cpu_threads = std::env::var("CHIRP_ASR_THREADS").ok().and_then(|s| s.parse::<i32>().ok()).filter(|n| *n > 0).unwrap_or(cpu_threads);
     let load = |dir: &std::path::Path, provider, threads| {
         let start = std::time::Instant::now();
-        let rec = load_model_config(dir, beam_search, vocabulary, provider, threads, false)?;
+        let rec = load_model_config(dir, beam_search, provider, threads, false)?;
         log::info!("ASR {provider} load: {:.1}ms", start.elapsed().as_secs_f64()*1000.0);
         let start = std::time::Instant::now();
         transcribe(&rec, &vec![0.0; 16000])?;
@@ -69,19 +59,19 @@ pub fn load_model(
     if requested != "cpu" && crate::engine::gpu_runtime() {
         crate::engine::remember_failure("CUDA model load/warmup did not finish")?;
         match load(&crate::downloads::fp32_dir(), "cuda", 4) {
-            Ok(rec) => { crate::engine::warmed_gpu(); let _ = crate::cleanup::cleanup_text("warm up", true); return Ok(rec); }
+            Ok(rec) => { crate::engine::warmed_gpu(); crate::cleanup::warm_up(); return Ok(rec); }
             Err(e) => { crate::engine::disable_gpu(&e); log::warn!("CUDA failed: {e}; using CPU int8"); }
         }
     }
     let dir = std::env::var_os("CHIRP_ASR_MODEL_DIR").map(PathBuf::from).unwrap_or_else(|| model_dir(model));
     let rec = load(&dir, "cpu", cpu_threads)?;
     crate::engine::set_active("cpu");
-    let _ = crate::cleanup::cleanup_text("warm up the deterministic cleanup", true);
+    crate::cleanup::warm_up();
     Ok(rec)
 }
 
 /// Explicit configuration for reproducible benchmarks; fallback may be disabled.
-pub fn load_model_config(dir: &std::path::Path, beam_search: bool, vocabulary: &[VocabEntry], provider: &str, n_threads: i32, fallback: bool) -> Result<SherpaRecognizer, String> {
+pub fn load_model_config(dir: &std::path::Path, beam_search: bool, provider: &str, n_threads: i32, fallback: bool) -> Result<SherpaRecognizer, String> {
     if !matches!(provider, "cpu" | "cuda") || n_threads < 1 { return Err("Expected cpu/cuda and positive thread count".into()); }
     let provider = if provider == "cuda" && !cuda_runtime_available() {
         if !fallback { return Err("CUDA provider/driver dependencies cannot be loaded; use bench/run.ps1 -Provider cuda".into()); }
@@ -106,61 +96,18 @@ pub fn load_model_config(dir: &std::path::Path, beam_search: bool, vocabulary: &
     let joiner = find_model_file(&dir, "joiner")
         .ok_or_else(|| "Joiner model file not found".to_string())?;
 
-    // Hotwords contextual biasing setup. Per sherpa-onnx docs, four config
-    // items must all be set at construction time for hotwords to take effect:
-    //   1. modeling_unit (BPE for Parakeet)
-    //   2. bpe_vocab (the model's BPE vocab file)
-    //   3. hotwords_file (one phrase per line, optional ":score" suffix)
-    //   4. hotwords_score (global boost, overridden by per-line scores)
-    let bpe_vocab_path = dir.join("bpe.vocab");
-    let hotwords_path = dir.join("hotwords.txt");
-
-    let vocab_filtered: Vec<&str> = vocabulary
-        .iter()
-        .map(|e| e.term.trim())
-        .filter(|s| !s.is_empty())
-        .collect();
-
-    // Hotwords biasing only works with modified_beam_search. Passing a
-    // hotwords_file while decoding_method = greedy_search crashes
-    // sherpa-onnx (STATUS_ACCESS_VIOLATION) rather than being ignored, so
-    // we must actively suppress hotwords when beam_search is off.
-    let mut hotwords_active = false;
-    if !vocab_filtered.is_empty() && beam_search {
-        let mut content = String::new();
-        for term in &vocab_filtered {
-            content.push_str(term);
-            content.push('\n');
-        }
-        if let Err(e) = std::fs::write(&hotwords_path, content) {
-            log::warn!("Failed to write hotwords file: {e}");
-        } else {
-            hotwords_active = true;
-        }
-    }
-    if !hotwords_active && hotwords_path.exists() {
-        let _ = std::fs::remove_file(&hotwords_path);
-    }
+    // Older versions wrote a hotwords file next to the model.
+    let _ = std::fs::remove_file(dir.join("hotwords.txt"));
 
     let decoding_method = if beam_search { "modified_beam_search" } else { "greedy_search" };
-
-    if !vocab_filtered.is_empty() && !beam_search {
-        log::warn!(
-            "Vocabulary has {} terms but beam search is OFF — hotwords biasing disabled (requires modified_beam_search)",
-            vocab_filtered.len()
-        );
-    }
-
     log::info!(
-        "Loading Parakeet TDT model from {} with {} threads, decoding={}, hotwords={} ({} terms)",
+        "Loading Parakeet TDT model from {} with {} threads, decoding={}",
         dir.display(),
         n_threads,
         decoding_method,
-        if hotwords_active { "on" } else { "off" },
-        vocab_filtered.len(),
     );
 
-    let mut mc = OfflineModelConfig {
+    let mc = OfflineModelConfig {
         transducer: OfflineTransducerModelConfig {
             encoder: Some(encoder.to_string_lossy().into_owned()),
             decoder: Some(decoder.to_string_lossy().into_owned()),
@@ -173,26 +120,10 @@ pub fn load_model_config(dir: &std::path::Path, beam_search: bool, vocabulary: &
         ..Default::default()
     };
 
-    if hotwords_active && bpe_vocab_path.exists() {
-        mc.modeling_unit = Some("bpe".to_string());
-        mc.bpe_vocab = Some(bpe_vocab_path.to_string_lossy().into_owned());
-    } else if hotwords_active {
-        log::warn!(
-            "Hotwords requested but bpe.vocab not found at {} — biasing will not work",
-            bpe_vocab_path.display()
-        );
-    }
-
     let mut config = OfflineRecognizerConfig {
         model_config: mc,
         decoding_method: Some(decoding_method.to_string()),
         max_active_paths: if beam_search { 8 } else { 4 },
-        hotwords_file: if hotwords_active {
-            Some(hotwords_path.to_string_lossy().into_owned())
-        } else {
-            None
-        },
-        hotwords_score: if hotwords_active { 1.5 } else { 0.0 },
         ..Default::default()
     };
     let rec = OfflineRecognizer::create(&config);
@@ -247,9 +178,7 @@ const DROPOUT_MIN_SAMPLES: usize = 4 * 16000;
 /// Dense VAD speech runs ~2-3 words/s; far below this means words were lost.
 const DROPOUT_WORDS_PER_SEC: f32 = 0.5;
 
-/// Run transcription on audio samples using sherpa-onnx. Hotwords biasing is
-/// configured at recognizer construction time (see `load_model`) — there is
-/// no per-call hotword override.
+/// Run transcription on audio samples using sherpa-onnx.
 ///
 /// Parakeet TDT occasionally decodes a long, clearly voiced segment to
 /// nothing (both int8 and fp32; observed on a 17.3s VAD segment whose halves

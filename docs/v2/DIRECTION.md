@@ -37,7 +37,7 @@ Every stage is timed and logged on every transcript from day one. Targets are re
 | Hotkey → recording | Win32 low-level hook (port from v1.3.4). Mic stream kept warm so pressing the key never waits on device open. | <20ms |
 | On key press (parallel) | Pre-open the TLS/HTTP connection to the Anthropic API so the handshake is done before release. | off the critical path |
 | Speech → text | sherpa-onnx with the CUDA provider. Start with offline Parakeet TDT over the full recording at release. Move to a streaming model (Nemotron Speech Streaming) only if the measurements say we need it. | <50ms for typical dictation |
-| Deterministic pass | Regex cleanup, dictionary replacements, snippets. Unit-tested. | <5ms |
+| Deterministic pass | Segment join, spoken commands, snippets. No filler, number or dictionary rewriting; no ASR biasing (Words go to the cleanup model as spellings). Unit-tested. | <5ms |
 | Router | Decide whether the LLM is needed (see below). | <1ms |
 | LLM cleanup | Claude Haiku 5.5 (`claude-haiku-5-5`), thinking disabled, low effort, cached system prompt, active-app context. Hard timeout → paste the deterministic result instead. | measure; aim p50 <1s |
 | Inject | Clipboard + Ctrl+V, restore the previous clipboard. Wait for the final text, then paste once (no streaming insertion). | <20ms |

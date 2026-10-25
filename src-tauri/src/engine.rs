@@ -178,7 +178,6 @@ pub fn bootstrap() -> Option<i32> {
                 crate::transcribe::load_model_config(
                     &crate::downloads::fp32_dir(),
                     false,
-                    &[],
                     "cuda",
                     4,
                     false,
@@ -209,7 +208,7 @@ pub fn bootstrap() -> Option<i32> {
         }
     }
     if args.iter().any(|a| a == "--chirp-check-engine") {
-        let result = crate::transcribe::load_model("parakeet-tdt-0.6b", false, &[]);
+        let result = crate::transcribe::load_model("parakeet-tdt-0.6b", false);
         if let (Ok(rec), Some(wav)) = (
             &result,
             args.iter()
