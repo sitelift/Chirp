@@ -1,6 +1,6 @@
 import { Check, ChevronRight } from 'lucide-react'
 import { useSurface, useSurfaceContext } from './store'
-import { Glyph } from './parts'
+import chirpMark from '../../assets/brand/chirp-mark-primary.svg?no-inline'
 import type { Pill as PillModel } from './types'
 
 const WORKING_OPACITY = [0.25, 0.25, 0.25, 0.45, 0.7, 1, 0.7, 0.45, 0.25, 0.25, 0.25]
@@ -110,7 +110,7 @@ export function PillContent({ pill, onStop, onAction, onResume }: { pill: PillMo
 export function HoverPill() {
   return (
     <div className="flex h-[36px] w-[56px] items-center justify-center">
-      <Glyph />
+      <img src={chirpMark} width={20} height={20} alt="" draggable={false} />
     </div>
   )
 }

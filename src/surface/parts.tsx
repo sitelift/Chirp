@@ -187,14 +187,3 @@ export function Spinner() {
     </svg>
   )
 }
-
-/** The three-bar glyph used on the hover pill. */
-export function Glyph({ color = '#F0B723', size = 16 }: { color?: string; size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 16 16" aria-hidden>
-      <rect x="2.5" y="6" width="2" height="4" rx="1" fill={color} />
-      <rect x="7" y="3" width="2" height="10" rx="1" fill={color} />
-      <rect x="11.5" y="5" width="2" height="6" rx="1" fill={color} />
-    </svg>
-  )
-}
