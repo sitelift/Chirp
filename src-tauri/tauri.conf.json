@@ -41,7 +41,7 @@
     }
   },
   "bundle": {
-    "active": true,
+    "active": false,
     "targets": [
       "nsis"
     ],
@@ -49,16 +49,7 @@
       "sherpa-onnx-c-api.dll",
       "sherpa-onnx-cxx-api.dll",
       "onnxruntime.dll",
-      "onnxruntime_providers_shared.dll",
-      "concrt140.dll",
-      "msvcp140.dll",
-      "msvcp140_1.dll",
-      "msvcp140_2.dll",
-      "msvcp140_atomic_wait.dll",
-      "msvcp140_codecvt_ids.dll",
-      "vcruntime140.dll",
-      "vcruntime140_1.dll",
-      "vcruntime140_threads.dll"
+      "onnxruntime_providers_shared.dll"
     ],
     "icon": [
       "icons/32x32.png",

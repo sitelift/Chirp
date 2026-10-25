@@ -248,3 +248,8 @@ downloads. GPU activates on the next restart/model load: Windows cannot safely
 replace an already-loaded ONNX runtime. A child probes CUDA; initialization and
 warmup failures persist CPU fallback until manual retry. Engine/progress IPC
 is available for the UI. Release steps: [RELEASING.md](RELEASING.md).
+
+Installer provisioning uses `scripts/setup-windows.ps1 -Bundle` in local builds
+and CI. CRT files are required only by the explicit `tauri.bundle.conf.json`
+configuration; base builds do not produce installers. This keeps development
+independent of installer resources without allowing an incomplete default bundle.

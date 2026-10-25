@@ -1,5 +1,16 @@
 ﻿# Windows v2 release and engine integration
 
+## Provisioning the installer
+
+Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1 -Bundle`.
+This installs pinned CPU build libraries and copies the complete x64 VC143 CRT
+from the installed VS toolchain (14.44+); `-VcRedistDir` selects an exact folder.
+CI calls this same script. Merge `src-tauri/tauri.bundle.conf.json` when bundling;
+production additionally merges `src-tauri/tauri.release.conf.json` for signing.
+The base config deliberately disables bundling and excludes the CRT files, so
+ordinary builds/dev runs need only the CPU setup and cannot emit an incomplete
+installer. No CRT DLLs are committed.
+
 ## Runtime and downloads
 
 The installer contains CPU MT sherpa-onnx 1.12.36 DLLs and the small Microsoft
@@ -122,3 +133,13 @@ real microphone/hotkey/paste dogfooding, and a signed release plus tray-driven
 upgrade from an older installed version. CPU simulation is not a clean-machine
 installer test. GPU artifacts were verified from cache, not all redownloaded
 from the internet during this run. Brand files were not changed.
+
+Fresh-checkout provisioning follow-up (2026-10-24): cloned `origin/v2` into a new
+temporary directory and applied this change. Default setup downloaded and
+verified CPU libraries without any CRT bundle DLLs. `-Bundle` then provisioned
+all 10 CRT DLLs, matching hashes from VS 14.44.35112; every configured bundle
+resource exists. An invalid CRT source fails with an actionable error.
+The clean-target `cargo build` attempt and normal retry were blocked before
+application compilation by Windows Application Control on `proc-macro-hack`'s
+build script (OS error 4551). Security settings were not changed; a complete
+clean-target build remains to be confirmed on an unblocked build machine.

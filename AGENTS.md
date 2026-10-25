@@ -24,7 +24,17 @@ The two things that matter most, in order:
 
 ### Prerequisites
 
-sherpa-onnx DLLs must be in `src-tauri/sherpa-onnx-lib/` (gitignored). Get the Windows x64 shared-library archive matching the `sherpa-onnx` crate version from https://github.com/k2-fsa/sherpa-onnx/releases. Copy `lib/*.dll` and `lib/*.lib` into that directory, and copy the DLLs flat into `src-tauri/` for release bundling. `.github/workflows/release.yml` shows the exact steps CI uses.
+Install VS 2022 Build Tools with the Desktop development with C++ workload and Windows SDK, plus CMake and LLVM. Then run:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1
+```
+
+This downloads SHA-256-pinned sherpa-onnx 1.12.36 CPU MT libraries, copies DLLs/import libraries into the gitignored build locations, and generates the ONNX import library. No CUDA or speech model downloads are needed to compile.
+
+For an installer, run the same script with `-Bundle`. It also copies the required x64 VC143 CRT redistributables (including `concrt140`, `msvcp140*`, `vccorlib140` and `vcruntime140*`) beside the app. It discovers the installed VS C++ redist directory (14.44 or newer); `-VcRedistDir <path-to-Microsoft.VC143.CRT>` selects an exact toolchain. CI uses this same script. Missing files fail with an actionable error.
+
+Plain `cargo build` and `tauri dev` use only CPU resources. Bundling is opt-in through `src-tauri/tauri.bundle.conf.json`, which adds the CRT files; this avoids making development depend on installer-only resources or silently producing incomplete installers. Production also merges `src-tauri/tauri.release.conf.json` for signing.
 
 Environment variables (bash):
 
@@ -50,7 +60,7 @@ If port 5173 is in use or the hotkey is already registered, kill stale `node.exe
 ```bash
 npm run build        # TypeScript check + Vite bundle (frontend only)
 npm run lint         # ESLint
-npx tauri build      # Full release build (NSIS/MSI installer)
+npx tauri build --config src-tauri/tauri.bundle.conf.json  # NSIS; run setup -Bundle first
 ```
 
 There's no test suite yet. Validate manually with the dev server on Windows.

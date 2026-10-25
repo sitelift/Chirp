@@ -33,19 +33,7 @@ jobs:
           if ($env:RELEASE_TAG -notmatch '^v2\.\d+\.\d+$') { throw 'Only stable v2.x.y tags use this feed' }
           $version = $env:RELEASE_TAG.Substring(1)
           node scripts/set-version.cjs $version
-          $name = 'sherpa-onnx-v1.12.36-win-x64-shared-MT-Release'
-          curl.exe -fL "https://github.com/k2-fsa/sherpa-onnx/releases/download/v1.12.36/$name.tar.bz2" -o cpu.tar.bz2
-          if ($LASTEXITCODE) { throw 'CPU runtime download failed' }
-          if ((Get-FileHash cpu.tar.bz2 -Algorithm SHA256).Hash.ToLowerInvariant() -ne '0c027b0729f28e229082ff53d4a1cc8f6636e736ef4cefe05069d75a613cfc58') { throw 'CPU runtime checksum mismatch' }
-          tar -xjf cpu.tar.bz2
-          if ($LASTEXITCODE) { throw 'CPU runtime extraction failed' }
-          New-Item -ItemType Directory -Force src-tauri/sherpa-onnx-lib | Out-Null
-          Copy-Item "$name/lib/*.dll" src-tauri/
-          Copy-Item "$env:VCToolsRedistDir/x64/Microsoft.VC143.CRT/*.dll" src-tauri/sherpa-onnx-lib/
-          Copy-Item "$name/lib/*.lib" src-tauri/sherpa-onnx-lib/
-          Copy-Item "$name/lib/*.dll" src-tauri/
-          lib /DEF:src-tauri/sherpa-onnx-lib/onnxruntime.def /OUT:src-tauri/sherpa-onnx-lib/onnxruntime.lib /MACHINE:X64
-          if ($LASTEXITCODE) { throw 'Import library generation failed' }
+          ./scripts/setup-windows.ps1 -Bundle
           "C:/Program Files/CMake/bin" >> $env:GITHUB_PATH
           "C:/Program Files/LLVM/bin" >> $env:GITHUB_PATH
       - run: npm ci
@@ -63,7 +51,7 @@ jobs:
         shell: pwsh
         run: |
           if (!$env:TAURI_SIGNING_PRIVATE_KEY) { throw 'Missing updater signing key' }
-          npx tauri build --bundles nsis --config src-tauri/tauri.release.conf.json
+          npx tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json --config src-tauri/tauri.release.conf.json
           if ($LASTEXITCODE) { throw 'Build failed' }
           $installer = (Get-ChildItem "$env:CARGO_TARGET_DIR/release/bundle/nsis/*-setup.exe").FullName
           trusted-signing-cli -e https://eus.codesigning.azure.net -a chirp -c chirp-codesigning -d Chirp $installer

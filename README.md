@@ -53,16 +53,14 @@ development with C++ and Windows SDK), CMake, and LLVM. Use an x64 Visual Studio
 developer shell. WebView2 is required; the installer can bootstrap it if missing.
 
 1. Run `npm.cmd ci`.
-2. Download **1.12.36 Windows x64 shared MT Release** from
-   [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.12.36).
-   Copy `lib/*.dll` and `lib/*.lib` to `src-tauri/sherpa-onnx-lib/`, then copy the
-   DLLs flat into `src-tauri/`. The release workflow pins the archive hash.
-3. Generate the import library:
-   `lib /DEF:src-tauri\sherpa-onnx-lib\onnxruntime.def /OUT:src-tauri\sherpa-onnx-lib\onnxruntime.lib /MACHINE:X64`.
-4. Copy the x64 `Microsoft.VC143.CRT/*.dll` redistributables from your Visual
-   Studio `VC/Redist/MSVC/<version>/x64/` directory into `src-tauri/`. These small
-   app-local libraries support the optional CUDA runtime.
-5. Set the environment (PowerShell):
+2. Run `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/setup-windows.ps1`.
+   It downloads and verifies the pinned CPU runtime, copies native libraries,
+   and generates the ONNX import library. No manual DLL copying is needed.
+3. For an installer, run that script with `-Bundle`. It also provisions the
+   complete VC143 x64 CRT from VS C++ tools 14.44 or newer. The script discovers
+   the redist folder automatically; `-VcRedistDir <Microsoft.VC143.CRT path>`
+   selects an exact installed version. CI uses the same provisioning path.
+4. Set the environment (PowerShell):
 
 ```powershell
 $env:PATH = "C:\Program Files\CMake\bin;C:\Program Files\LLVM\bin;$env:PATH"
@@ -70,6 +68,10 @@ $env:LIBCLANG_PATH = 'C:\Program Files\LLVM\bin'
 $env:CARGO_TARGET_DIR = 'C:\tmp\chirp-target'
 npx.cmd tauri dev
 ```
+
+Development does not require the CRT bundle files. Installer generation is opt-in
+through `tauri.bundle.conf.json`; plain `tauri build` builds the app without an
+installer. The signing config is separate from this bundle config.
 
 The short target path avoids MAX_PATH issues. Stop your stale dev instance if
 port 5173 or the hotkey is occupied. The dev gallery is at
@@ -81,7 +83,7 @@ cargo build --manifest-path src-tauri/Cargo.toml
 npm.cmd run build
 npm.cmd run lint
 # Unsigned local installer; production signing is configured separately:
-npx.cmd tauri build --bundles nsis --config '{"bundle":{"createUpdaterArtifacts":false}}'
+npx.cmd tauri build --bundles nsis --config src-tauri/tauri.bundle.conf.json --config '{"bundle":{"createUpdaterArtifacts":false}}'
 ```
 
 Set `CHIRP_ASR_PROVIDER=cpu` before launch to force CPU.
