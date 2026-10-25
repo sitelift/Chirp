@@ -1,140 +1,175 @@
-import { useEffect, useRef, type ReactNode } from 'react'
-import { ArrowUpRight, Check } from 'lucide-react'
+import { useLayoutEffect, useRef, useState, type ReactNode } from 'react'
 import { open } from '@tauri-apps/plugin-shell'
-import { setUi, useSurface, useSurfaceContext } from '../store'
-import { Header, Spinner, Toggle, type ToggleState } from '../parts'
-import { drill, removeApiKey, saveSettings, setApiKey } from '../actions'
+import { providerOf, setUi, useSurface, useSurfaceContext } from '../store'
+import { Reveal, Segmented, Spinner } from '../parts'
+import { removeApiKey, saveSettings, setApiKey } from '../actions'
+import { anim } from '../motion'
+import { IconOpen } from '../icons'
+import type { KeyProvider, Provider } from '../types'
 
-const KEYS_URL = 'https://console.anthropic.com/settings/keys'
+const PROVIDERS: Record<KeyProvider, { name: string; model: string; mask: string; env: string; keysUrl: string }> = {
+  anthropic: { name: 'Anthropic', model: 'Claude Haiku 5.5', mask: 'sk-ant-••••••••••', env: 'ANTHROPIC_API_KEY', keysUrl: 'https://console.anthropic.com/settings/keys' },
+  openai: { name: 'OpenAI', model: 'GPT-6 Luna', mask: 'sk-••••••••••', env: 'OPENAI_API_KEY', keysUrl: 'https://platform.openai.com/api-keys' },
+}
 
-function LinkButton({ children, onClick }: { children: ReactNode; onClick: () => void }) {
+function Status({ tone, children }: { tone?: 'danger' | 'quiet'; children: ReactNode }) {
   return (
-    <button type="button" data-nav="" onClick={onClick} className="nav flex items-center gap-[2px] rounded-[4px] text-meta text-t1 hover:underline">
+    <span className="status" data-tone={tone}>
+      <i />
       {children}
-    </button>
+    </span>
   )
 }
 
-function GetKey() {
-  const { api } = useSurfaceContext()
-  return (
-    <LinkButton onClick={() => api.live && open(KEYS_URL)}>
-      Get a key
-      <ArrowUpRight size={12} strokeWidth={2} />
-    </LinkButton>
-  )
-}
-
-/** Paste or type a key; it is validated, then stored in Windows Credential Manager. */
-function KeyInput({ invalidHint }: { invalidHint?: string }) {
+/** The key field and a same-height button: Remove, or Get a key. */
+function KeyRow({ provider }: { provider: KeyProvider }) {
   const ctx = useSurfaceContext()
+  const status = useSurface((s) => s.ai[provider])
   const draft = useSurface((s) => s.ui.aiDraft)
-  const ref = useRef<HTMLInputElement>(null)
-  useEffect(() => {
-    if (!ctx.still && !invalidHint) ref.current?.focus()
-  }, [ctx.still, invalidHint])
-  return (
-    <input
-      ref={ref}
-      type="password"
-      value={draft}
-      autoComplete="off"
-      spellCheck={false}
-      aria-label="Anthropic API key"
-      placeholder={invalidHint ?? 'Paste your Anthropic API key'}
-      onChange={(e) => setUi(ctx.store, { aiDraft: e.target.value })}
-      onPaste={(e) => {
-        const text = e.clipboardData.getData('text')
-        if (text.trim()) {
-          e.preventDefault()
-          setApiKey(ctx, text)
-        }
-      }}
-      onKeyDown={(e) => {
-        if (e.key === 'Enter') setApiKey(ctx, draft)
-      }}
-      className={`h-[34px] w-full rounded-field border-b-2 bg-field px-[10px] text-row text-t1 outline-none ${
-        invalidHint ? 'border-danger tracking-[0.02em] placeholder:text-t1' : 'border-transparent placeholder:text-t4 focus:border-accent'
-      }`}
-      style={{ boxShadow: '0 0 0 1px var(--field-ring)' }}
-    />
-  )
-}
+  const p = PROVIDERS[provider]
+  const fieldRef = useRef<HTMLDivElement>(null)
+  const shown = useRef(provider)
 
-function KeyField({ hint, trailing, readOnly }: { hint: string; trailing?: ReactNode; readOnly?: boolean }) {
-  return (
-    <div
-      className="flex h-[34px] shrink-0 items-center gap-[8px] rounded-field px-[10px]"
-      style={readOnly ? { background: 'var(--field-ro)', boxShadow: '0 0 0 1px var(--field-ro-ring)' } : { background: 'var(--field)', boxShadow: '0 0 0 1px var(--field-ring)' }}
-    >
-      <span className="min-w-0 flex-1 truncate text-row tracking-[0.02em] text-t1">{hint}</span>
-      {trailing}
-    </div>
-  )
-}
+  // Another provider's key: a quick fade so the change reads.
+  useLayoutEffect(() => {
+    if (shown.current === provider) return
+    shown.current = provider
+    if (!ctx.still && fieldRef.current) anim(fieldRef.current, [{ opacity: 0.4 }, { opacity: 1 }], { duration: 160, easing: 'linear' })
+  }, [provider, ctx.still])
 
-export function AiCleanup() {
-  const ctx = useSurfaceContext()
-  const ai = useSurface((s) => s.ai)
-  const enabled = useSurface((s) => s.settings.aiCleanup)
-  const hasKey = ai.state === 'connected' || ai.state === 'offline'
-  const toggle: ToggleState = !hasKey ? 'disabled' : enabled ? 'on' : 'off'
-  const hint = ai.keyHint ?? ''
+  const hint = <span className="keytext">{status.keyHint ?? p.mask}</span>
+  let field: ReactNode
+  switch (status.state) {
+    case 'checking':
+      field = (
+        <>
+          {hint}
+          <span className="status">
+            <Spinner />
+            Checking
+          </span>
+        </>
+      )
+      break
+    case 'connected':
+      field = (
+        <>
+          {hint}
+          <Status>Connected</Status>
+        </>
+      )
+      break
+    case 'offline':
+      field = (
+        <>
+          {hint}
+          <Status tone="quiet">Offline</Status>
+        </>
+      )
+      break
+    case 'invalid':
+      field = (
+        <>
+          {hint}
+          <Status tone="danger">Not accepted</Status>
+        </>
+      )
+      break
+    default:
+      field = (
+        <input
+          type="password"
+          value={draft}
+          autoComplete="off"
+          spellCheck={false}
+          aria-label={`${p.name} API key`}
+          placeholder={`Paste your ${p.name} key`}
+          onChange={(e) => setUi(ctx.store, { aiDraft: e.target.value })}
+          onPaste={(e) => {
+            const text = e.clipboardData.getData('text')
+            if (text.trim()) {
+              e.preventDefault()
+              setApiKey(ctx, provider, text)
+            }
+          }}
+          onKeyDown={(e) => e.key === 'Enter' && setApiKey(ctx, provider, draft)}
+        />
+      )
+  }
 
-  let body: ReactNode
-  if (hasKey && !enabled) {
-    body = (
-      <div className="px-[12px] pb-[10px]">
-        <div className="text-meta text-t3">Local cleanup only.</div>
-      </div>
+  let action: ReactNode
+  if (status.state === 'none') {
+    action = (
+      <button type="button" data-nav="" className="nav quiet" onClick={() => ctx.api.live && open(p.keysUrl)}>
+        Get a key
+        <IconOpen size={12} />
+      </button>
     )
+  } else if (status.fromEnv) {
+    action = <span className="quiet" title={`Set by ${p.env}`}>From {p.env}</span>
   } else {
-    let field: ReactNode
-    let left: ReactNode
-    let right: ReactNode = null
-    switch (ai.state) {
-      case 'checking':
-        field = <KeyField hint={hint} trailing={<Spinner />} />
-        left = <span className="text-t3">Checking…</span>
-        break
-      case 'connected':
-      case 'offline':
-        field = <KeyField hint={hint} readOnly trailing={ai.state === 'connected' ? <Check size={14} strokeWidth={2.5} className="text-t1" /> : null} />
-        left = <span className="text-t3">{ai.state === 'connected' ? 'Connected' : "Can't reach Anthropic"}</span>
-        right = ai.fromEnv ? <span className="text-t3">From ANTHROPIC_API_KEY</span> : <LinkButton onClick={() => removeApiKey(ctx)}>Remove</LinkButton>
-        break
-      case 'invalid':
-        field = <KeyInput invalidHint={hint} />
-        left = <span className="text-danger">Key not accepted</span>
-        right = <GetKey />
-        break
-      default:
-        field = <KeyInput />
-        left = <span className="text-t3">Stored on this PC only</span>
-        right = <GetKey />
-    }
-    body = (
-      <div className="flex flex-col gap-[6px] px-[12px] pb-[12px] pt-[4px]">
-        {field}
-        <div className="flex h-[16px] shrink-0 items-center justify-between text-meta">
-          {left}
-          {right}
-        </div>
-      </div>
+    action = (
+      <button type="button" data-nav="" className="nav quiet" onClick={() => removeApiKey(ctx, provider)}>
+        Remove
+      </button>
     )
   }
 
   return (
-    <div className="flex flex-col">
-      <Header title="AI cleanup" onBack={() => drill(ctx, 'home')} />
-      <div className="flex items-center justify-between gap-[12px] rounded-row px-[12px] py-[8px]">
-        <div className="flex flex-col gap-[2px]">
-          <div className="text-row text-t1">Use Claude</div>
-          <div className="text-meta text-t3">Removes filler, fixes punctuation. Sends your words and window title to Anthropic.</div>
-        </div>
-        <Toggle label="Use Claude" state={toggle} onChange={(on) => saveSettings(ctx, { aiCleanup: on })} />
+    <div className="keyrow">
+      <div ref={fieldRef} className="keyfield">
+        {field}
       </div>
-      {body}
+      {action}
     </div>
+  )
+}
+
+const MODEL: Record<Provider, string> = { off: 'No cleanup', anthropic: PROVIDERS.anthropic.model, openai: PROVIDERS.openai.model }
+
+export function AiCleanup() {
+  const ctx = useSurfaceContext()
+  const provider = useSurface((s) => providerOf(s.settings))
+  // The key block keeps the last provider's key while it folds away under Off.
+  const [keyFor, setKeyFor] = useState<KeyProvider>(provider === 'off' ? 'anthropic' : provider)
+  if (provider !== 'off' && provider !== keyFor) setKeyFor(provider)
+
+  const choose = (v: Provider) => {
+    setUi(ctx.store, { aiDraft: '' })
+    saveSettings(ctx, { provider: v })
+  }
+  return (
+    <>
+      <h2>AI cleanup</h2>
+      <p className="lede">Removes filler words, fixes punctuation and formats text for the app you&apos;re in.</p>
+      <div>
+        <div className="item">
+          <div className="txt">
+            <b>Provider</b>
+            <small>{MODEL[provider]}</small>
+          </div>
+          <Segmented<Provider>
+            label="Provider"
+            width={80}
+            value={provider}
+            onChange={choose}
+            options={[
+              { value: 'off', label: 'Off' },
+              { value: 'anthropic', label: 'Anthropic' },
+              { value: 'openai', label: 'OpenAI' },
+            ]}
+          />
+        </div>
+        <Reveal open={provider !== 'off'}>
+          <div className="item col">
+            <div className="txt">
+              <b>API key</b>
+            </div>
+            <KeyRow provider={keyFor} />
+          </div>
+        </Reveal>
+      </div>
+      <div className="note">{provider === 'off' ? 'Your dictation stays on this PC.' : `Your dictation is sent to ${PROVIDERS[provider].name} to be cleaned up.`}</div>
+    </>
   )
 }

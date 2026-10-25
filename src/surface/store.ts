@@ -2,12 +2,15 @@ import { createContext, useContext } from 'react'
 import { createStore, useStore, type StoreApi } from 'zustand'
 import type {
   AiStatus,
+  AiStatuses,
   AudioDevice,
   FirstRunStep,
   HistoryEntry,
   PauseState,
   Phase,
   Pill,
+  Provider,
+  Section,
   Settings,
   SnippetEntry,
   Theme,
@@ -18,6 +21,7 @@ import type {
 import type { Api } from './api'
 
 export interface SurfaceState {
+  /** The Windows theme; `settings.appearance` may override it (see `themeOf`). */
   theme: Theme
   settings: Settings
   vocabulary: VocabEntry[]
@@ -27,21 +31,21 @@ export interface SurfaceState {
   levels: Record<string, number>
   /** 11 bar heights, 0..1, while listening. */
   bars: number[]
-  ai: AiStatus
+  ai: AiStatuses
   pause: PauseState
   update: string | null
   download: { progress: number; etaSec: number | null }
 
   phase: Phase
-  /** Fading out: the pill after a paste (fade + scale), or the surface content before it collapses. */
-  leaving: false | 'pill' | 'surface'
+  /** The pill fading out after a paste (fade + scale). */
+  leaving: false | 'pill'
   /** Bump `n` to re-anchor the window on another monitor. */
   anchor: { to: 'foreground' | 'cursor' | 'primary'; n: number }
   pill: Pill | null
   tickHover: boolean
   view: View
-  /** Direction of the last drill: 1 into a view, -1 back. */
-  drill: 1 | -1
+  /** The Settings section on show. */
+  section: Section
   firstRun: FirstRunStep
   ui: UiState
 }
@@ -70,6 +74,25 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export const IDLE_BARS = [4, 8, 14, 10, 18, 12, 16, 7, 11, 5, 4].map((h) => (h - 3) / 15)
 
+export const NO_KEY: AiStatus = { state: 'none', keyHint: null, fromEnv: false }
+
+/** Accepts the per-provider statuses, or a single (Anthropic) status from an older backend. */
+export function aiStatuses(raw: unknown, prev: AiStatuses): AiStatuses {
+  if (!raw || typeof raw !== 'object') return prev
+  const r = raw as Partial<AiStatuses> & Partial<AiStatus>
+  if (typeof r.state === 'string') return { ...prev, anthropic: r as AiStatus }
+  return { anthropic: r.anthropic ?? prev.anthropic, openai: r.openai ?? prev.openai }
+}
+
+/** `provider: null` comes from settings written before providers existed. */
+export function providerOf(settings: Settings): Provider {
+  return settings.provider ?? (settings.aiCleanup ? 'anthropic' : 'off')
+}
+
+export function themeOf(s: Pick<SurfaceState, 'theme' | 'settings'>): Theme {
+  return s.settings.appearance === 'light' || s.settings.appearance === 'dark' ? s.settings.appearance : s.theme
+}
+
 export function initialState(theme: Theme): SurfaceState {
   return {
     theme,
@@ -80,7 +103,7 @@ export function initialState(theme: Theme): SurfaceState {
     devices: [],
     levels: {},
     bars: IDLE_BARS.map(() => 0),
-    ai: { state: 'none', keyHint: null, fromEnv: false },
+    ai: { anthropic: NO_KEY, openai: NO_KEY },
     pause: { paused: false, until: null },
     update: null,
     download: { progress: 0, etaSec: null },
@@ -90,9 +113,9 @@ export function initialState(theme: Theme): SurfaceState {
     pill: null,
     tickHover: false,
     view: 'home',
-    drill: 1,
+    section: 'chirp',
     firstRun: 'ready',
-    ui: { copied: null, rebind: null, pauseMenu: false, words: null, aiDraft: '' },
+    ui: { copied: null, rebind: null, aiDraft: '' },
   }
 }
 
@@ -105,7 +128,7 @@ export function createSurfaceStore(state: SurfaceState): SurfaceStore {
 export interface SurfaceContextValue {
   store: SurfaceStore
   api: Api
-  /** Static rendering for the preview harness: no window calls, no timers. */
+  /** Static rendering for the preview harness: no window calls, no timers, no motion. */
   still: boolean
 }
 

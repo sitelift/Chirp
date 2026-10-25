@@ -1,73 +1,31 @@
-import type { ButtonHTMLAttributes, ReactNode } from 'react'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
-import { useForced } from './forced'
+import type { CSSProperties, ReactNode } from 'react'
+import { IconBack } from './icons'
 
-const rowBase =
-  'nav group flex w-full shrink-0 items-center rounded-row text-left text-row text-t1 transition-colors duration-100 ' +
-  'enabled:hover:bg-hover enabled:active:bg-press data-[force-hover]:bg-hover data-[force-press]:bg-press disabled:cursor-default'
-
-interface RowProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  id?: string
-  /** Right padding: 8 next to a chevron, 14 next to key caps (design). */
-  tight?: boolean
-  tall?: boolean
-}
-
-export function Row({ id, tight = true, tall = false, className = '', children, ...rest }: RowProps) {
-  const forced = useForced(id)
+/** The sub-screen header: back (8 radius, 10 px from both edges) and the title. */
+export function Header({ title, onBack }: { title: string; onBack: () => void }) {
   return (
-    <button
-      type="button"
-      data-nav=""
-      className={`${rowBase} ${tall ? 'h-[56px]' : 'h-[40px]'} pl-[12px] ${tight ? 'pr-[8px]' : 'pr-[14px]'} justify-between ${className}`}
-      {...forced}
-      {...rest}
-    >
-      {children}
-    </button>
-  )
-}
-
-export function Chevron() {
-  return <ChevronRight size={16} strokeWidth={2} className="shrink-0 text-chev" />
-}
-
-/** "Label ......... value >" */
-export function NavRow({ id, label, value, onClick, disabled }: { id: string; label: string; value?: ReactNode; onClick?: () => void; disabled?: boolean }) {
-  return (
-    <Row id={id} onClick={onClick} disabled={disabled}>
-      <span>{label}</span>
-      <span className="flex items-center gap-[4px]">
-        {value !== undefined && value !== null && <span className="text-row text-t2">{value}</span>}
-        <Chevron />
-      </span>
-    </Row>
+    <div className="head">
+      <button type="button" data-nav="" data-back="" aria-label="Back" onClick={onBack} className="nav back">
+        <IconBack />
+      </button>
+      <span className="title">{title}</span>
+    </div>
   )
 }
 
 export function Divider() {
   return (
-    <div className="flex flex-col px-[12px] py-[6px]">
-      <div className="h-px shrink-0 bg-divider" />
+    <div className="divider" aria-hidden>
+      <i />
     </div>
   )
 }
 
-export type CapTone = 'normal' | 'hover' | 'accent' | 'danger'
-
-export function Caps({ keys, tone = 'normal', hoverable = false }: { keys: string[]; tone?: CapTone; hoverable?: boolean }) {
-  const toneStyle =
-    tone === 'accent'
-      ? { borderColor: 'var(--accent)', background: 'var(--field)' }
-      : tone === 'danger'
-        ? { borderColor: 'var(--danger)', background: 'var(--field)', color: 'var(--danger)' }
-        : tone === 'hover'
-          ? { borderColor: 'var(--key-border-hover)', background: 'var(--key-bg-hover)' }
-          : undefined
+export function Caps({ keys }: { keys: string[] }) {
   return (
-    <span className="flex gap-[4px]">
+    <span className="caps">
       {keys.map((k) => (
-        <span key={k} className={`keycap ${hoverable ? 'keycap-hover' : ''}`} style={toneStyle}>
+        <span key={k} className="cap">
           {k}
         </span>
       ))}
@@ -75,115 +33,69 @@ export function Caps({ keys, tone = 'normal', hoverable = false }: { keys: strin
   )
 }
 
-/** The view header: back, title, optional trailing action. */
-export function Header({ title, onBack, action }: { title: string; onBack: () => void; action?: ReactNode }) {
-  return (
-    <div className="flex h-[40px] shrink-0 items-center gap-[4px]">
-      <button
-        type="button"
-        data-nav=""
-        aria-label="Back"
-        onClick={onBack}
-        className="nav flex h-[32px] w-[32px] shrink-0 items-center justify-center rounded-btn text-t1 hover:bg-hover active:bg-press"
-      >
-        <ChevronLeft size={16} strokeWidth={2} />
-      </button>
-      <div className="min-w-0 flex-1 font-display text-row font-semibold text-t1">{title}</div>
-      {action}
-    </div>
-  )
+/** The 40 x 20 switch; the row around it is the button. */
+export function Switch() {
+  return <span className="toggle" aria-hidden />
 }
 
-export function IconButton({ label, onClick, children, size = 32, className = '', id }: { label: string; onClick: () => void; children: ReactNode; size?: number; className?: string; id?: string }) {
-  const forced = useForced(id)
+/** Off / Lower / Pause style picker with a sliding thumb (6 radius in an 8 track). */
+export function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  width,
+  label,
+}: {
+  options: { value: T; label: string }[]
+  value: T
+  onChange: (v: T) => void
+  /** Width of one segment. */
+  width: number
+  label: string
+}) {
+  const i = Math.max(0, options.findIndex((o) => o.value === value))
   return (
-    <button
-      type="button"
-      data-nav=""
-      aria-label={label}
-      title={label}
-      onClick={(e) => {
-        e.stopPropagation()
-        onClick()
-      }}
-      className={`nav flex shrink-0 items-center justify-center rounded-btn hover:bg-hover active:bg-press ${className}`}
-      style={{ width: size, height: size }}
-      {...forced}
-    >
-      {children}
-    </button>
-  )
-}
-
-export type ToggleState = 'off' | 'on' | 'disabled'
-
-/** The switch itself, without a button: for rows that are the button (Sounds). */
-export function SwitchTrack({ state }: { state: ToggleState }) {
-  const on = state === 'on'
-  return (
-    <span
-      aria-hidden
-      className="flex h-[20px] w-[40px] shrink-0 items-center rounded-[10px] px-[3px] transition-colors duration-150"
-      style={
-        on
-          ? { background: 'var(--accent)', justifyContent: 'flex-end' }
-          : { border: `1px solid ${state === 'disabled' ? 'var(--toggle-disabled)' : 'var(--toggle-border)'}` }
-      }
-    >
-      <span
-        className="block shrink-0 rounded-full"
-        style={
-          on
-            ? { width: 14, height: 14, background: 'var(--toggle-on-thumb)' }
-            : { width: 12, height: 12, background: state === 'disabled' ? 'var(--toggle-disabled-thumb)' : 'var(--toggle-thumb)' }
-        }
-      />
+    <span className="segs" role="group" aria-label={label} style={{ '--w': `${width}px` } as CSSProperties}>
+      <span className="thumb" style={{ transform: `translateX(${i * width}px)` }} />
+      {options.map((o) => (
+        <button
+          key={o.value}
+          type="button"
+          aria-pressed={o.value === value}
+          data-nav=""
+          className="nav"
+          onClick={() => o.value !== value && onChange(o.value)}
+        >
+          {o.label}
+        </button>
+      ))}
     </span>
   )
 }
 
-export function Toggle({ state, onChange, label }: { state: ToggleState; onChange?: (on: boolean) => void; label: string }) {
-  const on = state === 'on'
+/** Grows to its content (grid rows 0fr to 1fr) and fades. */
+export function Reveal({ open, children }: { open: boolean; children: ReactNode }) {
   return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={on}
-      aria-label={label}
-      data-nav=""
-      disabled={state === 'disabled'}
-      onClick={() => onChange?.(!on)}
-      className="nav flex shrink-0 rounded-[10px]"
-    >
-      <SwitchTrack state={state} />
-    </button>
+    <div className="reveal" data-open={open ? '' : undefined} inert={!open}>
+      <div>{children}</div>
+    </div>
   )
 }
 
-const LEVEL_SHAPE = [4, 9, 13, 7, 3]
-const IDLE_SHAPE = [3, 5, 7, 4, 2]
+const LEVEL_SHAPE = [0.55, 0.85, 1, 0.75, 0.5]
 
-/** Five tiny bars that follow a device's input level. */
-export function LevelBars({ level, active }: { level: number; active: boolean }) {
+/** Five bars that follow a device's input level. */
+export function LevelBars({ level }: { level: number }) {
   const l = Math.min(1, Math.max(0, level))
   return (
-    <span className="flex h-[14px] w-[18px] shrink-0 items-center gap-[2px]" aria-hidden>
-      {LEVEL_SHAPE.map((h, i) => (
-        <span
-          key={i}
-          className="w-[2px] rounded-[1px] transition-[height] duration-75"
-          style={{ height: Math.round(IDLE_SHAPE[i] + (h - IDLE_SHAPE[i]) * l), background: active ? 'var(--accent)' : 'var(--level-idle)' }}
-        />
+    <span className="levels" aria-hidden>
+      {LEVEL_SHAPE.map((s, i) => (
+        <i key={i} style={{ height: Math.round(4 + 10 * s * l) }} />
       ))}
     </span>
   )
 }
 
 export function Spinner() {
-  return (
-    <svg width="14" height="14" viewBox="0 0 24 24" className="spin shrink-0" aria-hidden>
-      <circle cx="12" cy="12" r="9" fill="none" stroke="var(--spinner-track)" strokeWidth="2.5" />
-      <path d="M12 3a9 9 0 0 1 9 9" fill="none" stroke="var(--t1)" strokeWidth="2.5" strokeLinecap="round" />
-    </svg>
-  )
+  return <span className="spin" aria-hidden />
 }

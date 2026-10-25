@@ -30,6 +30,7 @@ export interface Settings {
 
 /** Which cloud model cleans up dictations; 'off' pastes the recognizer text with spoken commands converted. */
 export type Provider = 'off' | 'anthropic' | 'openai'
+export type KeyProvider = Exclude<Provider, 'off'>
 export type Appearance = 'system' | 'light' | 'dark'
 
 /** What other apps' audio does while recording. */
@@ -37,6 +38,7 @@ export type MediaMode = 'off' | 'lower' | 'pause'
 
 export interface VocabEntry {
   term: string
+  /** Kept on disk for compatibility; ignored, and written as []. */
   replaces: string[]
 }
 export interface SnippetEntry {
@@ -60,6 +62,8 @@ export interface AiStatus {
   keyHint: string | null
   fromEnv: boolean
 }
+/** One status per provider; each keeps its own key. */
+export type AiStatuses = Record<KeyProvider, AiStatus>
 
 export interface PauseState {
   paused: boolean
@@ -79,7 +83,8 @@ export type Pill =
   /** Text pills. `action` makes them clickable; `check` adds the amber check. */
   | { kind: 'message'; text: string; action?: 'microphone'; check?: boolean }
 
-export type View = 'home' | 'microphone' | 'words' | 'ai' | 'recent' | 'settings'
+export type View = 'home' | 'recent' | 'words' | 'snippets' | 'settings'
+export type Section = 'chirp' | 'shortcuts' | 'microphone' | 'sound' | 'ai'
 export type FirstRunStep = 'downloading' | 'mic-blocked' | 'ready'
 
 export type RebindPhase = 'listening' | 'saved' | 'conflict'
@@ -91,20 +96,11 @@ export interface RebindState {
   message?: string
 }
 
-export interface WordsEdit {
-  mode: 'add' | 'edit'
-  /** Index into the derived word list when editing. */
-  index?: number
-  say: string
-  get: string
-}
-
 /** Transient presentation state; kept in the store so the preview can set it. */
 export interface UiState {
   copied: string | null
   rebind: RebindState | null
-  pauseMenu: boolean
-  words: WordsEdit | null
+  /** The API key being typed. */
   aiDraft: string
   /** Preview only: draw the keyboard focus ring on this element. */
   forceFocus?: string

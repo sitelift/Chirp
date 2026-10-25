@@ -1,4 +1,4 @@
-import { ArrowUpRight } from 'lucide-react'
+import { IconOpen } from '../icons'
 import { useSurface, useSurfaceContext } from '../store'
 import { etaLabel, holdKeyLabel } from '../format'
 
@@ -36,7 +36,7 @@ export function FirstRun() {
           className="flex h-[32px] items-center gap-[6px] self-start rounded-btn bg-btn pl-[14px] pr-[12px] font-display text-row font-semibold text-btn-text"
         >
           Open settings
-          <ArrowUpRight size={12} strokeWidth={2.2} />
+          <IconOpen size={12} />
         </button>
       </div>
     )
@@ -46,7 +46,7 @@ export function FirstRun() {
     <div className="flex w-[320px] flex-col p-[22px]">
       <div className="flex items-center gap-[8px]">
         <span className={title}>Hold</span>
-        <span className="flex h-[28px] items-center rounded-field border border-b-2 px-[10px] font-display text-[14px] font-semibold leading-[18px] text-t1" style={{ background: 'var(--key-bg)', borderColor: 'var(--key-border)' }}>
+        <span className="flex h-[28px] items-center rounded-btn border border-b-2 px-[10px] font-display text-[14px] font-semibold leading-[18px] text-t1" style={{ background: 'var(--key-bg)', borderColor: 'var(--key-border)' }}>
           {holdKeyLabel(settings.holdBinding, settings.toggleBinding)}
         </span>
         <span className={title}>and talk</span>

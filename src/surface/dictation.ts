@@ -1,5 +1,5 @@
 import { useEffect } from 'react'
-import { IDLE_BARS, type SurfaceContextValue, type SurfaceState } from './store'
+import { aiStatuses, DEFAULT_SETTINGS, IDLE_BARS, type SurfaceContextValue, type SurfaceState } from './store'
 import {
   closeSurface,
   dismissPill,
@@ -9,7 +9,7 @@ import {
   showMessage,
   TIMING,
 } from './actions'
-import type { AiStatus, AudioDevice, HistoryEntry, PauseState, Settings, SnippetEntry, Theme, VocabEntry } from './types'
+import type { AudioDevice, HistoryEntry, PauseState, Settings, SnippetEntry, Theme, VocabEntry } from './types'
 import { capLabel, sortCaps } from './format'
 import { checkForUpdate, installUpdate } from './updates'
 
@@ -18,7 +18,7 @@ export const dictation = { stop: () => {} }
 
 type Ctx = Pick<SurfaceContextValue, 'store' | 'api'>
 
-const SETTING_KEYS: (keyof Settings)[] = ['holdBinding', 'toggleBinding', 'inputDevice', 'onboardingComplete', 'aiCleanup', 'playSoundOnComplete', 'model']
+const SETTING_KEYS = Object.keys(DEFAULT_SETTINGS) as (keyof Settings)[]
 function pickSettings(raw: Record<string, unknown>, base: Settings): Settings {
   const next = { ...base } as Record<string, unknown>
   for (const k of SETTING_KEYS) if (k in raw) next[k] = raw[k]
@@ -184,7 +184,7 @@ export function useLiveBackend(ctx: Ctx) {
       }),
       api.on<Record<string, unknown>>('settings-changed', (raw) => set({ settings: pickSettings(raw, get().settings) })),
       api.on<HistoryEntry>('history-updated', (entry) => set({ history: [...get().history, entry].slice(-1000) })),
-      api.on<AiStatus>('ai-status', (ai) => set({ ai })),
+      api.on<unknown>('ai-status', (ai) => set({ ai: aiStatuses(ai, get().ai) })),
       api.on<PauseState>('pause-changed', (pause) => set({ pause })),
       api.on('update-install', () => installUpdate(api)),
     )
@@ -246,11 +246,11 @@ export function useLiveBackend(ctx: Ctx) {
         api.call<VocabEntry[]>('get_vocabulary').catch(() => []),
         api.call<SnippetEntry[]>('get_snippets').catch(() => []),
         api.call<HistoryEntry[]>('get_history').catch(() => []),
-        api.call<AiStatus>('get_ai_status').catch(() => get().ai),
+        api.call<unknown>('get_ai_status').catch(() => null),
         api.call<PauseState>('get_pause_state').catch(() => get().pause),
         api.call<AudioDevice[]>('get_audio_devices').catch(() => []),
       ])
-      set({ vocabulary, snippets, history, ai, pause, devices })
+      set({ vocabulary, snippets, history, ai: aiStatuses(ai, get().ai), pause, devices })
       const model = get().settings.model
       const status = await api.call<{ downloaded: boolean }>('get_model_status', { model }).catch(() => ({ downloaded: true }))
       if (!status.downloaded) return download(model)

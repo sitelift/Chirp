@@ -1,7 +1,7 @@
-import { Check, ChevronRight } from 'lucide-react'
 import { useSurface, useSurfaceContext } from './store'
 import chirpMark from '../../assets/brand/chirp-mark-primary.svg?no-inline'
 import type { Pill as PillModel } from './types'
+import { IconCheck, IconNext } from './icons'
 
 const WORKING_OPACITY = [0.25, 0.25, 0.25, 0.45, 0.7, 1, 0.7, 0.45, 0.25, 0.25, 0.25]
 
@@ -86,14 +86,14 @@ export function PillContent({ pill, onStop, onAction, onResume }: { pill: PillMo
         return (
           <button type="button" onClick={onAction} className="flex h-[36px] items-center justify-center gap-[4px] pl-[16px] pr-[11px]">
             <span className={text}>{pill.text}</span>
-            <ChevronRight size={14} strokeWidth={2.2} color="#A3A29E" />
+            <IconNext size={14} style={{ color: '#A3A29E' }} />
           </button>
         )
       }
       if (pill.check) {
         return (
           <div className="flex h-[36px] items-center gap-[6px] pl-[13px] pr-[16px]">
-            <Check size={14} strokeWidth={2.6} color="#F0B723" />
+            <IconCheck size={14} style={{ color: '#F0B723', strokeWidth: 2.6 }} />
             <span className={text}>{pill.text}</span>
           </div>
         )
@@ -106,11 +106,11 @@ export function PillContent({ pill, onStop, onAction, onResume }: { pill: PillMo
   }
 }
 
-/** The pill the resting tick turns into under the pointer. */
-export function HoverPill() {
+/** The pill the resting tick turns into under the pointer: the brand bird fades in and turns upright. */
+export function HoverPill({ on }: { on: boolean }) {
   return (
     <div className="flex h-[36px] w-[56px] items-center justify-center">
-      <img src={chirpMark} width={20} height={20} alt="" draggable={false} />
+      <img src={chirpMark} width={20} height={20} alt="" draggable={false} className="bird" data-on={on ? '' : undefined} />
     </div>
   )
 }
