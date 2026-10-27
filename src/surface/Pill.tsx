@@ -13,7 +13,7 @@ function Bars() {
       {bars.map((v, i) => (
         <span
           key={i}
-          className="w-[3px] shrink-0 rounded-[2px] bg-amber transition-[height] duration-[80ms] ease-out"
+          className="w-[3px] shrink-0 rounded-[2px] bg-ink-accent transition-[height] duration-[80ms] ease-out"
           style={{ height: Math.round(3 + Math.min(1, Math.max(0, v)) * 15), opacity: i === 0 || i === bars.length - 1 ? 0.5 : 1 }}
         />
       ))}
@@ -28,7 +28,7 @@ function Dots() {
       {WORKING_OPACITY.map((o, i) => (
         <span
           key={i}
-          className={`h-[3px] w-[3px] shrink-0 rounded-[2px] bg-amber ${still ? '' : 'sweep'}`}
+          className={`h-[3px] w-[3px] shrink-0 rounded-[2px] bg-ink-accent ${still ? '' : 'sweep'}`}
           style={still ? { opacity: o } : { animationDelay: `${(i - 5) * (900 / 11) - 900}ms` }}
         />
       ))}
@@ -36,7 +36,7 @@ function Dots() {
   )
 }
 
-const text = 'whitespace-nowrap font-display text-row font-semibold text-white'
+const text = 'whitespace-nowrap font-display text-row font-semibold text-ink-text'
 
 export function PillContent({ pill, onStop, onAction, onResume }: { pill: PillModel; onStop?: () => void; onAction?: () => void; onResume?: () => void }) {
   switch (pill.kind) {
@@ -60,9 +60,9 @@ export function PillContent({ pill, onStop, onAction, onResume }: { pill: PillMo
             type="button"
             aria-label="Stop"
             onClick={onStop}
-            className="flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[12px] bg-[#FFFFFF1F] hover:bg-[#FFFFFF33]"
+            className="flex h-[24px] w-[24px] shrink-0 items-center justify-center rounded-[12px] bg-ink-btn hover:bg-ink-btn-hover"
           >
-            <span className="h-[8px] w-[8px] rounded-[2px] bg-white" />
+            <span className="h-[8px] w-[8px] rounded-[2px] bg-ink-text" />
           </button>
         </div>
       )
@@ -71,12 +71,12 @@ export function PillContent({ pill, onStop, onAction, onResume }: { pill: PillMo
         <div className="flex h-[36px] items-center gap-[10px] pl-[14px] pr-[6px]">
           <span className="flex items-center gap-[6px]">
             <svg width="12" height="12" viewBox="0 0 16 16" aria-hidden>
-              <rect x="3.5" y="2.5" width="3" height="11" rx="1" fill="#A3A29E" />
-              <rect x="9.5" y="2.5" width="3" height="11" rx="1" fill="#A3A29E" />
+              <rect x="3.5" y="2.5" width="3" height="11" rx="1" fill="var(--ink-muted)" />
+              <rect x="9.5" y="2.5" width="3" height="11" rx="1" fill="var(--ink-muted)" />
             </svg>
             <span className={text}>Paused</span>
           </span>
-          <button type="button" onClick={onResume} className="flex h-[24px] items-center rounded-[12px] bg-[#FFFFFF1F] px-[10px] text-meta font-semibold text-white hover:bg-[#FFFFFF33]">
+          <button type="button" onClick={onResume} className="flex h-[24px] items-center rounded-[12px] bg-ink-btn px-[10px] text-meta font-semibold text-ink-text hover:bg-ink-btn-hover">
             Resume
           </button>
         </div>
@@ -86,14 +86,14 @@ export function PillContent({ pill, onStop, onAction, onResume }: { pill: PillMo
         return (
           <button type="button" onClick={onAction} className="flex h-[36px] items-center justify-center gap-[4px] pl-[16px] pr-[11px]">
             <span className={text}>{pill.text}</span>
-            <IconNext size={14} style={{ color: '#A3A29E' }} />
+            <IconNext size={14} style={{ color: 'var(--ink-muted)' }} />
           </button>
         )
       }
       if (pill.check) {
         return (
           <div className="flex h-[36px] items-center gap-[6px] pl-[13px] pr-[16px]">
-            <IconCheck size={14} style={{ color: '#F0B723', strokeWidth: 2.6 }} />
+            <IconCheck size={14} style={{ color: 'var(--ink-accent)', strokeWidth: 2.6 }} />
             <span className={text}>{pill.text}</span>
           </div>
         )

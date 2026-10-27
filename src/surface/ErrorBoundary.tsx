@@ -1,6 +1,6 @@
 import { Component, type ReactNode } from 'react'
 
-/** A crash shows a quiet ink pill instead of a blank window. */
+/** A crash shows a quiet ink pill instead of a blank window, in the Windows theme (the store may be gone). */
 export class ErrorBoundary extends Component<{ children: ReactNode }, { error: string | null }> {
   state = { error: null as string | null }
 
@@ -15,11 +15,11 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: s
   render() {
     if (this.state.error === null) return this.props.children
     return (
-      <div className="fixed inset-0 flex items-end justify-center pb-[12px]">
+      <div className="fixed inset-0 flex items-end justify-center pb-[12px]" data-theme={matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'}>
         <button
           type="button"
           onClick={() => location.reload()}
-          className="flex h-[36px] items-center rounded-[18px] bg-ink px-[16px] font-display text-row font-semibold text-white shadow-pill"
+          className="flex h-[36px] items-center rounded-[18px] bg-ink px-[16px] font-display text-row font-semibold text-ink-text shadow-pill"
         >
           Something went wrong · Reload
         </button>

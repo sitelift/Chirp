@@ -14,8 +14,8 @@ Where this file and the mockup disagree, ask; do not guess.
   and its radius is the outer radius minus that distance. Card 18, rows 12 (6 inset), keycap
   highlight 10 around 6 px keys (4 inset), segmented thumb 6 in an 8 track (2 inset), back
   button 8 at 10 px from both edges.
-- No grey: the dark ink pill never fades over the white panel. Light/dark swaps happen only at
-  pill or tick size, or as a whole-page theme crossfade.
+- No grey: the ink pill is the panel's colour in each theme, so a morph never fades dark over
+  light. Theme swaps happen only as a whole-page crossfade.
 
 ## Window (surface.rs + Surface.tsx)
 
