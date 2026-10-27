@@ -17,7 +17,7 @@ The two things that matter most, in order:
 
 - **Windows only.** No macOS or Linux code paths. The reference machine is Windows 11 with an RTX 4080 Super.
 - **Speech recognition is local.** sherpa-onnx + Parakeet TDT; moving to the CUDA provider.
-- **Cleanup is cloud and optional.** Anthropic (Claude Haiku 5.5) or OpenAI (GPT-6 Luna), chosen in settings, with the user's own key per provider, stored in Windows Credential Manager. There is no local LLM and there are no tone modes; the model infers register from the active app and window title.
+- **Cleanup is cloud and optional.** OpenAI (GPT-6 Luna on the Fast service tier, the default) or Anthropic (Claude Haiku 5.5), chosen in settings, with the user's own key per provider, stored in Windows Credential Manager. There is no local LLM and there are no tone modes; the model infers register from the active app and window title.
 - **No telemetry.** No analytics, crash reporting, or feedback webhooks.
 
 ## Build commands

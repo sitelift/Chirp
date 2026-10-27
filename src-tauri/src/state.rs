@@ -158,7 +158,7 @@ impl Default for Settings {
             beam_search: false,
             dark_mode: false,
             ai_cleanup: true,
-            provider: Some(Provider::Anthropic),
+            provider: Some(Provider::Openai),
             appearance: Appearance::System,
             cancel_binding: crate::hotkey::default_cancel(),
             media_while_dictating: MediaMode::Lower,

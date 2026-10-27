@@ -9,7 +9,7 @@ import type { KeyProvider, Provider } from '../types'
 
 const PROVIDERS: Record<KeyProvider, { name: string; model: string; mask: string; env: string; keysUrl: string }> = {
   anthropic: { name: 'Anthropic', model: 'Claude Haiku 5.5', mask: 'sk-ant-••••••••••', env: 'ANTHROPIC_API_KEY', keysUrl: 'https://console.anthropic.com/settings/keys' },
-  openai: { name: 'OpenAI', model: 'GPT-6 Luna', mask: 'sk-••••••••••', env: 'OPENAI_API_KEY', keysUrl: 'https://platform.openai.com/api-keys' },
+  openai: { name: 'OpenAI', model: 'GPT-6 Luna Fast', mask: 'sk-••••••••••', env: 'OPENAI_API_KEY', keysUrl: 'https://platform.openai.com/api-keys' },
 }
 
 function Status({ tone, children }: { tone?: 'danger' | 'quiet'; children: ReactNode }) {

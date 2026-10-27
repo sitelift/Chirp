@@ -1,5 +1,5 @@
 //! Cloud cleanup behind a provider switch: Anthropic Messages API (Claude Haiku 5.5)
-//! or OpenAI Responses API (GPT-6 Luna).
+//! or OpenAI Responses API (GPT-6 Luna on the Fast service tier).
 //!
 //! Latency design (both providers):
 //! - One long-lived `reqwest::Client`, so the TLS connection is reused.
@@ -10,6 +10,7 @@
 //!   positive budget). The warmup response is discarded. OpenAI:
 //!   `prompt_cache_options.prewarm` with explicit `prompt_cache_breakpoint`s.
 //! - No reasoning (Anthropic thinking disabled + effort low; OpenAI effort none),
+//!   OpenAI on the Fast service tier (a tighter latency tail at a higher price),
 //!   streaming (for TTFT and early abort).
 //!
 //! Safety: the transcript is wrapped as data, output length is guarded, and every
@@ -27,6 +28,9 @@ const API_URL: &str = "https://api.anthropic.com/v1/messages";
 const API_VERSION: &str = "2026-10-21";
 
 pub const OPENAI_MODEL: &str = "gpt-6-luna";
+/// Fast mode: same model, priority serving. Cut the p95 by about a third in our
+/// warmed comparison; it is part of the request, so prewarm sends it too.
+const OPENAI_SERVICE_TIER: &str = "fast";
 const OPENAI_URL: &str = "https://api.openai.com/v1/responses";
 const OPENAI_MODELS_URL: &str = "https://api.openai.com/v1/models";
 
@@ -574,12 +578,13 @@ fn openai_developer(dictionary: &[String]) -> Value {
 }
 
 /// Responses API request. Settings that shape the rendered prefix (model,
-/// reasoning effort, cache mode) must match `openai_prewarm_body`.
+/// service tier, reasoning effort, cache mode) must match `openai_prewarm_body`.
 /// Explicit cache mode: only the stable developer prefix is written to the cache,
 /// never the transcript. `store: false` so dictation is not kept for retrieval.
 fn openai_body(transcript: &str, ctx: &AppContext, dictionary: &[String], max_tokens: u64) -> Value {
     json!({
         "model": OPENAI_MODEL,
+        "service_tier": OPENAI_SERVICE_TIER,
         "max_output_tokens": max_tokens,
         "stream": true,
         "store": false,
@@ -596,6 +601,7 @@ fn openai_body(transcript: &str, ctx: &AppContext, dictionary: &[String], max_to
 fn openai_prewarm_body(dictionary: &[String]) -> Value {
     json!({
         "model": OPENAI_MODEL,
+        "service_tier": OPENAI_SERVICE_TIER,
         "stream": false,
         "store": false,
         "reasoning": { "effort": "none" },
@@ -865,6 +871,7 @@ mod tests {
             body,
             json!({
                 "model": "gpt-6-luna",
+                "service_tier": "fast",
                 "max_output_tokens": 256,
                 "stream": true,
                 "store": false,
@@ -905,7 +912,7 @@ mod tests {
         assert_eq!(a["input"][0], b["input"][0]);
         assert_eq!(a["input"][0], warm["input"][0]);
         assert_eq!(warm["input"].as_array().unwrap().len(), 1);
-        for k in ["model", "reasoning", "store"] {
+        for k in ["model", "service_tier", "reasoning", "store"] {
             assert_eq!(a[k], warm[k], "{k}");
         }
         assert_eq!(a["prompt_cache_options"]["mode"], warm["prompt_cache_options"]["mode"]);

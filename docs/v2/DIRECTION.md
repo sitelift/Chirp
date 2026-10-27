@@ -35,11 +35,11 @@ Every stage is timed and logged on every transcript from day one. Targets are re
 | Stage | Approach | Target |
 |---|---|---|
 | Hotkey → recording | Win32 low-level hook (port from v1.3.4). Mic stream kept warm so pressing the key never waits on device open. | <20ms |
-| On key press (parallel) | Pre-open the TLS/HTTP connection to the Anthropic API so the handshake is done before release. | off the critical path |
+| On key press (parallel) | Pre-open the TLS/HTTP connection to the cleanup provider and warm its prompt cache so both are done before release. | off the critical path |
 | Speech → text | Local Parakeet TDT with CUDA. Decode the complete recording on release; VAD prefixes are only for optional speculative cleanup. Preserve quiet speech between detected segments. | measured warm p50 89ms / p95 440ms on 134 human clips; excludes paste |
 | Deterministic pass | Segment join, spoken commands, snippets. No filler, number or dictionary rewriting; no ASR biasing (Words go to the cleanup model as spellings). Unit-tested. | <5ms |
 | Router | Decide whether the LLM is needed (see below). | <1ms |
-| LLM cleanup | Claude Haiku 5.5 (`claude-haiku-5-5`), thinking disabled, low effort, cached system prompt, active-app context. Hard timeout → paste the deterministic result instead. | measure; aim p50 <1s |
+| LLM cleanup | GPT-6 Luna (`gpt-6-luna`) on the Fast service tier, reasoning off, by default; Claude Haiku 5.5 (`claude-haiku-5-5`, thinking disabled, low effort) as the alternative. Cached system prompt, active-app context. Hard timeout → paste the deterministic result instead. | measured warm API p50 0.93s / p95 1.29s (Luna Fast) |
 | Inject | Clipboard + Ctrl+V, restore the previous clipboard. Wait for the final text, then paste once (no streaming insertion). | <20ms |
 
 ### Router: when to skip the LLM
@@ -178,6 +178,34 @@ but still changed claims or missed addresses. No phrase blacklist, correction
 retry or second model pass is added. Anthropic prewarm and key validation use
 one output token because the structured API rejects a zero-token budget; the
 warmup response is discarded.
+
+### Cleanup model: GPT-6 Luna Fast by default (2026-10-26)
+
+Chirp has to be affordable and fast per dictation, so the choice was Haiku 5.5
+or GPT-6 Luna, not a larger model. Sonnet 5.5 scored highest but costs about
+17x Haiku per dictation, which adds up over thousands of dictations.
+
+Evaluation: 134 human dictations with written references (94 for iteration,
+40 held out), an Opus judge blind to the setup, and blind pairwise preference
+on the held-out set. On pass/fail, Luna Fast and Haiku tie (held-out 81% vs
+82.5%; dev 92.6% vs 87.2%; both CIs span zero) with similar meaning-error
+rates. Head to head on writing quality, Luna Fast is preferred 32 to 10 over
+shipped Haiku (38 ties) and 34 to 11 over Haiku plain: it joins run-ons,
+merges repeats and drops false starts where Haiku tends to stay near-verbatim.
+Warm API latency in one interleaved session: Luna Fast p50/p95 929/1294 ms,
+Haiku plain 802/1911 ms, Haiku JSON 1053/1727 ms. Cost per warm dictation is
+about $0.00010 vs $0.00007-0.00008. Fast is `service_tier: "fast"` on
+`gpt-6-luna`, not a separate model id.
+
+Prompt tuning has plateaued: a one-line prompt, two shorter rewrites and a
+targeted "keep qualifiers" line all tied the current prompt on writing
+quality. The one change kept is "use straight quotes": Luna put curly quotes
+in about a third of outputs (bad in terminals and code), and the line takes
+that to zero. Remaining errors are model judgment: dropped hedges while
+tightening, a repeated question kept, guesses at garbled audio. Product names
+the model cannot know belong in the user's Words list, not the prompt. Luna
+produced no editorial asides, alternative drafts or answers in 100 stress runs
+of the inputs that triggered the original "Wait, that's not clean" paste.
 
 ## Keep, port, drop
 

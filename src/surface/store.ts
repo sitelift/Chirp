@@ -63,7 +63,7 @@ export const DEFAULT_SETTINGS: Settings = {
   inputDevice: 'default',
   onboardingComplete: false,
   aiCleanup: true,
-  provider: 'anthropic',
+  provider: 'openai',
   appearance: 'system',
   cancelBinding: { keys: [{ scan: 1, extended: false, vk: 27 }], label: 'Esc', suppress: false },
   playSoundOnComplete: false,
