@@ -1,7 +1,8 @@
 # Chirp performance bench
 
 Run from the repository root on Windows. The Rust binary calls the application's
-actual ASR, chunk merging, deterministic pass (segment join + spoken commands) and (with `-Vad`) Silero segmenter.
+actual ASR, chunk merging, deterministic pass (segment join + spoken commands) and (with `-Vad`) Silero segmenter. The default offline mode uses the production
+complete-recording path; `-Vad` reproduces the old segmented path for comparison.
 The WAV benchmark never opens a microphone or pastes text. `corpus/` is owned by the corpus track;
 the benchmark reads it without modifying it.
 
@@ -81,6 +82,41 @@ The direct binary flag is `--mic-lifecycle`.
   and preserve deterministic text. The benchmark and app skip cleanup at six words or fewer.
 
 ## Live pipeline instrumentation
+
+### Saved-audio diagnostics without reference transcripts
+
+`asr-study` compares exact saved chunks, complete recordings and VAD replay
+without treating historical ASR or pasted text as a ground-truth transcript.
+Build it in the same VS/native environment as the regular bench:
+
+```powershell
+cargo build --release --manifest-path src-tauri/Cargo.toml --features bench --bin asr-study
+# Copy asr-study.exe beside the appropriate CPU or CUDA runtime DLLs, as run.ps1 does for bench.exe.
+C:/tmp/chirp-target/bench-cuda/asr-study.exe --manifest bench/corpus/audio.local.json --out bench/results/recording.json --mode recording --passes 2
+```
+
+The JSON manifest is an array of `{ "id": "example", "wav": "relative/path.wav" }`,
+with paths relative to the manifest. An optional `snippets` array accepts the
+app's `{ "trigger": "...", "expansion": "..." }` entries, so the output includes
+the actual spoken-command and snippet stages. Use mono 16 kHz PCM16 or float32
+WAVs. Keep manifests, audio and text results in gitignored local paths.
+
+Modes: `recording` calls the production complete-audio path; `file` decodes
+one whole WAV without a duration bound; `vad` feeds the real segmenter and
+segment recognizer. Explicit `--provider`, `--model-dir`, `--threads` and
+`--beam` select the recognizer. Defaults are CUDA, FP32 and four threads;
+for CPU, pass the int8 model directory and `--provider cpu --threads 6`.
+Pass zero warms shapes; retain it but use subsequent passes for timing.
+The tool refuses to overwrite an output file and records manifest and compiled
+ASR/VAD source hashes. VAD feeding is unpaced; its wall time is compute cost,
+not live release latency. No audio is uploaded and no text is pasted.
+
+Prompt experiments must freeze deterministic text, context and dictionary
+before comparing candidates. Changing ASR creates a new corpus version; do
+not attribute that improvement to the prompt. Repeat promising variants and
+review their actual outputs, especially claims, names and unspoken additions.
+
+### Timing fields
 
 Each successful dictation has a `timings` history field. One `pipeline_timing`
 JSON log is emitted when the background clipboard restoration attempt finishes;

@@ -36,7 +36,7 @@ Every stage is timed and logged on every transcript from day one. Targets are re
 |---|---|---|
 | Hotkey → recording | Win32 low-level hook (port from v1.3.4). Mic stream kept warm so pressing the key never waits on device open. | <20ms |
 | On key press (parallel) | Pre-open the TLS/HTTP connection to the Anthropic API so the handshake is done before release. | off the critical path |
-| Speech → text | sherpa-onnx with the CUDA provider. Start with offline Parakeet TDT over the full recording at release. Move to a streaming model (Nemotron Speech Streaming) only if the measurements say we need it. | <50ms for typical dictation |
+| Speech → text | Local Parakeet TDT with CUDA. Decode the complete recording on release; VAD prefixes are only for optional speculative cleanup. Preserve quiet speech between detected segments. | measured warm p50 89ms / p95 440ms on 134 human clips; excludes paste |
 | Deterministic pass | Segment join, spoken commands, snippets. No filler, number or dictionary rewriting; no ASR biasing (Words go to the cleanup model as spellings). Unit-tested. | <5ms |
 | Router | Decide whether the LLM is needed (see below). | <1ms |
 | LLM cleanup | Claude Haiku 5.5 (`claude-haiku-5-5`), thinking disabled, low effort, cached system prompt, active-app context. Hard timeout → paste the deterministic result instead. | measure; aim p50 <1s |
@@ -92,8 +92,15 @@ Implementation and verification notes: [HOTKEYS.md](HOTKEYS.md). Defaults are Ri
 
 ### Prompt and safety
 
-- The system prompt is a style guide without examples, kept stable so it caches. Dropping the examples scored the same on held-out items (judge 4.90 vs 4.90) at no latency cost, and stops the model copying sample names into real output.
+- The system prompt is a stable, cached editing guide. Substantial rewriting is welcome when it improves the message and preserves its claims, details, uncertainty and voice. Destination context determines register, not extra content such as unspoken greetings or sign-offs.
 - The transcript is wrapped as data, never as instructions.
+- Anthropic returns one unrestricted `text` field using its JSON output schema.
+  The app extracts that field; it does not classify or rewrite its contents.
+  Plain-text prompt revisions still produced editorial asides during repeated
+  human-corpus tests. The selected prompt plus this envelope avoided those
+  asides in 268 observed outputs, at roughly 400ms higher median API latency.
+  This is evidence of improvement, not a guarantee against content mistakes.
+  OpenAI retains its existing plain-text response protocol.
 - An output-length guard rejects runaway responses.
 - On any error, timeout or refusal, fall back to the deterministic text. Dictation must never fail just because the API did.
 
@@ -136,6 +143,42 @@ missing settings migrated to false), measure real behavior when opted in, and de
 and hotword tuning. Browser context is captured at press and resolved once;
 the same dictionary term snapshot is used for prewarm and every cleanup call.
 See bench/PERFORMANCE.md for the measured scope and known open issues.
+
+### Preserve complete audio before tuning cleanup (2026-10-25)
+
+Replay of 134 saved human dictations supersedes the synthetic-corpus decision
+to use VAD segments as the final transcript. In a confirmed failure, VAD omitted
+quiet speech containing a negation; cleanup received the opposite claim. Exact
+saved-chunk replay reproduced the error. Whole-recording replay restored it,
+and adding actual earlier audio to the damaged chunk worked while adding
+silence did not. A cleanup prompt cannot reliably recover discarded speech.
+
+Final ASR now uses the complete waveform. Ordinary recordings stay together;
+recordings over 90 seconds split near low-energy points, with one second of
+overlap and no discarded gaps. The old fixed 30-second cuts damaged a long
+human dictation and introduced duplicate fragments. VAD decoding runs only
+when speculative cleanup is enabled, and its output is never appended to the
+final recording transcript. Speculative cleanup still requires an exact match
+to the final deterministic input before reuse; it remains off by default.
+
+Repeated CUDA replay of all 134 clips (up to 69 seconds) produced identical,
+nonempty raw transcripts, warm p50/p95/max 89/440/662 ms. This is local ASR
+compute, not key-release-to-paste latency or a word-accuracy score. The CPU
+fallback also recovered the confirmed negation; sampled 62–69 second clips
+took roughly 3–7 seconds on CPU. Audio quality remains imperfect, and two
+unclear passages have no user-confirmed reference. Keep prompt comparisons
+separate from ASR comparisons: freeze text, context and dictionary for every
+candidate in a round, repeat the finalists, and manually inspect meaning
+changes rather than accepting an automated judge score alone.
+
+The selected editing prompt replaces the exact-word restriction with permission
+to rewrite sentences while preserving meaning, and removes forced email layout
+that encouraged unspoken sign-offs. A much shorter prompt was tested repeatedly
+but still changed claims or missed addresses. No phrase blacklist, correction
+retry or second model pass is added. Anthropic prewarm and key validation use
+one output token because the structured API rejects a zero-token budget; the
+warmup response is discarded.
+
 ## Keep, port, drop
 
 **Port into v2 (re-read and clean up, don't copy blindly):**
@@ -214,7 +257,7 @@ Clean, minimal, usable. Every surface has to justify existing. There is **one su
   - **Rebind** in place: Press keys, live keys as you hold them, Saved, or refused ("Used by Windows", "Used by Hands-free") and listening again. Esc cancels.
   - **Microphone:** every input with a live level; an unplugged selected device shows as Unplugged. Below the list, a **Sounds** row switches the earcons on or off (the existing `playSoundOnComplete` setting, saved through `update_settings`; off by default). It lives here rather than on Home to keep Home calm.
   - **Words:** one list, "you say → Chirp types", over vocabulary (single terms: hotwords, find/replace, LLM dictionary) and snippets (anything with punctuation or more than three words). Add, edit, delete in place; Enter saves, Esc cancels, leaving the row saves.
-  - **AI cleanup:** optional. "Use Claude" is disabled until a key validates. Paste a key, Checking, Connected (Remove), Key not accepted, offline. The key is stored in **Windows Credential Manager** (generic credential `Chirp` / `anthropic-api-key`), validated with the `max_tokens: 0` prewarm request; `ANTHROPIC_API_KEY` stays a developer override and is never stored.
+  - **AI cleanup:** optional. "Use Claude" is disabled until a key validates. Paste a key, Checking, Connected (Remove), Key not accepted, offline. The key is stored in **Windows Credential Manager** (generic credential `Chirp` / `anthropic-api-key`), validated with the `max_tokens: 1` prewarm request; `ANTHROPIC_API_KEY` stays a developer override and is never stored.
   - **Recent:** the last 20; click to copy, or Add to Words.
 - **First run:** no wizard. Getting ready (model download with progress and an estimate) → Windows is blocking the mic (Open settings) if needed → "Hold [Right Ctrl] and talk" → after the first dictation, "You're set. Click me anytime." and the resting tick appears.
 - **Paused:** hotkeys stop triggering; pressing one shows the Paused pill instead of failing silently. The tray icon dims and gains a pause badge.

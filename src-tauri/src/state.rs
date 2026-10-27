@@ -267,13 +267,6 @@ pub struct AppState {
     pub history: Vec<TranscriptionEntry>,
     pub recording_state: RecordingState,
     pub recording_generation: u64,
-    /// True if the VAD receiver thread was successfully spawned for the
-    /// current/most-recent recording. Set in start_recording, checked in
-    /// stop_recording to decide whether to use VAD output or the chunked
-    /// fallback. Never decide based on vad_texts.is_empty() — a transient
-    /// receiver hiccup could leave it empty and cause the fallback to
-    /// re-transcribe the whole buffer, producing duplicated output.
-    pub vad_was_active: bool,
     pub hotkey_status: HotkeyStatus,
     /// Recognizer is in its own Arc so transcription can proceed without holding
     /// the main state lock. The sherpa C API is thread-safe (Send+Sync).
@@ -289,7 +282,6 @@ impl AppState {
             history,
             recording_state: RecordingState::Idle,
             recording_generation: 0,
-            vad_was_active: false,
             hotkey_status: HotkeyStatus::Idle,
             recognizer: None,
         }

@@ -4,9 +4,10 @@
 //! Latency design (both providers):
 //! - One long-lived `reqwest::Client`, so the TLS connection is reused.
 //! - `prewarm()` on hotkey press sends a request with the exact same prefix as the
-//!   real call and no output. That opens/refreshes the connection AND writes or
+//!   real call and minimal output. That opens/refreshes the connection AND writes or
 //!   refreshes the prompt cache while the user is still talking. Anthropic:
-//!   `max_tokens: 0` with `cache_control` breakpoints. OpenAI:
+//!   `max_tokens: 1` with `cache_control` breakpoints (the JSON schema needs a
+//!   positive budget). The warmup response is discarded. OpenAI:
 //!   `prompt_cache_options.prewarm` with explicit `prompt_cache_breakpoint`s.
 //! - No reasoning (Anthropic thinking disabled + effort low; OpenAI effort none),
 //!   streaming (for TTFT and early abort).
@@ -66,6 +67,7 @@ pub enum LlmError {
     Truncated,
     Runaway,
     Empty,
+    Format,
 }
 
 impl std::fmt::Display for LlmError {
@@ -79,6 +81,7 @@ impl std::fmt::Display for LlmError {
             LlmError::Truncated => write!(f, "output hit max_tokens"),
             LlmError::Runaway => write!(f, "output exceeded length guard"),
             LlmError::Empty => write!(f, "empty output"),
+            LlmError::Format => write!(f, "invalid cleanup response format"),
         }
     }
 }
@@ -93,7 +96,7 @@ impl LlmError {
             LlmError::Api { status: 401 | 403, .. } => "key invalid",
             LlmError::Api { status: 429, .. } => "rate limited",
             LlmError::Api { .. } => "API error",
-            LlmError::Refusal | LlmError::Truncated | LlmError::Runaway | LlmError::Empty => "AI skipped",
+            LlmError::Refusal | LlmError::Truncated | LlmError::Runaway | LlmError::Empty | LlmError::Format => "AI skipped",
         }
     }
 }
@@ -208,14 +211,14 @@ impl LlmClient {
 
     /// Cheapest authenticated call per provider. `Ok` means the key is accepted;
     /// `Api { 401 | 403 }` means it is not; `Http` means the API could not be reached.
-    /// Anthropic: the prewarm request (`max_tokens: 0`). OpenAI: retrieve the
+    /// Anthropic: the prewarm request (`max_tokens: 1`). OpenAI: retrieve the
     /// model (`GET /v1/models/gpt-6-luna`), which is free and also proves access.
     pub async fn validate_for(&self, provider: Provider, key: &str) -> Result<(), LlmError> {
         let send = async {
             match provider {
                 Provider::Off => Err(LlmError::NoApiKey),
                 Provider::Anthropic => {
-                    let mut body = request_body("", &AppContext::default(), &[], 0);
+                    let mut body = request_body("", &AppContext::default(), &[], 1);
                     body["stream"] = json!(false);
                     send(&self.http, key, &body).await
                 }
@@ -254,7 +257,7 @@ impl LlmClient {
             let result = match provider {
                 Provider::Openai => send_openai(&http, &key, &openai_prewarm_body(&dictionary)).await,
                 _ => {
-                    let mut body = request_body("", &AppContext::default(), &dictionary, 0);
+                    let mut body = request_body("", &AppContext::default(), &dictionary, 1);
                     body["stream"] = json!(false);
                     send(&http, &key, &body).await
                 }
@@ -327,7 +330,7 @@ impl LlmClient {
             return Err(LlmError::Api { status: status.as_u16(), body });
         }
 
-        let mut acc = Accumulator::new(start, transcript);
+        let mut acc = Accumulator::new(start, transcript, provider == Provider::Anthropic);
         let mut sse = SseBuffer::default();
         let mut stream = resp.bytes_stream();
         while let Some(chunk) = stream.next().await {
@@ -340,9 +343,9 @@ impl LlmClient {
                 }
             }
         }
-        if provider == Provider::Openai && acc.stop == Stop::Pending {
+        if acc.stop == Stop::Pending {
             // No terminal event: the stream was cut off, so the text may be partial.
-            return Err(LlmError::Http("stream ended before response.completed".into()));
+            return Err(LlmError::Http("stream ended before completion".into()));
         }
         acc.finish(transcript)
     }
@@ -368,10 +371,11 @@ struct Accumulator {
     max_chars: usize,
     out: LlmOutcome,
     stop: Stop,
+    structured: bool,
 }
 
 impl Accumulator {
-    fn new(start: Instant, transcript: &str) -> Self {
+    fn new(start: Instant, transcript: &str, structured: bool) -> Self {
         Self {
             start,
             // Generous: email layout adds line breaks, not words.
@@ -386,6 +390,7 @@ impl Accumulator {
                 output_tokens: 0,
             },
             stop: Stop::Pending,
+            structured,
         }
     }
 
@@ -394,7 +399,10 @@ impl Accumulator {
             self.out.ttft_ms = self.start.elapsed().as_millis() as u64;
         }
         self.out.text.push_str(t);
-        if self.out.text.chars().count() > self.max_chars {
+        // JSON may escape a single Unicode character into two surrogate
+        // escapes. Apply the existing text bound after decoding the envelope.
+        let wire_limit = if self.structured { self.max_chars * 12 + 64 } else { self.max_chars };
+        if self.out.text.chars().count() > wire_limit {
             return Err(LlmError::Runaway);
         }
         Ok(())
@@ -407,7 +415,17 @@ impl Accumulator {
             Stop::Truncated => return Err(LlmError::Truncated),
             Stop::Pending | Stop::Done => {}
         }
-        self.out.text = strip_wrappers(&self.out.text);
+        self.out.text = if self.structured {
+            #[derive(serde::Deserialize)]
+            struct Message { text: String }
+            serde_json::from_str::<Message>(&self.out.text)
+                .map_err(|_| LlmError::Format)?.text.trim().to_string()
+        } else {
+            strip_wrappers(&self.out.text)
+        };
+        if self.out.text.chars().count() > self.max_chars {
+            return Err(LlmError::Runaway);
+        }
         if self.out.text.is_empty() && !transcript.trim().is_empty() {
             return Err(LlmError::Empty);
         }
@@ -418,18 +436,23 @@ impl Accumulator {
 /// Splits a server-sent-event byte stream into `data:` payloads.
 #[derive(Default)]
 struct SseBuffer {
-    buf: String,
+    buf: Vec<u8>,
 }
 
 impl SseBuffer {
     fn push(&mut self, chunk: &[u8]) -> Vec<String> {
-        self.buf.push_str(&String::from_utf8_lossy(chunk));
-        if self.buf.contains('\r') {
-            self.buf = self.buf.replace("\r\n", "\n");
-        }
+        // Decode only complete events: network chunks may split a UTF-8 name
+        // or character in the middle of its bytes.
+        self.buf.extend_from_slice(chunk);
         let mut out = Vec::new();
-        while let Some(end) = self.buf.find("\n\n") {
-            let event: String = self.buf.drain(..end + 2).collect();
+        loop {
+            let boundary = [
+                self.buf.windows(2).position(|w| w == b"\n\n").map(|i| (i, 2)),
+                self.buf.windows(4).position(|w| w == b"\r\n\r\n").map(|i| (i, 4)),
+            ].into_iter().flatten().min_by_key(|(i, _)| *i);
+            let Some((end, delimiter)) = boundary else { break };
+            let bytes: Vec<u8> = self.buf.drain(..end + delimiter).collect();
+            let event = String::from_utf8_lossy(&bytes);
             for line in event.lines() {
                 if let Some(data) = line.strip_prefix("data:") {
                     out.push(data.trim_start().to_string());
@@ -471,7 +494,21 @@ fn request_body(transcript: &str, ctx: &AppContext, dictionary: &[String], max_t
         "max_tokens": max_tokens,
         "stream": true,
         "thinking": { "type": "disabled" },
-        "output_config": { "effort": "low" },
+        "output_config": {
+            "effort": "low",
+            "format": {
+                "type": "json_schema",
+                "schema": {
+                    "type": "object",
+                    "properties": { "text": {
+                        "type": "string",
+                        "description": "The finished dictated message alone, without editing notes, explanations or alternative drafts."
+                    } },
+                    "required": ["text"],
+                    "additionalProperties": false
+                }
+            }
+        },
         "system": system,
         "messages": [{ "role": "user", "content": user_message(transcript, ctx) }]
     })
@@ -728,13 +765,16 @@ mod tests {
         assert_eq!(a["system"], b["system"]);
         assert_eq!(a["thinking"], b["thinking"]);
         assert_eq!(a["output_config"], b["output_config"]);
+        let warm = request_body("", &AppContext::default(), &[], 1);
+        assert_eq!(a["system"], warm["system"]);
+        assert_eq!(a["output_config"], warm["output_config"]);
     }
 
-    // ------------------------------------------------ Anthropic: no behaviour change
+    // ------------------------------------------------ Anthropic response envelope
 
-    /// The whole Anthropic request, pinned to what v2 sent before providers existed.
+    /// Pin the API contract, including the cached one-field output schema.
     #[test]
-    fn anthropic_request_is_unchanged() {
+    fn anthropic_request_uses_a_single_text_field() {
         let ctx = AppContext { app: "Slack".into(), title: "#eng".into(), url: None };
         let body = request_body("hello there", &ctx, &["Sitelift".to_string()], 256);
         assert_eq!(
@@ -744,7 +784,21 @@ mod tests {
                 "max_tokens": 256,
                 "stream": true,
                 "thinking": { "type": "disabled" },
-                "output_config": { "effort": "low" },
+                "output_config": {
+                    "effort": "low",
+                    "format": {
+                        "type": "json_schema",
+                        "schema": {
+                            "type": "object",
+                            "properties": { "text": {
+                                "type": "string",
+                                "description": "The finished dictated message alone, without editing notes, explanations or alternative drafts."
+                            } },
+                            "required": ["text"],
+                            "additionalProperties": false
+                        }
+                    }
+                },
                 "system": [
                     { "type": "text", "text": SYSTEM_PROMPT, "cache_control": { "type": "ephemeral" } },
                     { "type": "text", "text": "<dictionary>\nSitelift\n</dictionary>", "cache_control": { "type": "ephemeral" } }
@@ -761,7 +815,7 @@ mod tests {
     }
 
     fn run(events: &[&str], transcript: &str, anthropic: bool) -> Result<LlmOutcome, LlmError> {
-        let mut acc = Accumulator::new(Instant::now(), transcript);
+        let mut acc = Accumulator::new(Instant::now(), transcript, anthropic);
         let mut sse = SseBuffer::default();
         let raw: String = events.iter().map(|e| format!("data: {e}\n\n")).collect();
         // Split mid-event to exercise buffering.
@@ -772,8 +826,8 @@ mod tests {
                 if anthropic { anthropic_event(&v, &mut acc)? } else { openai_event(&v, &mut acc)? }
             }
         }
-        if !anthropic && acc.stop == Stop::Pending {
-            return Err(LlmError::Http("stream ended before response.completed".into()));
+        if acc.stop == Stop::Pending {
+            return Err(LlmError::Http("stream ended before completion".into()));
         }
         acc.finish(transcript)
     }
@@ -783,8 +837,8 @@ mod tests {
         let ok = run(
             &[
                 r#"{"type":"message_start","message":{"usage":{"input_tokens":12,"cache_read_input_tokens":1500,"cache_creation_input_tokens":0}}}"#,
-                r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"<output>Hello"}}"#,
-                r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":" there.</output>"}}"#,
+                r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"{\"text\":\"Hello"}}"#,
+                r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":" there.\"}"}}"#,
                 r#"{"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":4}}"#,
                 r#"{"type":"message_stop"}"#,
             ],
@@ -917,6 +971,45 @@ mod tests {
         let mut sse = SseBuffer::default();
         assert!(sse.push(b"event: response.output_text.delta\r\ndata: {\"a\":").is_empty());
         assert_eq!(sse.push(b"1}\r\n\r\ndata:{\"b\":2}\n\n"), vec!["{\"a\":1}".to_string(), "{\"b\":2}".to_string()]);
+    }
+
+    #[test]
+    fn sse_preserves_unicode_across_any_network_boundary() {
+        let payload = r#"{"text":"Zoë 🐦"}"#;
+        let wire = format!("data: {payload}\r\n\r\n");
+        let mut sse = SseBuffer::default();
+        let mut events = Vec::new();
+        for byte in wire.as_bytes() {
+            events.extend(sse.push(&[*byte]));
+        }
+        assert_eq!(events, vec![payload]);
+    }
+
+    #[test]
+    fn structured_text_preserves_arbitrary_content_and_escaped_characters() {
+        let text = "Wait, correcting that: say \"Thanks\".\n<output>literal</output> C:\\notes 🐦";
+        let mut acc = Accumulator::new(Instant::now(), text, true);
+        acc.text(&json!({"text": text}).to_string()).unwrap();
+        acc.stop = Stop::Done;
+        assert_eq!(acc.finish(text).unwrap().text, text);
+
+        // Escaping overhead must not trigger the existing output-length guard.
+        let mut escaped = Accumulator::new(Instant::now(), "birds", true);
+        escaped.text(&format!(r#"{{"text":"{}"}}"#, r#"\ud83d\udc26"#.repeat(100))).unwrap();
+        escaped.stop = Stop::Done;
+        assert_eq!(escaped.finish("birds").unwrap().text, "🐦".repeat(100));
+    }
+
+    #[test]
+    fn malformed_structured_output_falls_back_instead_of_pasting_json() {
+        for wire in [r#"{"text":"unfinished""#, r#"{"text":12}"#, "Here is the result", r#"{}"#] {
+            let mut acc = Accumulator::new(Instant::now(), "hello", true);
+            acc.text(wire).unwrap();
+            acc.stop = Stop::Done;
+            assert!(matches!(acc.finish("hello"), Err(LlmError::Format)));
+        }
+        let delta = json!({"type":"content_block_delta","delta":{"text":r#"{"text":"hello"}"#}}).to_string();
+        assert!(matches!(run(&[&delta], "hello", true), Err(LlmError::Http(_))));
     }
 
     #[test]

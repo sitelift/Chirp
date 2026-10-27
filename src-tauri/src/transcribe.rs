@@ -270,6 +270,58 @@ pub fn transcribe_segment(
     Ok(text)
 }
 
+/// Recognize all recorded audio, including quiet words before VAD would mark
+/// speech. VAD boundaries are useful for speculative prefixes, but can omit a
+/// negation or split a word even with a short lead-in. Bound inference size for
+/// long recordings with overlapping chunks; never discard the gaps as silence.
+pub fn transcribe_recording(
+    recognizer: &SherpaRecognizer,
+    audio: &[f32],
+) -> Result<String, String> {
+    if audio.is_empty() {
+        return Ok(String::new());
+    }
+    // Real dictations up to 69s decode more faithfully as one utterance than
+    // at the old 30s boundaries. Keep that context, with a finite upper bound
+    // for the app's ten-minute recording limit.
+    let texts = recording_chunks(audio)
+        .into_iter()
+        .map(|chunk| transcribe(recognizer, chunk))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(merge_transcriptions(texts))
+}
+
+/// Keep ordinary dictations together. For longer recordings, cut near a quiet
+/// point within the middle half of a 90s window, retaining a second of overlap.
+/// No samples are classified as dispensable silence: every gap is decoded.
+fn recording_chunks(audio: &[f32]) -> Vec<&[f32]> {
+    const MAX: usize = 90 * 16000;
+    const OVERLAP: usize = 16000;
+    let mut chunks = Vec::new();
+    let mut start = 0;
+    while audio.len() - start > MAX {
+        let end = start + recording_split(&audio[start..start + MAX]);
+        chunks.push(&audio[start..end]);
+        start = end - OVERLAP;
+    }
+    chunks.push(&audio[start..]);
+    chunks
+}
+
+fn recording_split(audio: &[f32]) -> usize {
+    const WIN: usize = 1600; // Prefer a sustained 100ms pause to a single quiet phoneme.
+    let (lo, hi) = (audio.len() / 4, audio.len() * 3 / 4);
+    (lo..hi - WIN)
+        .step_by(160)
+        .min_by(|&a, &b| {
+            let energy = |i: usize| audio[i..i + WIN].iter().map(|s| s * s).sum::<f32>();
+            // At equal energy use the end of the pause. Starting the overlap
+            // at its beginning can re-decode the last syllable as a new word.
+            energy(a).total_cmp(&energy(b)).then_with(|| b.cmp(&a))
+        })
+        .map_or(audio.len() / 2, |i| i + WIN)
+}
+
 /// Split audio into overlapping chunks for transcription
 pub fn chunk_audio(samples: &[f32], sample_rate: u32, chunk_secs: f32, overlap_secs: f32) -> Vec<&[f32]> {
     let chunk_samples = (chunk_secs * sample_rate as f32) as usize;
@@ -342,7 +394,50 @@ pub fn merge_transcriptions(segments: Vec<String>) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::quietest_split;
+    use super::{merge_transcriptions, quietest_split, recording_chunks};
+
+    #[test]
+    fn recording_chunks_retain_quiet_gaps_and_the_last_sample() {
+        let mut audio: Vec<f32> = (0..(16000 * 180 + 17)).map(|i| i as f32).collect();
+        audio[16000 * 88..16000 * 92].fill(0.0);
+        let chunks = recording_chunks(&audio);
+        assert!(chunks.iter().all(|chunk| chunk.len() <= 16000 * 90));
+        let mut reconstructed = chunks[0].to_vec();
+        for chunk in &chunks[1..] {
+            assert_eq!(&reconstructed[reconstructed.len() - 16000..], &chunk[..16000]);
+            reconstructed.extend_from_slice(&chunk[16000..]);
+        }
+        assert_eq!(reconstructed, audio);
+    }
+
+    #[test]
+    fn long_recording_boundary_uses_a_pause_without_discarding_it() {
+        let mut audio = vec![0.2; 16000 * 120];
+        audio[16000 * 48..16000 * 49].fill(0.0);
+        let chunks = recording_chunks(&audio);
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), 16000 * 49);
+        assert_eq!(chunks[1].len(), audio.len() - chunks[0].len() + 16000);
+        assert!(chunks[1].len() <= 90 * 16000);
+    }
+
+    #[test]
+    fn overlapping_chunks_preserve_the_negation_after_the_boundary() {
+        let text = merge_transcriptions(vec![
+            "We need to change the system prompt.".into(),
+            "the system prompt. I don't think we need to validate responses.".into(),
+        ]);
+        assert_eq!(text, "We need to change the system prompt. I don't think we need to validate responses.");
+    }
+
+    #[test]
+    fn overlap_removal_keeps_repetition_inside_the_message() {
+        let text = merge_transcriptions(vec![
+            "I really really want this.".into(),
+            "want this. Keep both words.".into(),
+        ]);
+        assert_eq!(text, "I really really want this. Keep both words.");
+    }
 
     #[test]
     fn split_lands_in_the_pause_near_the_middle() {

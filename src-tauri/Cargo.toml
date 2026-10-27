@@ -25,6 +25,11 @@ name = "replay"
 path = "../bench/replay.rs"
 required-features = ["bench"]
 
+[[bin]]
+name = "asr-study"
+path = "../bench/asr_study.rs"
+required-features = ["bench"]
+
 [build-dependencies]
 cc = "1.2.57"
 tauri-build = { version = "2.5.6", features = [] }

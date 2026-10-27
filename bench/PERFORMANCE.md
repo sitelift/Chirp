@@ -1,4 +1,93 @@
-# Performance track — 2026-10-24
+# Performance track
+
+## Human dictation replay and cleanup — 2026-10-25
+
+134 saved human recordings were frozen for comparison. Replaying exact saved
+ASR chunks reproduced quiet-word loss: a missing negation changed the meaning
+before cloud cleanup. Full-recording ASR recovered that negation on both CUDA
+FP32 and CPU int8. Adding real lead-in recovered it; adding silence did not.
+These observations establish an audio-boundary defect, not a prompt failure.
+
+Production now decodes the complete recording, retaining all samples. Clips up
+to 90 seconds stay together. Longer recordings split near sustained low-energy
+regions with one second of overlap. No VAD gap is discarded. VAD only supplies
+optional speculative cleanup; its text must exactly match final deterministic
+text before reuse. With speculation off, no prefix ASR worker runs.
+
+| Measurement | Result |
+|---|---:|
+| Real clips, CUDA FP32 greedy, four threads | 134, up to 68.96s |
+| Repeated raw transcripts | 134/134 identical, none empty |
+| Warm complete-recording ASR p50 / p95 / max | 89 / 440 / 662ms |
+| CPU int8, six threads, confirmed negation clip | 1135ms |
+| CPU int8, two sampled 62–69s clips | 7236 / 2983ms |
+| Constructed 162s and 189s stress clips, final warm ASR | 920 / 593ms |
+
+The stress clips concatenate existing recordings with one-second quiet gaps;
+they are not new human recordings. They exposed loss at fixed long-window
+boundaries and duplicate tail syllables when a cut used the beginning of a
+pause. The final boundary selection retained the constituent messages and all
+six repeated negations in the repeated-clip case. Sample-coverage tests verify
+that quiet gaps, overlap and the last sample survive chunking.
+
+These are local compute times, not live hotkey-to-paste latency. First passes
+warm shapes and are excluded from timing. Real audio has no complete manually
+corrected reference, so there is no WER claim. Two unclear passages remain
+unconfirmed because the speaker could not recall their intended wording.
+
+Prompt comparisons use identical deterministic text, context and dictionary
+within each round. ASR revisions create a new frozen input version; improvements
+from recovered audio are not attributed to prompt changes. This investigation
+generated another 2,278 cleanup outputs after the earlier 5,507-output prompt
+study. The final text corpus has 134 inputs. Final comparisons used two repeats
+per candidate, Haiku 5.5 with thinking disabled and low effort, three concurrent
+requests, no explicit prewarm, and a 15s measurement ceiling. The app's 2.5s
+deadline is reported separately:
+
+Every candidate input was sent to cleanup for comparison. The application's
+router is unchanged and can still skip cleanup for short plain dictations.
+
+| Candidate, same final inputs | Outputs | API p50 / p95 | Over 2.5s |
+|---|---:|---:|---:|
+| Existing prompt, plain text | 268 | 783 / 1553ms | 1 |
+| Revised editing prompt, plain text | 268 | 797 / 1717ms | 1 |
+| Revised editing prompt, one-field JSON (selected) | 268 | 1180 / 1834ms | 2 |
+| Short faithful prompt + final reminder, one-field JSON | 268 | 1256 / 2140ms | 5 |
+
+The plain revised prompt was rejected after it appended its own editing notes.
+The selected combination used the same revised prompt with a JSON `text` field;
+both repeats preserved the confirmed negation, rendered the dictated email,
+and avoided unspoken sign-offs and editorial asides in the inspected failures.
+The field accepts arbitrary message text: there is no phrase filter, content
+classifier or repair request. Empty/error/truncated responses retain the
+existing deterministic fallback. JSON parsing is a transport concern, not a
+claim that the text is correct. An actual API smoke check confirmed one-token
+prewarm succeeds; zero-token structured prewarm returned HTTP 400.
+
+Remaining defects include inconsistent name spelling and interpretation of
+ambiguous ASR such as an `OF` provider option. Stronger paraphrasing sometimes
+reverses claims, and even the selected prompt can guess at ambiguous wording.
+The corpus was used for iteration, so these results are not independent
+validation and do not establish perfection. Automated anonymous-label review
+was used to find defects, then concrete outputs were inspected; judge scores
+are not treated as human ground truth. OpenAI live cleanup was not benchmarked.
+
+Private artifacts remain gitignored in `asr-study.local`: `initial-file.json`,
+`lead-file.json`, `full-corpus-recording90.json`, `full-corpus-final.json`,
+`cpu-recording90.json`, `stress-final.json`, `corpus-final.json`,
+`final_confirmation-results.json`, and `structured_comparison-results.json`.
+The reusable local audio replay tool is `bench/asr_study.rs` (see README).
+
+Final verification: 142 backend tests passed, two device-interaction tests
+remained ignored, the release app built, and three prewarmed API smoke calls
+completed without errors. The new local executable passed the installed CUDA
+runtime probe and started with FP32/CUDA. An existing interrupted-startup GPU
+failure marker was backed up and cleared after the successful probe. The
+updated app is running from `asr-study.local/app/Chirp.exe`; no installer or
+remote release was published. Live microphone-to-target-app paste latency has
+not been measured for this build.
+
+## Historical synthetic benchmark — 2026-10-24
 
 ## Final state: collect real dictations before more tuning
 

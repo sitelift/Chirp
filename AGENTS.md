@@ -63,7 +63,9 @@ npm run lint         # ESLint
 npx tauri build --config src-tauri/tauri.bundle.conf.json  # NSIS; run setup -Bundle first
 ```
 
-There's no test suite yet. Validate manually with the dev server on Windows.
+Run `cargo test --release --manifest-path src-tauri/Cargo.toml --lib` in the VS
+developer environment for backend tests. Device-interaction tests marked ignored
+need explicit manual runs. Validate live hotkey-to-paste behavior on Windows.
 
 The backend only builds on Windows. Cross-checking from Linux fails in C build scripts such as `ring`.
 
@@ -95,7 +97,7 @@ The backend only builds on Windows. Cross-checking from Linux fails in C build s
 | `levels.rs` | Per-device input levels for the microphone picker. |
 | `audio.rs` | cpal capture, resampling to 16 kHz mono, Silero VAD segmentation, amplitude events. |
 | `transcribe.rs` | sherpa-onnx Parakeet model download, loading, inference. |
-| `cleanup.rs` | The deterministic pass: VAD segment join and boundary repair, spoken commands ("comma", "new line", ...). Fillers, numbers and spellings are the cleanup model's job. |
+| `cleanup.rs` | The deterministic pass: spoken commands ("comma", "new line", ...), plus segment joining for speculative prefixes. Fillers, numbers and spellings are the cleanup model's job. |
 | `router.rs` / `llm.rs` / `speculative.rs` / `context.rs` | When to call the LLM, the cleanup client (Anthropic or OpenAI; shared, updatable provider and keys), speculative cleanup at VAD pauses, active-app context. |
 | `hotkey.rs` + `hotkey_input.rs` | Global hotkeys: physical bindings and matching; one input thread owns the low-level hooks, binding capture (with live key labels), and Esc-to-cancel while dictating. See `docs/v2/HOTKEYS.md`. |
 | `inject.rs` + `clipboard_win.rs` | Win32 clipboard write + `SendInput` Ctrl+V, then restore the previous clipboard. |
@@ -106,9 +108,15 @@ The backend only builds on Windows. Cross-checking from Linux fails in C build s
 ### Data flow
 
 ```
-Hotkey → cpal capture (16 kHz mono) → VAD segments → Parakeet (greedy, no biasing) → segment join
+Hotkey → cpal capture (16 kHz mono) → complete recording → Parakeet (greedy, no biasing)
 → spoken commands → snippets → router → [cloud cleanup if a provider is on and keyed] → clipboard + Ctrl+V
 ```
+
+VAD prefixes are used only for optional speculative cleanup. They are never
+the authoritative transcript: quiet speech between detected segments can carry
+meaning, including negations. Final ASR retains every audio sample and bounds
+long recordings with overlapping chunks. See the human replay decision in
+`docs/v2/DIRECTION.md` before changing this tradeoff.
 
 ### Settings
 

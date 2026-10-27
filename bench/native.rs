@@ -433,11 +433,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                     let raw = if vad_path.is_some() {
                         transcribe::transcribe_segment(rec, segment)?
                     } else {
-                        let mut chunks = Vec::new();
-                        for chunk in transcribe::chunk_audio(&segment.audio, 16000, 30.0, 1.0) {
-                            chunks.push(transcribe::transcribe(rec, chunk)?);
-                        }
-                        transcribe::merge_transcriptions(chunks)
+                        transcribe::transcribe_recording(rec, &segment.audio)?
                     };
                     let elapsed = ms(t);
                     asr_ms += elapsed;

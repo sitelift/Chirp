@@ -443,13 +443,13 @@ pub async fn start_recording(
     let snippets_for_vad = s.snippets.clone();
     let media = (s.settings.media_while_dictating, s.settings.media_lower_by);
     s.recording_state = RecordingState::Recording;
-    s.vad_was_active = false;
     drop(s);
 
-    // Closed segments decode during recording. Matching speculative cleanup
-    // can overlap the remaining recording time.
+    // VAD prefixes are only speculative. The final transcript always comes
+    // from the complete recording so quiet words in VAD gaps cannot be lost.
+    // Avoid decoding prefixes when speculative cleanup is disabled.
     let vad_model = settings::vad_model_path();
-    let vad_arc: Option<Arc<std::sync::Mutex<crate::audio::VadState>>> = if vad_model.exists() {
+    let vad_arc: Option<Arc<std::sync::Mutex<crate::audio::VadState>>> = if speculation.is_some() && vad_model.exists() {
         let (tx, rx) = crossbeam_channel::unbounded::<audio::Segment>();
         *vad_sender.0.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx.clone());
 
@@ -467,7 +467,6 @@ pub async fn start_recording(
                     Some(vad_arc.clone());
 
                 let transcripts = vad_transcripts.inner().clone();
-                let state_for_thread = state.inner().clone();
                 let rec = recognizer_for_vad.clone().unwrap();
                 let speculation_for_vad = speculation.clone();
 
@@ -486,13 +485,6 @@ pub async fn start_recording(
                                 segment.audio.len(),
                                 segment.lead
                             );
-
-                            // Mark VAD as active so stop_recording uses streamed output.
-                            let s_handle = state_for_thread.clone();
-                            tauri::async_runtime::block_on(async move {
-                                let mut s = s_handle.lock().await;
-                                s.vad_was_active = true;
-                            });
 
                             let raw = match transcribe::transcribe_segment(&rec, &segment) {
                                 Ok(t) => t,
@@ -535,7 +527,7 @@ pub async fn start_recording(
             }
         }
     } else {
-        log::info!("VAD model not found, using non-streaming transcription");
+        log::info!("VAD speculation inactive; recognizing the complete recording on release");
         None
     };
 
@@ -793,68 +785,40 @@ pub async fn stop_recording(
     // Grab what we need from state before entering blocking thread.
     // Clone the Arc<SherpaRecognizer> so we can release the state lock
     // before the expensive transcription step.
-    let (recognizer, snips, vad_was_active) = {
-        let mut s = state.lock().await;
+    let (recognizer, snips) = {
+        let s = state.lock().await;
         let rec = s.recognizer.clone().ok_or("model_not_loaded".to_string())?;
-        let vad_was_active = s.vad_was_active;
-        // Reset for the next recording session, regardless of which path we take.
-        s.vad_was_active = false;
-        (rec, s.snippets.clone(), vad_was_active)
+        (rec, s.snippets.clone())
     };
 
-    // Drain VAD transcripts accumulated by the receiver thread. Whether we
-    // USE them is decided by vad_was_active, NOT by vad_texts.is_empty().
-    // See stop_recording doc-comment for why.
+    // Retain speculative prefixes for diagnosis, but never append them to the
+    // final decode: that would duplicate speech. VAD can omit quiet words even
+    // when its transcript is nonempty.
     let vad_texts: Vec<String> = {
         let mut vt = vad_transcripts.lock().unwrap_or_else(|e| e.into_inner());
         std::mem::take(&mut *vt)
     };
-    let use_vad = vad_was_active;
-    if use_vad {
-        if let Some(capture) = capture_guard.session() { capture.set("raw_asr_text", vad_texts.join(" ")); }
+    if let Some(capture) = capture_guard.session() {
+        capture.set("speculative_asr_text", vad_texts.join(" "));
+        capture.set("asr_source", "complete_recording");
     }
-    log::info!(
-        "transcription path: vad_was_active={}, vad_texts_count={}, fallback_used={}",
-        vad_was_active,
-        vad_texts.len(),
-        !vad_was_active
-    );
 
-    // The streaming path bypasses the blocking ASR fallback.
     let post_start = Instant::now();
-    let segments: Result<Vec<String>, String> = if use_vad {
-        Ok(vad_texts)
-    } else {
-        let fallback_capture = capture_guard.session();
-        tokio::task::spawn_blocking(move || {
-            // Fallback: chunk the full audio buffer and transcribe (original behavior)
-            let chunks = crate::transcribe::chunk_audio(&audio_data, 16000, 30.0, 1.0);
-            log::info!("Starting Parakeet TDT transcription ({} chunk(s))...", chunks.len());
-
-            let mut transcriptions = Vec::new();
-            for (i, chunk) in chunks.iter().enumerate() {
-                log::debug!("ASR chunk {i}: {} samples", chunk.len());
-
-                let chunk_raw = transcribe::transcribe(&recognizer, chunk)
-                    .map_err(|e| {
-                        log::error!("Transcription error on chunk {i}: {e}");
-                        "transcription_failed".to_string()
-                    })?;
-                log::info!("Parakeet chunk {i}: '{chunk_raw}'");
-                transcriptions.push(chunk_raw);
-            }
-
-            let merged = crate::transcribe::merge_transcriptions(transcriptions);
-            if let Some(capture) = &fallback_capture { capture.set("raw_asr_text", &merged); }
-            Ok(vec![merged])
-        })
-        .await
-        .map_err(|e| format!("Task failed: {e}"))?
-    };
+    let final_capture = capture_guard.session();
+    let segments: Result<Vec<String>, String> = tokio::task::spawn_blocking(move || {
+        let raw = transcribe::transcribe_recording(&recognizer, &audio_data).map_err(|e| {
+            log::error!("Recording transcription failed: {e}");
+            "transcription_failed".to_string()
+        })?;
+        if let Some(capture) = &final_capture { capture.set("raw_asr_text", &raw); }
+        Ok(vec![raw])
+    })
+    .await
+    .map_err(|e| format!("Task failed: {e}"))?;
     trace.stage("asr_tail", post_start);
 
-    // Join the segments (repairing VAD split artifacts) and convert spoken
-    // commands. Snippets expand after, so expansions (URLs, emails,
+    // Convert spoken commands in the final recording transcript.
+    // Snippets expand after, so expansions (URLs, emails,
     // addresses) survive as literal text through the cleanup model.
     let stage = Instant::now();
     let result = segments.map(|segments| cleanup::spoken_text(&segments));

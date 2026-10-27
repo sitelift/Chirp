@@ -20,6 +20,10 @@ mod settings;
 mod snippets;
 mod sound;
 mod state;
+#[cfg(feature = "bench")]
+pub use state::SnippetEntry;
+#[cfg(feature = "bench")]
+pub use snippets::apply_snippets;
 mod surface;
 mod tray;
 pub mod transcribe;

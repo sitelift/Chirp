@@ -77,7 +77,18 @@ function body(transcript, ctx, maxTokens, stream = true) {
     max_tokens: maxTokens,
     stream,
     thinking: { type: "disabled" },
-    output_config: { effort: "low" },
+    output_config: {
+      effort: "low",
+      format: {
+        type: "json_schema",
+        schema: {
+          type: "object",
+          properties: { text: { type: "string", description: "The finished dictated message alone, without editing notes, explanations or alternative drafts." } },
+          required: ["text"],
+          additionalProperties: false,
+        },
+      },
+    },
     system: [
       { type: "text", text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" } },
       ...(DICT_BLOCK ? [{ type: "text", text: DICT_BLOCK, cache_control: { type: "ephemeral" } }] : []),
@@ -150,12 +161,21 @@ async function cleanup(agent, transcript, ctx) {
   });
   r.total = res.ms;
   if (res.status !== 200) r.error = `${res.status} ${res.raw.slice(0, 300)}`;
-  r.text = r.text.trim().replace(/^<output>/, "").replace(/<\/output>$/, "").trim();
+  if (!r.error) {
+    try {
+      const message = JSON.parse(r.text);
+      if (typeof message.text !== "string") throw new Error("missing text field");
+      r.text = message.text.trim();
+    } catch {
+      r.error = "invalid cleanup response format";
+      r.text = "";
+    }
+  }
   return r;
 }
 
 async function prewarm(agent) {
-  const res = await post(agent, body("", {}, 0, false));
+  const res = await post(agent, body("", {}, 1, false));
   const u = JSON.parse(res.raw).usage ?? {};
   return { ms: res.ms, cache_write: u.cache_creation_input_tokens, cache_read: u.cache_read_input_tokens, status: res.status };
 }
