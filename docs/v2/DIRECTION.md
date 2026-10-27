@@ -271,12 +271,12 @@ Supersedes the window, Opened, Words, AI cleanup, Recent, keyboard-cancel and Mo
 
 ## Design direction: the pill is the app (2026-10-24, built)
 
-Supersedes the north-star list below. Designs: Paper file "Chirp v2" (artboards "Overlay / v2" and 01 Idle through 13 Keyboard, each in Light and Dark; "Overlay / Current (v1)" is the before). Implemented on `v2`; `http://localhost:5173/?preview=1` (dev only, `&section=03` for one artboard) renders every state in both themes for side-by-side review.
+Supersedes the north-star list below. Implemented on `v2`. The design reference is the app itself: `http://localhost:5173/?preview=1` (dev only, `&section=03` for one artboard) renders every state in both themes for side-by-side review. We no longer keep a separate design file.
 
 Clean, minimal, usable. Every surface has to justify existing. There is **one surface**: the pill, bottom-center just above the taskbar. It grows only to show what you need, then shrinks back. There is no settings window, no onboarding wizard and no tray popup.
 
 - **One window.** The `overlay` window is the only window. It is always sized to its content plus a transparent margin for shadows (40 px top and sides; the bottom 12 px is the gap above the taskbar) and anchored bottom-center on the work area of a monitor: the foreground window's monitor when a dictation starts, the tray's monitor when opened from the tray, the primary monitor at startup. It grows before a morph and shrinks after it; CSS does the morph. Never full-screen.
-- **The pill:** ink (`#1A1917`) in both themes, 36 px high, radius 18. No logo.
+- **The pill:** ink, which follows the theme like every other surface (`#FFFFFF` on light, `#1A1917` on dark; 2026-10-26, a dark pill and tick on a light desktop read as a bug), 36 px high, radius 18. No logo. The resting tick is the same ink.
   - **Listening:** 11 amber level bars follow the mic. **Hands-free:** latched with an amber ring and a stop button (clickable, never takes focus). **Working:** the bars settle to dots with a sweeping bright dot.
   - **Text pills,** 1.6 s: Didn't catch that, No microphone › (opens the mic picker), Pasted without AI · reason (offline, slow, key invalid…), Copied. Press Ctrl+V (paste was blocked; the text is on the clipboard), Cancelled (Esc), Paused · Resume. Success shows nothing: the text appearing is the confirmation.
 - **Idle:** after first run a near-invisible resting tick marks the spot; it turns into a small pill under the pointer and opens on click. The window is click-through then, so hover is detected in Rust (a 20 Hz cursor poll that only runs while the tick is shown).
@@ -293,11 +293,11 @@ Clean, minimal, usable. Every surface has to justify existing. There is **one su
 - **Updates** download quietly (production builds only) and wait for a restart the user chooses.
 - **Keyboard:** opening focuses the first row; arrows move, Enter acts, Tab reaches ×; Esc cancels the innermost thing (key capture, then an edit, then a drill-in), then closes. Focus ring: 2 px amber, offset 2.
 - **Motion** (frame 12): pill appears 120 ms; text pills morph 180 ms; pill to surface 240 ms, all `cubic-bezier(0.2, 0, 0, 1)`; content fades in 120 ms after 80 ms; drill-ins slide 16 px in 160 ms; the paste fade is 140 ms to 0.96. Reduced motion turns morphs into 120 ms crossfades.
-- **Color:** amber only for meaning: level bars, toggles, focus, the latched ring, "Saved", Resume (`#F0B723` on dark, `#C9900A` / text `#8F6400` on light). Everything else is neutral. Surfaces follow the Windows theme (`#FFFFFF` / `#1A1917`). Type: Segoe UI Variable, 13 px rows, 15 px last dictation, 17 px first-run titles.
+- **Color:** amber only for meaning: level bars, toggles, focus, the latched ring, "Saved", Resume (`#F0B723` on dark, `#C9900A` / text `#8F6400` on light). Everything else is neutral. Every surface follows the theme (`#FFFFFF` / `#1A1917`), the pill and tick included. Type: Segoe UI Variable, 13 px rows, 15 px last dictation, 17 px first-run titles.
 - **Sound:** three soft synthesized sweeps, each under 90 ms and around -14 dBFS: **start** rises 1.5 to 2.9 kHz over 70 ms when capture starts, **done** falls 2.9 to 1.9 kHz over 60 ms when text is pasted, and **pasted without AI** is a quieter double chirp. `scripts/generate-sounds.mjs` writes them deterministically to `src-tauri/sounds/`. They are embedded in the binary and played by `play_sound` on a background thread that keeps the output device open for 30 s after the last cue. Playback never blocks capture or paste. The old completion chirp is gone.
 
-Deviations from the Paper file, on purpose:
-- The tray icon stays the existing amber bird (`src-tauri/icons/tray-icon.png`); the design's waveform tray glyph is not a brand asset we have.
+Decisions worth keeping:
+- The tray icon stays the existing amber bird (`src-tauri/icons/tray-icon.png`); a waveform tray glyph is not a brand asset we have.
 - "Not connected" microphones are not listed: Windows only enumerates present inputs. Only the selected-but-missing device shows (Unplugged).
 - The Words list shows vocabulary before snippets rather than one interleaved order.
 

@@ -2,8 +2,7 @@ import type { Config } from 'tailwindcss'
 
 /**
  * Design tokens from docs/v2/design/motion.html. Themed colours are CSS
- * variables set per `[data-theme]` in globals.css; the ink pill is the same in
- * both themes.
+ * variables set per `[data-theme]` in globals.css, the ink pill included.
  */
 const v = (name: string) => `var(--${name})`
 
@@ -12,8 +11,12 @@ export default {
   theme: {
     extend: {
       colors: {
-        ink: '#1A1917',
-        amber: '#F0B723',
+        ink: v('ink'),
+        'ink-text': v('ink-text'),
+        'ink-muted': v('ink-muted'),
+        'ink-accent': v('ink-accent'),
+        'ink-btn': v('ink-btn'),
+        'ink-btn-hover': v('ink-btn-hover'),
         surface: v('surface'),
         t1: v('t1'),
         t2: v('t2'),
@@ -54,7 +57,7 @@ export default {
         card: v('r-card'),
       },
       boxShadow: {
-        pill: '0 6px 20px #00000073, 0 0 0 1px #FFFFFF1F',
+        pill: '0 6px 20px var(--ink-shadow), 0 0 0 1px var(--ink-ring)',
       },
       transitionTimingFunction: {
         out: v('ease'),

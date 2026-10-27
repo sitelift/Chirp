@@ -84,7 +84,7 @@ The backend only builds on Windows. Cross-checking from Linux fails in C build s
   - `dictation.ts`: the live controller: boot, backend events, the hotkey → record → paste flow, first run, update checks.
   - `actions.ts`: store changes plus their backend calls (settings, words, rebind, pause, API key). `words.ts` maps vocabulary + snippets to the Words list.
 - `src/preview/`: dev-only gallery of every state in both themes (`http://localhost:5173/?preview=1`, `&section=03` for one artboard) and an interactive playground over an in-memory backend (`?play=1`, `&slow=4`, `&theme=dark`, `&hit=1`). Excluded from production builds.
-- Design tokens are CSS variables per `[data-theme]` in `src/styles/globals.css`, wired into `tailwind.config.ts`. Surfaces follow the Windows theme (`prefers-color-scheme`); the ink pill does not.
+- Design tokens are CSS variables per `[data-theme]` in `src/styles/globals.css`, wired into `tailwind.config.ts`. Every surface follows the appearance setting (System follows `prefers-color-scheme`), the ink pill and resting tick included.
 
 ### Backend (`src-tauri/src/`)
 

@@ -6,8 +6,8 @@ import type { Theme } from '../surface/types'
 import { SECTIONS, type Scenario } from './scenarios'
 
 /**
- * Dev-only gallery of every surface state in both themes, laid out like the
- * Paper artboards for side-by-side review: http://localhost:5173/?preview=1
+ * Dev-only gallery of every surface state in both themes, laid out as
+ * artboards for side-by-side review: http://localhost:5173/?preview=1
  * Add `&section=03` to show one artboard.
  */
 const SCREEN: Record<Theme, { background: string; taskbar: string; border: string }> = {
